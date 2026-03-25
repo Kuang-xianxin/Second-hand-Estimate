@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 280px;
+      font-family: 'Microsoft YaHei', sans-serif;
+      background: #0e0e10;
+      color: #e8e6e0;
+      padding: 16px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .logo {
+      width: 28px; height: 28px;
+      background: #e8c547;
+      color: #0e0e10;
+      font-weight: 700;
+      font-size: 14px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .title { font-size: 15px; font-weight: 700; color: #e8c547; }
+    .status-box {
+      background: #16161a;
+      border: 1px solid #2a2a35;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+    .status-row:last-child { margin-bottom: 0; }
+    .label { color: #9a9890; }
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 4px;
+    }
+    .dot.ok { background: #5cb87a; }
+    .dot.error { background: #e05c5c; }
+    .dot.offline { background: #9a9890; }
+    .btn {
+      width: 100%;
+      padding: 9px;
+      background: #e8c547;
+      color: #0e0e10;
+      font-weight: 700;
+      font-size: 13px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .btn:hover { opacity: 0.85; }
+    .tip {
+      font-size: 11px;
+      color: #9a9890;
+      text-align: center;
+      margin-top: 10px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">估</div>
+    <div class="title">估二手 Cookie 同步</div>
+  </div>
+  <div class="status-box">
+    <div class="status-row">
+      <span class="label">同步状态</span>
+      <span id="status-text"><span class="dot offline"></span>检测中...</span>
+    </div>
+    <div class="status-row">
+      <span class="label">上次同步</span>
+      <span id="last-sync" style="color:#9a9890">-</span>
+    </div>
+  </div>
+  <button class="btn" id="sync-btn">立即同步 Cookie</button>
+  <p class="tip">插件会自动监听闲鱼 Cookie 变化并实时推送到估二手后端，无需手动操作。</p>
+  <script src="popup.js"></script>
+</body>
+</html>

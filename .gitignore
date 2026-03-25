@@ -1,0 +1,34 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+backend/venv/
+backend/venv312/
+*.sqlite3
+
+# ===== Secrets =====
+.env
+backend/.env
+xianyu_cookies.txt
+backend/xianyu_*.json
+
+# ===== Local databases / debug artifacts =====
+*.db
+debug_*.json
+debug_*.html
+
+# ===== Node / Frontend =====
+node_modules/
+frontend/node_modules/
+dist/
+build/
+*.log
+
+# ===== IDE / OS =====
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

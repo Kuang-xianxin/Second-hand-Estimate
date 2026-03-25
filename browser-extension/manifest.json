@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "估二手 Cookie 同步",
+  "version": "1.0",
+  "description": "自动同步闲鱼 Cookie 到估二手后端",
+  "permissions": [
+    "cookies",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://www.goofish.com/*",
+    "https://*.goofish.com/*",
+    "http://localhost:8000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "估二手 Cookie 同步"
+  },
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  }
+}
