@@ -35,7 +35,6 @@ class ValuationRecord(Base):
     raw_prices = Column(Text)           # JSON 存储原始价格列表
     deepseek_result = Column(Text, nullable=True)   # DeepSeek 分析结果 JSON
     qwen_result = Column(Text, nullable=True)        # Qwen 分析结果 JSON
-    openai_result = Column(Text, nullable=True)      # GPT 分析结果 JSON
     created_at = Column(DateTime, server_default=func.now())
 
 

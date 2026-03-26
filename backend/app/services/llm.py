@@ -1,7 +1,7 @@
 import json
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, List
 from dataclasses import dataclass
 
 import httpx
@@ -122,16 +122,16 @@ async def call_qwen(prompt: str) -> dict:
         return {"error": _map_request_error("Qwen", e)}
 
 
-async def call_qwen_secondary(prompt: str) -> dict:
-    if not settings.qwen_api_key:
-        return {"error": "未配置 Qwen API Key"}
+async def call_kimi(prompt: str) -> dict:
+    if not settings.kimi_api_key:
+        return {"error": "未配置 Kimi API Key"}
     try:
         async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
             resp = await client.post(
-                f"{settings.qwen_base_url.rstrip('/')}/v1/chat/completions",
-                headers={"Authorization": f"Bearer {settings.qwen_api_key}"},
+                f"{settings.kimi_base_url.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.kimi_api_key}"},
                 json={
-                    "model": settings.qwen_model_secondary,
+                    "model": settings.kimi_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.3,
                     "max_tokens": 300,
@@ -139,35 +139,11 @@ async def call_qwen_secondary(prompt: str) -> dict:
             )
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
-            return _parse_llm_json(content, settings.qwen_model_secondary)
+            return _parse_llm_json(content, settings.kimi_model)
     except httpx.HTTPStatusError as e:
-        return {"error": _map_http_error("Qwen-Secondary", e.response.status_code, e.response.text)}
+        return {"error": _map_http_error("Kimi", e.response.status_code, e.response.text)}
     except Exception as e:
-        return {"error": _map_request_error("Qwen-Secondary", e)}
-
-
-async def call_openai(prompt: str) -> dict:
-    if not settings.openai_api_key:
-        return {"error": "未配置 OpenAI API Key"}
-    try:
-        async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
-            resp = await client.post(
-                f"{settings.openai_base_url.rstrip('/')}/v1/chat/completions",
-                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-                json={
-                    "model": settings.openai_model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.3,
-                    "max_tokens": 300,
-                },
-            )
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
-            return _parse_llm_json(content, settings.openai_model)
-    except httpx.HTTPStatusError as e:
-        return {"error": _map_http_error("OpenAI", e.response.status_code, e.response.text)}
-    except Exception as e:
-        return {"error": _map_request_error("OpenAI", e)}
+        return {"error": _map_request_error("Kimi", e)}
 
 
 def _to_valuation(data: dict, model_name: str) -> LLMValuation:
@@ -205,6 +181,70 @@ def _fallback_by_algorithm(model_name: str, base_price: float) -> LLMValuation:
     )
 
 
+async def classify_camera_items_by_llm(keyword: str, items: List[dict]) -> List[dict]:
+    """使用 DeepSeek 对样本进行品牌/型号/整机/功能状态筛选，返回通过项。"""
+    if not items:
+        return []
+
+    if not settings.deepseek_api_key:
+        # 未配置模型时直接回退到规则过滤结果（由调用方先做）
+        return items
+
+    compact = []
+    for idx, it in enumerate(items, start=1):
+        compact.append({
+            "idx": idx,
+            "title": str(it.get("title", ""))[:120],
+            "description": str(it.get("description", ""))[:160],
+            "price": it.get("price", 0),
+        })
+
+    prompt = f"""你是二手相机市场数据清洗助手。请识别并剔除明显的配件/零件/耗材商品，保留整机。
+
+目标关键词：{keyword}
+
+【强制排除规则】（满足任意一条立即排除）：
+- 商品是单独的电池、充电器、数据线、屏幕/液晶屏、镜头盖、USB盖、外壳、背带、贴膜、读卡器、内存卡、滤镜等配件
+- 商品是维修零件、拆机件、说明书
+- 价格低于 200 元且标题不含"整机"/"相机"/"机身"等整机词（配件通常低于100元，整机通常高于400元）
+
+【保留规则】：
+- 标题或描述中有整机特征词：整机、相机、机身、套机、CCD、长焦、像素、变焦等
+- 价格在 400 元以上的二手相机商品
+- 有疑问时，价格 > 300 元的优先保留
+
+候选列表(JSON)：
+{json.dumps(compact, ensure_ascii=False)}
+
+只返回 JSON：
+{{"keep_indices": [1,2,...], "reason": "一句话"}}
+不要输出任何其他文本。"""
+    try:
+        data = await call_deepseek(prompt)
+        if "error" in data:
+            logger.warning(f"LLM样本筛选失败: {data['error']}")
+            return items
+
+        keep_indices = data.get("keep_indices", [])
+        if not isinstance(keep_indices, list):
+            return items
+
+        keep_set = {int(x) for x in keep_indices if str(x).isdigit()}
+        if not keep_set:
+            # LLM 清零保护：fallback 到原始列表
+            logger.warning("LLM筛选后0条，自动回退到规则筛选结果")
+            return items
+
+        filtered = []
+        for idx, it in enumerate(items, start=1):
+            if idx in keep_set:
+                filtered.append(it)
+        return filtered
+    except Exception as e:
+        logger.warning(f"LLM样本筛选异常: {repr(e)}")
+        return items
+
+
 async def multi_model_valuation(
     keyword: str,
     base_price: float,
@@ -213,18 +253,16 @@ async def multi_model_valuation(
 ) -> list[LLMValuation]:
     """并发调用三个大模型，返回估价结果列表"""
     prompt = _build_prompt(keyword, base_price, prices, sample_count)
-    ds, qw, qw2, oa = await asyncio.gather(
+    ds, qw, km = await asyncio.gather(
         call_deepseek(prompt),
         call_qwen(prompt),
-        call_qwen_secondary(prompt),
-        call_openai(prompt),
+        call_kimi(prompt),
     )
 
     results = [
         _to_valuation(ds, settings.deepseek_model),
         _to_valuation(qw, settings.qwen_model),
-        _to_valuation(qw2, settings.qwen_model_secondary),
-        _to_valuation(oa, settings.openai_model),
+        _to_valuation(km, settings.kimi_model),
     ]
 
     if all(r.error for r in results):
@@ -232,8 +270,7 @@ async def multi_model_valuation(
         return [
             _fallback_by_algorithm(settings.deepseek_model, base_price),
             _fallback_by_algorithm(settings.qwen_model, base_price),
-            _fallback_by_algorithm(settings.qwen_model_secondary, base_price),
-            _fallback_by_algorithm(settings.openai_model, base_price),
+            _fallback_by_algorithm(settings.kimi_model, base_price),
         ]
 
     return results

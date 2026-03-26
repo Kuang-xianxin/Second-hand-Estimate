@@ -1,7 +1,6 @@
-import json
 import statistics
-from typing import List, Tuple
 from dataclasses import dataclass
+from typing import List, Optional, Tuple
 
 
 @dataclass
@@ -43,17 +42,32 @@ def remove_outliers_iqr(prices: List[float]) -> Tuple[List[float], List[float], 
     return normal, low, high
 
 
+def _weighted_median(values: List[float], weights: List[float]) -> float:
+    if not values:
+        return 0.0
+    pairs = sorted(zip(values, weights), key=lambda x: x[0])
+    total = sum(w for _, w in pairs)
+    if total <= 0:
+        return statistics.median(values)
+
+    acc = 0.0
+    half = total / 2
+    for v, w in pairs:
+        acc += w
+        if acc >= half:
+            return v
+    return pairs[-1][0]
+
+
 def calculate_price(
     prices: List[float],
-    low_weight: float = 0.15,
-    high_weight: float = 0.05,
+    quality_scores: Optional[List[float]] = None,
 ) -> PricingResult:
     """
-    核心估价算法：
-    1. IQR 去极值
-    2. 正常价格取均值作为基准
-    3. 低价和高价做加权修正（低价有一定参考，说明市场有低价存在）
-    4. 计算合理区间
+    第一版强鲁棒 + 质量加权估价：
+    1. IQR 去极值，超低/超高价群基本不影响结果
+    2. 默认使用正常样本中位数
+    3. 若提供质量分（功能优先），改用质量加权中位数
     """
     if not prices:
         return PricingResult(
@@ -63,27 +77,40 @@ def calculate_price(
         )
 
     normal, low, high = remove_outliers_iqr(prices)
-
     if not normal:
         normal = prices
         low, high = [], []
 
-    base = statistics.mean(normal)
+    base = statistics.median(normal)
 
-    # 低价修正：如果市场有大量低价，说明竞争激烈，适当下调基准
-    if low:
-        low_avg = statistics.mean(low)
-        base = base * (1 - low_weight) + low_avg * low_weight
+    if quality_scores and len(quality_scores) == len(prices):
+        if len(prices) >= 4:
+            sorted_p = sorted(prices)
+            n = len(sorted_p)
+            q1 = sorted_p[n // 4]
+            q3 = sorted_p[(3 * n) // 4]
+            iqr = q3 - q1
+            if iqr > 0:
+                lower_bound = q1 - 1.5 * iqr
+                upper_bound = q3 + 1.5 * iqr
+                values = []
+                weights = []
+                for p, q in zip(prices, quality_scores):
+                    if lower_bound <= p <= upper_bound:
+                        values.append(p)
+                        weights.append(max(0.1, float(q) / 100.0))
+                if values:
+                    base = _weighted_median(values, weights)
+            else:
+                weights = [max(0.1, float(q) / 100.0) for q in quality_scores]
+                base = _weighted_median(prices, weights)
+        else:
+            weights = [max(0.1, float(q) / 100.0) for q in quality_scores]
+            base = _weighted_median(prices, weights)
 
-    # 高价修正：高价参考权重低
-    if high:
-        high_avg = statistics.mean(high)
-        base = base * (1 - high_weight) + high_avg * high_weight
-
-    # 合理区间：基准 ± 20%
+    base = round(base, 2)
     price_min = round(base * 0.80, 2)
     price_max = round(base * 1.20, 2)
-    base = round(base, 2)
 
     return PricingResult(
         base_price=base,

@@ -23,6 +23,25 @@
           在 `backend` 目录运行 `python save_xianyu_state.py`，登录成功后再回来估价。
         </div>
       </div>
+      <div v-if="showLoginModal" class="login-modal-mask">
+        <div class="login-modal">
+          <div class="login-modal-title">需要先登录闲鱼</div>
+          <div class="login-modal-text">
+            检测到当前无登录态。点击“打开闲鱼登录页”后，在浏览器完成登录，再点“我已登录，重新检测”。
+          </div>
+          <div class="login-modal-actions">
+            <button class="modal-btn primary" @click="openLoginPage" :disabled="openingLogin">
+              {{ openingLogin ? '打开中...' : '打开闲鱼登录页' }}
+            </button>
+            <button class="modal-btn ghost" @click="confirmLoginDone" :disabled="checkingLogin">
+              我已登录，重新检测
+            </button>
+            <button class="modal-btn text" @click="showLoginModal = false">
+              稍后再说
+            </button>
+          </div>
+        </div>
+      </div>
       <p v-if="error" class="error-msg">{{ error }}</p>
     </section>
 
@@ -41,6 +60,33 @@
         </div>
         <div v-if="result.algorithm.high_outliers.length" class="outlier-info high">
           过高价格（已降权）：{{ result.algorithm.high_outliers.map(p => '¥'+p).join('、') }}
+        </div>
+      </div>
+
+      <div v-if="result.quality_summary" class="card quality-card">
+        <div class="card-label">功能质量画像</div>
+        <div class="quality-head">
+          <div class="quality-score">{{ result.quality_summary.avg_score }}</div>
+          <div class="quality-meta">平均质量分（功能优先）</div>
+        </div>
+        <div class="quality-stacked-bar">
+          <span
+            class="seg high"
+            :style="{ width: (result.quality_summary.high_quality_count / result.sample_count * 100 || 0) + '%' }"
+          />
+          <span
+            class="seg mid"
+            :style="{ width: (result.quality_summary.mid_quality_count / result.sample_count * 100 || 0) + '%' }"
+          />
+          <span
+            class="seg low"
+            :style="{ width: (result.quality_summary.low_quality_count / result.sample_count * 100 || 0) + '%' }"
+          />
+        </div>
+        <div class="quality-legend">
+          <span class="lg high">高质量 {{ result.quality_summary.high_quality_count }}</span>
+          <span class="lg mid">中质量 {{ result.quality_summary.mid_quality_count }}</span>
+          <span class="lg low">低质量 {{ result.quality_summary.low_quality_count }}</span>
         </div>
       </div>
 
@@ -63,6 +109,29 @@
           </template>
         </div>
       </div>
+
+      <!-- 样本数据 -->
+      <div class="section-title">样本数据（参与估价）</div>
+      <div v-if="result.samples?.length" class="sample-list">
+        <a
+          v-for="s in result.samples"
+          :key="s.item_id"
+          :href="s.url"
+          target="_blank"
+          class="sample-item"
+        >
+          <div class="sample-main">
+            <div class="sample-title">{{ s.title }}</div>
+            <div class="sample-meta">
+              <span>成色：{{ s.condition || '未标注' }}</span>
+              <span>质量分：{{ s.quality_score }}</span>
+              <span>{{ s.sold ? '已售' : '在售' }}</span>
+            </div>
+          </div>
+          <div class="sample-price">¥{{ s.price }}</div>
+        </a>
+      </div>
+      <div v-else class="sample-empty">暂无样本数据</div>
 
       <!-- 捡漏提醒 -->
       <div v-if="result.bargains.length" class="section-title bargain-title">
@@ -89,27 +158,88 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { valuate } from '@/api/index.js'
+import { onMounted, ref } from 'vue'
+import { getLoginState, openXianyuLogin, valuate } from '@/api/index.js'
 
 const keyword = ref('')
 const loading = ref(false)
 const error = ref('')
 const result = ref(null)
 
+const isLoggedIn = ref(false)
+const checkingLogin = ref(false)
+const showLoginModal = ref(false)
+const openingLogin = ref(false)
+
+function parseErrorText(e) {
+  const detail = e?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  if (detail?.detail) return detail.detail
+  return e?.message || '请求失败，请检查后端是否启动'
+}
+
+function shouldPromptLogin(e) {
+  const status = e?.response?.status
+  const text = parseErrorText(e)
+  return status === 401 || /登录态|请先登录|重新登录/.test(text)
+}
+
+async function checkLoginState() {
+  checkingLogin.value = true
+  try {
+    const state = await getLoginState()
+    isLoggedIn.value = !!state?.logged_in
+    if (!isLoggedIn.value) showLoginModal.value = true
+  } catch {
+    isLoggedIn.value = false
+  } finally {
+    checkingLogin.value = false
+  }
+}
+
+async function openLoginPage() {
+  openingLogin.value = true
+  try {
+    await openXianyuLogin()
+  } catch (e) {
+    error.value = parseErrorText(e)
+  } finally {
+    openingLogin.value = false
+  }
+}
+
+async function confirmLoginDone() {
+  await checkLoginState()
+  if (isLoggedIn.value) showLoginModal.value = false
+}
+
 async function doValuate() {
   if (!keyword.value.trim()) return
+  if (checkingLogin.value) return
+  if (!isLoggedIn.value) {
+    showLoginModal.value = true
+    return
+  }
+
   loading.value = true
   error.value = ''
   result.value = null
   try {
     result.value = await valuate(keyword.value.trim())
   } catch (e) {
-    error.value = e?.response?.data?.detail || e?.message || '请求失败，请检查后端是否启动'
+    error.value = parseErrorText(e)
+    if (shouldPromptLogin(e)) {
+      showLoginModal.value = true
+      isLoggedIn.value = false
+    }
   } finally {
     loading.value = false
   }
 }
+
+onMounted(() => {
+  checkLoginState()
+})
 </script>
 
 <style scoped>
@@ -192,6 +322,73 @@ async function doValuate() {
   font-family: var(--font-mono);
 }
 
+.login-modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 8, 16, 0.72);
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+  backdrop-filter: blur(2px);
+}
+
+.login-modal {
+  width: min(560px, calc(100vw - 28px));
+  background: linear-gradient(180deg, rgba(22, 22, 30, 0.98), rgba(16, 16, 24, 0.98));
+  border: 1px solid rgba(232, 197, 71, 0.35);
+  border-radius: 12px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+  padding: 20px 20px 16px;
+}
+
+.login-modal-title {
+  color: var(--accent);
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.login-modal-text {
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.login-modal-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.modal-btn {
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.modal-btn.primary {
+  background: var(--accent);
+  color: #18140a;
+}
+
+.modal-btn.ghost {
+  background: rgba(232, 197, 71, 0.08);
+  color: var(--accent);
+  border: 1px solid rgba(232, 197, 71, 0.35);
+}
+
+.modal-btn.text {
+  background: transparent;
+  color: var(--text2);
+}
+
+.modal-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .error-msg {
   color: var(--red);
   font-size: 13px;
@@ -251,6 +448,65 @@ async function doValuate() {
 }
 .outlier-info.low { background: rgba(92,184,122,0.08); color: var(--green); }
 .outlier-info.high { background: rgba(224,92,92,0.08); color: var(--red); }
+
+.quality-card {
+  margin-top: -10px;
+}
+
+.quality-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.quality-score {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--green);
+  font-family: var(--font-mono);
+}
+
+.quality-meta {
+  font-size: 12px;
+  color: var(--text2);
+}
+
+.quality-stacked-bar {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  display: flex;
+}
+
+.seg {
+  height: 100%;
+  display: inline-block;
+}
+
+.seg.high { background: linear-gradient(90deg, #2da66f, #51c087); }
+.seg.mid { background: linear-gradient(90deg, #caa83d, #e0c35e); }
+.seg.low { background: linear-gradient(90deg, #b74a4a, #d66767); }
+
+.quality-legend {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.lg {
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.lg.high { background: rgba(92,184,122,0.15); color: var(--green); }
+.lg.mid { background: rgba(232,197,71,0.15); color: var(--accent); }
+.lg.low { background: rgba(224,92,92,0.15); color: var(--red); }
 
 .section-title {
   font-size: 13px;
@@ -328,6 +584,67 @@ async function doValuate() {
   font-size: 12px;
   color: var(--red);
   line-height: 1.6;
+}
+
+.sample-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.sample-item {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  transition: border-color 0.2s, background 0.2s;
+}
+.sample-item:hover {
+  border-color: var(--accent);
+  background: rgba(232,197,71,0.05);
+}
+
+.sample-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.sample-title {
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sample-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--text2);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.sample-price {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sample-empty {
+  color: var(--text2);
+  font-size: 12px;
+  margin-top: -8px;
+  margin-bottom: 20px;
 }
 
 .bargain-title {

@@ -29,6 +29,13 @@ CCD_RISK_KEYWORDS = [
     "漏光", "暗角严重", "传感器坏点", "屏幕坏", "闪光灯坏", "仅机身无配件",
 ]
 
+CCD_ACCESSORY_KEYWORDS = [
+    "说明书", "电子版", "pdf", "外屏", "内屏", "液晶屏", "显示屏", "屏幕总成",
+    "电池", "充电器", "充电线", "数据线", "镜头盖", "镜头组", "转接环", "滤镜", "遮光罩",
+    "读卡器", "内存卡", "存储卡", "相机包", "保护套", "贴膜", "背带", "三脚架", "快装板", "热靴",
+    "拆机", "零件", "主板", "排线",
+]
+
 CCD_BRANDS = {
     "canon": ["canon", "佳能"],
     "nikon": ["nikon", "尼康"],
@@ -129,10 +136,21 @@ def _is_risky_by_category(item, category: Literal["phone", "ccd", "other"]) -> b
     if category == "phone":
         category_risk = PHONE_RISK_KEYWORDS
     elif category == "ccd":
-        category_risk = CCD_RISK_KEYWORDS
+        category_risk = CCD_RISK_KEYWORDS + CCD_ACCESSORY_KEYWORDS
 
     risk_keywords = COMMON_RISK_KEYWORDS + category_risk
     return any(kw.lower() in text for kw in risk_keywords)
+
+
+def filter_target_items(items: list, query_keyword: str) -> list:
+    """仅按型号一致性过滤样本（估价主流程），配件/故障判断交给LLM"""
+    category = _infer_category(query_keyword)
+    kept = []
+    for item in items:
+        if _is_model_mismatch(query_keyword, item.title, category):
+            continue
+        kept.append(item)
+    return kept
 
 
 def _is_model_mismatch(query_keyword: str, item_title: str, category: Literal["phone", "ccd", "other"]) -> bool:
