@@ -327,7 +327,14 @@ async function doValuate() {
             let payload
             try { payload = JSON.parse(dataMatch[1]) } catch { continue }
 
-            if (evtType === 'base') {
+            } else if (evtType === 'step') {
+              // 详情页补图等中间步骤
+              if (payload.status === 'pending') {
+                setLastStepPending(payload.text)
+              } else {
+                resolveLastPending(payload.text)
+              }
+            } else if (evtType === 'base') {
               resolveLastPending(`爬取完成，获得 ${payload.sample_count} 条有效样本`)
               partial.keyword = payload.keyword
               partial.sample_count = payload.sample_count

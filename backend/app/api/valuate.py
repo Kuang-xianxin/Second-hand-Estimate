@@ -323,7 +323,15 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
             ))
     await db.commit()
 
-    # 3. 图片并发分析（融合图片质量分）
+    # 3. 详情页补图（对无图商品抓取详情页图片）
+    items_needing_images = [i for i in items if not i.images]
+    if items_needing_images:
+        logger.info(f"对 {len(items_needing_images)} 个无图商品补充详情页图片...")
+        await crawler.fetch_images_for_items(items, max_concurrent=5)
+        has_images_count = len([i for i in items if i.images])
+        logger.info(f"补图完成，{has_images_count}/{len(items)} 个商品有图片")
+
+    # 4. 图片并发分析（融合图片质量分）
     if settings.doubao_api_key:
         img_tasks = [
             analyze_item_images(i.item_id, i.title, i.images)
@@ -565,6 +573,14 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
         quality_scores = [i.quality_score for i in items]
         pricing = calculate_price(prices, quality_scores=quality_scores)
         bargains = detect_bargains(items, pricing.base_price, query_keyword=keyword)
+
+        # 详情页补图
+        items_needing_images = [i for i in items if not i.images]
+        if items_needing_images:
+            yield f"event: step\ndata: {json.dumps({'text': f'正在补充 {len(items_needing_images)} 个商品的详情图片...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
+            await crawler.fetch_images_for_items(items, max_concurrent=5)
+            has_images = len([i for i in items if i.images])
+            yield f"event: step\ndata: {json.dumps({'text': f'补图完成，{has_images}/{len(items)} 个商品有图片', 'status': 'done'}, ensure_ascii=False)}\n\n"
 
         # 图片并发分析（融合质量分）
         if settings.doubao_api_key:

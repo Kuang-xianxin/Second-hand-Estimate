@@ -240,6 +240,84 @@ class XianyuCrawler:
             self._log_raw_item_preview(raw, "标准化异常时的原始数据")
             return None
 
+    def _fetch_item_images_sync(self, item_id: str) -> List[str]:
+        """访问商品详情页，拦截接口响应提取图片 URL 列表（最多 6 张）。"""
+        from playwright.sync_api import sync_playwright
+        images: List[str] = []
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"])
+                context = self._build_context(browser)
+                page = context.new_page()
+
+                def handle_detail_response(response):
+                    try:
+                        if "mtop.taobao.idle.pc.detail" not in response.url and "mtop.taobao.idlemtopsearch" not in response.url:
+                            return
+                        if response.status != 200:
+                            return
+                        body = response.json()
+                        # 递归搜索所有 picUrl / url / imageUrl 字段
+                        def extract_pics(obj, depth=0):
+                            if depth > 10 or len(images) >= 6:
+                                return
+                            if isinstance(obj, dict):
+                                for k, v in obj.items():
+                                    if k.lower() in ("picurl", "url", "imageurl", "pic", "src", "image") and isinstance(v, str):
+                                        if v.startswith("http") and any(ext in v.lower() for ext in [".jpg", ".jpeg", ".png", ".webp", "img.alicdn", "gw.alicdn"]):
+                                            if v not in images:
+                                                images.append(v)
+                                    else:
+                                        extract_pics(v, depth+1)
+                            elif isinstance(obj, list):
+                                for item in obj:
+                                    extract_pics(item, depth+1)
+                        extract_pics(body)
+                    except Exception as e:
+                        logger.debug(f"详情页响应解析失败: {e}")
+
+                page.on("response", handle_detail_response)
+                page.goto(f"https://www.goofish.com/item?id={item_id}", wait_until="networkidle", timeout=20000)
+                page.wait_for_timeout(3000)
+                context.close()
+                browser.close()
+        except Exception as e:
+            logger.debug(f"详情页爬取失败 item_id={item_id}: {e}")
+        return images[:6]
+
+    async def fetch_images_for_items(self, items: List[XianyuItem], max_concurrent: int = 5) -> None:
+        """并发为无图商品补充详情页图片，直接修改 item.images（in-place）。"""
+        no_img_items = [i for i in items if not i.images]
+        if not no_img_items:
+            return
+
+        import concurrent.futures
+        import threading
+
+        sem = asyncio.Semaphore(max_concurrent)
+
+        async def _fetch_one(item: XianyuItem):
+            async with sem:
+                loop = asyncio.get_running_loop()
+                def _run():
+                    result = []
+                    exc = []
+                    def _t():
+                        try:
+                            result.extend(self._fetch_item_images_sync(item.item_id))
+                        except Exception as e:
+                            exc.append(e)
+                    t = threading.Thread(target=_t, daemon=True)
+                    t.start()
+                    t.join(timeout=30)
+                    return result
+                imgs = await loop.run_in_executor(None, _run)
+                if imgs:
+                    item.images = imgs
+                    logger.info(f"补图成功 item_id={item.item_id}，获得 {len(imgs)} 张")
+
+        await asyncio.gather(*[_fetch_one(i) for i in no_img_items], return_exceptions=True)
+
     def _build_context(self, playwright_browser):
         context_kwargs = {
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
