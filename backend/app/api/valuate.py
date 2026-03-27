@@ -331,14 +331,16 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
         has_images_count = len([i for i in items if i.images])
         logger.info(f"补图完成，{has_images_count}/{len(items)} 个商品有图片")
 
-    # 4. 图片并发分析（融合图片质量分）
+    # 4. 图片并发分析（融合图片质量分，限流控制：最多3并发+间隔）
     if settings.doubao_api_key:
-        img_tasks = [
-            analyze_item_images(i.item_id, i.title, i.images)
-            for i in items if i.images
-        ]
-        if img_tasks:
-            img_results = await asyncio.gather(*img_tasks, return_exceptions=True)
+        img_items = [i for i in items if i.images][:12]  # 最多分析12条
+        if img_items:
+            sem = asyncio.Semaphore(3)  # 最多3并发，避免429
+            async def _analyze_with_sem(item):
+                async with sem:
+                    await asyncio.sleep(0.5)  # 每次调用前等0.5s
+                    return await analyze_item_images(item.item_id, item.title, item.images)
+            img_results = await asyncio.gather(*[_analyze_with_sem(i) for i in img_items], return_exceptions=True)
             img_map = {}
             for r in img_results:
                 if isinstance(r, dict) and r.get("item_id") and r.get("image_score") is not None:
@@ -348,10 +350,8 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
                 if not r:
                     continue
                 img_score = r["image_score"]
-                # 融合：文字质量分70% + 图片质量分30%
                 item.quality_score = round(item.quality_score * 0.7 + img_score * 0.3, 2)
                 item.quality_flags = item.quality_flags + r.get("image_flags", [])
-                # 若图片判断为非整机且文字没发现问题，扣分
                 if not r.get("is_complete_unit", True):
                     item.quality_score = max(20.0, item.quality_score - 20)
                     item.quality_flags.append("图片判断:疑似非整机")
@@ -582,11 +582,16 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             has_images = len([i for i in items if i.images])
             yield f"event: step\ndata: {json.dumps({'text': f'补图完成，{has_images}/{len(items)} 个商品有图片', 'status': 'done'}, ensure_ascii=False)}\n\n"
 
-        # 图片并发分析（融合质量分）
+        # 图片并发分析（限流控制：最多3并发+间隔）
         if settings.doubao_api_key:
-            img_tasks = [analyze_item_images(i.item_id, i.title, i.images) for i in items if i.images]
-            if img_tasks:
-                img_results = await asyncio.gather(*img_tasks, return_exceptions=True)
+            img_items = [i for i in items if i.images][:12]
+            if img_items:
+                sem_v = asyncio.Semaphore(3)
+                async def _analyze_with_sem_sse(item):
+                    async with sem_v:
+                        await asyncio.sleep(0.5)
+                        return await analyze_item_images(item.item_id, item.title, item.images)
+                img_results = await asyncio.gather(*[_analyze_with_sem_sse(i) for i in img_items], return_exceptions=True)
                 img_map = {}
                 for r in img_results:
                     if isinstance(r, dict) and r.get("item_id") and r.get("image_score") is not None:
@@ -596,6 +601,10 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                     if not r:
                         continue
                     item.quality_score = round(item.quality_score * 0.7 + r["image_score"] * 0.3, 2)
+                    item.quality_flags = item.quality_flags + r.get("image_flags", [])
+                    if not r.get("is_complete_unit", True):
+                        item.quality_score = max(20.0, item.quality_score - 20)
+                        item.quality_flags.append("图片判断:疑似非整机")
                     item.quality_flags = item.quality_flags + r.get("image_flags", [])
                     if not r.get("is_complete_unit", True):
                         item.quality_score = max(20.0, item.quality_score - 20)
