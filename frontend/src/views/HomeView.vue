@@ -50,17 +50,22 @@
       <!-- 算法基准卡片 -->
       <div class="card algo-card">
         <div class="card-label">算法基准估价</div>
-        <div class="base-price">¥{{ result.algorithm.base_price }}</div>
-        <div class="price-range">
-          合理区间：<span class="range-val">¥{{ result.algorithm.price_min }} — ¥{{ result.algorithm.price_max }}</span>
-        </div>
-        <div class="sample-info">参与计算样本：{{ result.sample_count }} 条</div>
-        <div v-if="result.algorithm.low_outliers.length" class="outlier-info low">
-          过低价格（已降权）：{{ result.algorithm.low_outliers.map(p => '¥'+p).join('、') }}
-        </div>
-        <div v-if="result.algorithm.high_outliers.length" class="outlier-info high">
-          过高价格（已降权）：{{ result.algorithm.high_outliers.map(p => '¥'+p).join('、') }}
-        </div>
+        <template v-if="result.algorithm">
+          <div class="base-price">¥{{ result.algorithm.base_price }}</div>
+          <div class="price-range">
+            合理区间：<span class="range-val">¥{{ result.algorithm.price_min }} — ¥{{ result.algorithm.price_max }}</span>
+          </div>
+          <div class="sample-info">参与计算样本：{{ result.sample_count }} 条</div>
+          <div v-if="result.algorithm.low_outliers?.length" class="outlier-info low">
+            过低价格（已降权）：{{ result.algorithm.low_outliers.map(p => '¥'+p).join('、') }}
+          </div>
+          <div v-if="result.algorithm.high_outliers?.length" class="outlier-info high">
+            过高价格（已降权）：{{ result.algorithm.high_outliers.map(p => '¥'+p).join('、') }}
+          </div>
+        </template>
+        <template v-else>
+          <div class="loading-placeholder">正在计算中...</div>
+        </template>
       </div>
 
       <div v-if="result.quality_summary" class="card quality-card">
@@ -107,6 +112,15 @@
             <div class="llm-confidence" :class="'conf-'+m.confidence">置信度：{{ m.confidence }}</div>
             <div class="llm-reasoning">{{ m.reasoning }}</div>
           </template>
+        </div>
+        <!-- 等待中的模型占位 -->
+        <div
+          v-for="n in (3 - result.llm_results.length)"
+          :key="'pending-'+n"
+          class="llm-card llm-card-pending"
+        >
+          <div class="llm-model-name">分析中...</div>
+          <div class="llm-pending-dots"><span>.</span><span>.</span><span>.</span></div>
         </div>
       </div>
 
@@ -224,11 +238,80 @@ async function doValuate() {
   loading.value = true
   error.value = ''
   result.value = null
+
+  // 初始化结果骨架，大模型列表为空数组，边收边填
+  const partial = {
+    keyword: keyword.value.trim(),
+    sample_count: 0,
+    algorithm: null,
+    quality_summary: null,
+    llm_results: [],
+    samples: [],
+    bargains: [],
+  }
+
   try {
-    result.value = await valuate(keyword.value.trim())
+    await new Promise((resolve, reject) => {
+      const es = new EventSource(
+        `/api/valuate/stream?_=${Date.now()}`,
+        { withCredentials: false }
+      )
+      // EventSource 只支持 GET，改用 fetch + ReadableStream
+      es.close()
+
+      fetch('/api/valuate/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keyword: keyword.value.trim() }),
+        signal: AbortSignal.timeout(300000),
+      }).then(async (resp) => {
+        if (!resp.ok) {
+          const txt = await resp.text()
+          reject(new Error(txt))
+          return
+        }
+        const reader = resp.body.getReader()
+        const decoder = new TextDecoder()
+        let buf = ''
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          const parts = buf.split('\n\n')
+          buf = parts.pop() ?? ''
+          for (const part of parts) {
+            const eventMatch = part.match(/^event: (\w+)/m)
+            const dataMatch = part.match(/^data: (.+)/ms)
+            if (!eventMatch || !dataMatch) continue
+            const evtType = eventMatch[1]
+            let payload
+            try { payload = JSON.parse(dataMatch[1]) } catch { continue }
+
+            if (evtType === 'base') {
+              partial.keyword = payload.keyword
+              partial.sample_count = payload.sample_count
+              partial.algorithm = payload.algorithm
+              partial.quality_summary = payload.quality_summary
+              partial.samples = payload.samples
+              partial.bargains = payload.bargains
+              result.value = { ...partial }
+              loading.value = false
+            } else if (evtType === 'llm') {
+              partial.llm_results = [...partial.llm_results, payload]
+              result.value = { ...partial }
+            } else if (evtType === 'done') {
+              resolve()
+            } else if (evtType === 'error') {
+              reject(new Error(payload.detail || 'SSE 错误'))
+            }
+          }
+        }
+        resolve()
+      }).catch(reject)
+    })
   } catch (e) {
-    error.value = parseErrorText(e)
-    if (shouldPromptLogin(e)) {
+    error.value = e?.message || '请求失败，请检查后端是否启动'
+    if (/401|登录态|请先登录/.test(error.value)) {
       showLoginModal.value = true
       isLoggedIn.value = false
     }
@@ -645,6 +728,41 @@ onMounted(() => {
   font-size: 12px;
   margin-top: -8px;
   margin-bottom: 20px;
+}
+
+.llm-card-pending {
+  opacity: 0.6;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 0.3; }
+}
+
+.llm-pending-dots {
+  font-size: 24px;
+  color: var(--accent);
+  letter-spacing: 4px;
+  margin-top: 12px;
+}
+
+.llm-pending-dots span {
+  animation: blink 1.2s step-start infinite;
+}
+.llm-pending-dots span:nth-child(2) { animation-delay: 0.2s; }
+.llm-pending-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes blink {
+  0%, 80%, 100% { opacity: 0; }
+  40% { opacity: 1; }
+}
+
+.loading-placeholder {
+  color: var(--text2);
+  font-size: 14px;
+  padding: 12px 0;
+  animation: pulse 1.4s ease-in-out infinite;
 }
 
 .bargain-title {
