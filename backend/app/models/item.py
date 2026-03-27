@@ -17,7 +17,8 @@ class CrawledItem(Base):
     category = Column(String(128), nullable=True)
     seller_id = Column(String(64), nullable=True)
     sold = Column(Boolean, default=False)  # 是否已售出
-    query_keyword = Column(String(256))    # 搜索关键词
+    query_keyword = Column(String(256))    # 搜索关键词
+    images = Column(Text, nullable=True)   # JSON 存储图片URL列表
     crawled_at = Column(DateTime, server_default=func.now())
     sold_at = Column(DateTime, nullable=True)  # 出售时间（已售）
 

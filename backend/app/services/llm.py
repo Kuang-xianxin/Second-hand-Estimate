@@ -205,6 +205,72 @@ def _fallback_by_algorithm(model_name: str, base_price: float) -> LLMValuation:
     )
 
 
+async def call_doubao_vision(images: List[str], prompt: str) -> dict:
+    """调用豆包多模态 /responses 接口分析图片"""
+    if not settings.doubao_api_key:
+        return {"error": "未配置豆包 API Key"}
+    if not images:
+        return {"error": "无图片"}
+    try:
+        content = []
+        for img_url in images[:4]:
+            content.append({"type": "image_url", "image_url": {"url": img_url}})
+        content.append({"type": "text", "text": prompt})
+        async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
+            resp = await client.post(
+                f"{settings.doubao_vision_base_url.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.doubao_api_key}"},
+                json={
+                    "model": settings.doubao_vision_model,
+                    "messages": [{"role": "user", "content": content}],
+                    "temperature": 0.2,
+                    "max_tokens": 400,
+                },
+            )
+            resp.raise_for_status()
+            text = resp.json()["choices"][0]["message"]["content"]
+            return _parse_llm_json(text, settings.doubao_vision_model)
+    except httpx.HTTPStatusError as e:
+        return {"error": _map_http_error("豆包Vision", e.response.status_code, e.response.text)}
+    except Exception as e:
+        return {"error": _map_request_error("豆包Vision", e)}
+
+
+async def analyze_item_images(item_id: str, title: str, images: List[str]) -> dict:
+    """分析单个商品图片，返回图片质量评估结果"""
+    if not images:
+        return {"item_id": item_id, "image_score": None, "image_flags": [], "error": "无图片"}
+    prompt = f"""你是二手相机成色鉴定专家。请仔细观察这些图片，对商品「{title}」进行成色评估。
+
+请返回 JSON：
+{{"condition_score": 0-100的整数（100=全新无痕，80=轻微使用痕迹，60=明显磨损，40=严重磨损）,
+  "is_complete_unit": true或false（是否是整机而非配件/零件）,
+  "visible_defects": ["缺陷描述1", "缺陷描述2"],
+  "brief": "一句话总结"}}
+只返回JSON，不要其他内容。"""
+    data = await call_doubao_vision(images, prompt)
+    if "error" in data:
+        return {"item_id": item_id, "image_score": None, "image_flags": [], "error": data["error"]}
+    score = float(data.get("condition_score", 70))
+    is_complete = data.get("is_complete_unit", True)
+    defects = data.get("visible_defects", [])
+    brief = data.get("brief", "")
+    flags = []
+    if not is_complete:
+        flags.append("图片判断:非整机")
+    for d in defects[:3]:
+        flags.append(f"图片缺陷:{d}")
+    if brief:
+        flags.append(f"图片总结:{brief}")
+    return {
+        "item_id": item_id,
+        "image_score": round(score, 1),
+        "is_complete_unit": is_complete,
+        "image_flags": flags,
+        "error": None,
+    }
+
+
 async def classify_camera_items_by_llm(keyword: str, items: List[dict]) -> List[dict]:
     """使用 DeepSeek 对样本进行品牌/型号/整机/功能状态筛选，返回通过项。"""
     if not items:

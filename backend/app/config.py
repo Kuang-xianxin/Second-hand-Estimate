@@ -10,10 +10,12 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-chat"
     qwen_model: str = "qwen-max"
     doubao_model: str = "doubao-pro-32k"
+    doubao_vision_model: str = "doubao-seed-2-0-pro-250615"
 
     deepseek_base_url: str = "https://api.deepseek.com"
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode"
     doubao_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+    doubao_vision_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
     llm_timeout_seconds: int = 30
 
     database_url: str = "sqlite+aiosqlite:///./guessr.db"

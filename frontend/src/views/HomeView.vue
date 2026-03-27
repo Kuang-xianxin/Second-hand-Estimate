@@ -134,12 +134,18 @@
           target="_blank"
           class="sample-item"
         >
+          <img v-if="s.images && s.images.length" :src="s.images[0]" class="sample-thumb" loading="lazy" />
+          <div v-else class="sample-thumb-placeholder">无图</div>
           <div class="sample-main">
             <div class="sample-title">{{ s.title }}</div>
             <div class="sample-meta">
               <span>成色：{{ s.condition || '未标注' }}</span>
               <span>质量分：{{ s.quality_score }}</span>
               <span>{{ s.sold ? '已售' : '在售' }}</span>
+            </div>
+            <div v-if="s.quality_flags && s.quality_flags.some(f => f.startsWith('图片'))" class="sample-img-flags">
+              <span v-for="f in s.quality_flags.filter(f => f.startsWith('图片'))"
+                    :key="f" class="img-flag-tag">{{ f }}</span>
             </div>
           </div>
           <div class="sample-price">¥{{ s.price }}</div>
@@ -690,6 +696,46 @@ onMounted(() => {
 .sample-item:hover {
   border-color: var(--accent);
   background: rgba(232,197,71,0.05);
+}
+
+.sample-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+}
+
+.sample-thumb-placeholder {
+  width: 64px;
+  height: 64px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text2);
+}
+
+.sample-img-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.img-flag-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255,180,0,0.12);
+  color: #c8960a;
+  border: 1px solid rgba(255,180,0,0.25);
 }
 
 .sample-main {

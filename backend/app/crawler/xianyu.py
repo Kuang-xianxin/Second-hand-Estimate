@@ -54,6 +54,7 @@ class XianyuItem:
     sold_at: Optional[datetime]
     quality_score: float = 50.0
     quality_flags: List[str] = field(default_factory=list)
+    images: List[str] = field(default_factory=list)
     crawled_at: datetime = field(default_factory=datetime.now)
 
 
@@ -198,6 +199,29 @@ class XianyuCrawler:
                 return None
 
             sold = "已售" in title or args.get("soldOut") == "true"
+
+            # 提取图片 URL
+            images = []
+            # 方式1：exContent 里的图片列表
+            img_list = ex.get("picList") or ex.get("images") or ex.get("imageList") or []
+            if isinstance(img_list, list):
+                for img in img_list:
+                    if isinstance(img, str) and img.startswith("http"):
+                        images.append(img)
+                    elif isinstance(img, dict):
+                        url_val = img.get("url") or img.get("src") or img.get("picUrl") or ""
+                        if url_val.startswith("http"):
+                            images.append(url_val)
+            # 方式2：main 里的 coverImage / pic
+            if not images:
+                for key in ["coverImage", "pic", "image", "picUrl"]:
+                    v = main.get(key) or ex.get(key) or args.get(key) or ""
+                    if isinstance(v, str) and v.startswith("http"):
+                        images.append(v)
+                        break
+            # 最多保留 4 张
+            images = images[:4]
+
             return XianyuItem(
                 item_id=item_id,
                 title=title,
@@ -209,6 +233,7 @@ class XianyuCrawler:
                 sold_at=datetime.now() if sold else None,
                 quality_score=quality_score,
                 quality_flags=quality_flags,
+                images=images,
             )
         except Exception as e:
             logger.info(f"标准化失败: {e}")

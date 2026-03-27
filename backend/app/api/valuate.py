@@ -15,7 +15,7 @@ from app.models.database import get_db
 from app.models.item import CrawledItem, ValuationRecord, BargainAlert
 from app.crawler.xianyu import get_crawler
 from app.services.pricing import calculate_price
-from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
+from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, analyze_item_images, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
 from app.services.bargain import detect_bargains, filter_target_items
 from app.config import settings
 
@@ -319,15 +319,41 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
                 sold=item.sold,
                 query_keyword=keyword,
                 sold_at=item.sold_at,
+                images=json.dumps(item.images, ensure_ascii=False) if item.images else None,
             ))
     await db.commit()
 
-    # 3. 算法估价（功能优先质量分 + 鲁棒估价）
+    # 3. 图片并发分析（融合图片质量分）
+    if settings.doubao_api_key:
+        img_tasks = [
+            analyze_item_images(i.item_id, i.title, i.images)
+            for i in items if i.images
+        ]
+        if img_tasks:
+            img_results = await asyncio.gather(*img_tasks, return_exceptions=True)
+            img_map = {}
+            for r in img_results:
+                if isinstance(r, dict) and r.get("item_id") and r.get("image_score") is not None:
+                    img_map[r["item_id"]] = r
+            for item in items:
+                r = img_map.get(item.item_id)
+                if not r:
+                    continue
+                img_score = r["image_score"]
+                # 融合：文字质量分70% + 图片质量分30%
+                item.quality_score = round(item.quality_score * 0.7 + img_score * 0.3, 2)
+                item.quality_flags = item.quality_flags + r.get("image_flags", [])
+                # 若图片判断为非整机且文字没发现问题，扣分
+                if not r.get("is_complete_unit", True):
+                    item.quality_score = max(20.0, item.quality_score - 20)
+                    item.quality_flags.append("图片判断:疑似非整机")
+
+    # 4. 算法估价（功能优先质量分 + 鲁棒估价）
     prices = [i.price for i in items]
     quality_scores = [i.quality_score for i in items]
     pricing = calculate_price(prices, quality_scores=quality_scores)
 
-    # 4. 多模型并发分析
+    # 5. 多模型并发分析
     llm_results = await multi_model_valuation(
         keyword=keyword,
         base_price=pricing.base_price,
@@ -335,10 +361,10 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
         sample_count=pricing.sample_count,
     )
 
-    # 5. 捡漏检测
+    # 6. 捡漏检测
     bargains = detect_bargains(items, pricing.base_price, query_keyword=keyword)
 
-    # 6. 存储估价记录
+    # 7. 存储估价记录
     record = ValuationRecord(
         keyword=keyword,
         base_price=pricing.base_price,
@@ -437,6 +463,7 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
                 "condition": i.condition,
                 "quality_score": i.quality_score,
                 "quality_flags": i.quality_flags,
+                "images": i.images,
             }
             for i in items
         ],
@@ -539,6 +566,25 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
         pricing = calculate_price(prices, quality_scores=quality_scores)
         bargains = detect_bargains(items, pricing.base_price, query_keyword=keyword)
 
+        # 图片并发分析（融合质量分）
+        if settings.doubao_api_key:
+            img_tasks = [analyze_item_images(i.item_id, i.title, i.images) for i in items if i.images]
+            if img_tasks:
+                img_results = await asyncio.gather(*img_tasks, return_exceptions=True)
+                img_map = {}
+                for r in img_results:
+                    if isinstance(r, dict) and r.get("item_id") and r.get("image_score") is not None:
+                        img_map[r["item_id"]] = r
+                for item in items:
+                    r = img_map.get(item.item_id)
+                    if not r:
+                        continue
+                    item.quality_score = round(item.quality_score * 0.7 + r["image_score"] * 0.3, 2)
+                    item.quality_flags = item.quality_flags + r.get("image_flags", [])
+                    if not r.get("is_complete_unit", True):
+                        item.quality_score = max(20.0, item.quality_score - 20)
+                        item.quality_flags.append("图片判断:疑似非整机")
+
         base_payload = {
             "type": "base",
             "keyword": keyword,
@@ -558,7 +604,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             },
             "samples": [{"item_id": i.item_id, "title": i.title, "price": i.price, "url": i.url,
                          "sold": i.sold, "condition": i.condition, "quality_score": i.quality_score,
-                         "quality_flags": i.quality_flags} for i in items],
+                         "quality_flags": i.quality_flags, "images": i.images} for i in items],
             "bargains": [{"item_id": b.item_id, "title": b.title, "price": b.price,
                           "estimated_price": b.estimated_price, "profit_estimate": b.profit_estimate,
                           "url": b.url} for b in bargains],
