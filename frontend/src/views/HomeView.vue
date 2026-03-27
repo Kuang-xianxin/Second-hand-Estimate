@@ -327,7 +327,7 @@ async function doValuate() {
             let payload
             try { payload = JSON.parse(dataMatch[1]) } catch { continue }
 
-            } else if (evtType === 'step') {
+            if (evtType === 'step') {
               // 详情页补图等中间步骤
               if (payload.status === 'pending') {
                 setLastStepPending(payload.text)
