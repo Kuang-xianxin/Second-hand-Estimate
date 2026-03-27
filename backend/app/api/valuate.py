@@ -332,8 +332,8 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
         logger.info(f"补图完成，{has_images_count}/{len(items)} 个商品有图片")
 
     # 4. 图片并发分析（融合图片质量分，限流控制：最多3并发+间隔）
-    if settings.doubao_api_key:
-        img_items = [i for i in items if i.images][:12]  # 最多分析12条
+    if settings.qwen_api_key:
+        img_items = [i for i in items if i.images]  # 所有有图样本
         if img_items:
             sem = asyncio.Semaphore(3)  # 最多3并发，避免429
             async def _analyze_with_sem(item):
@@ -583,8 +583,8 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             yield f"event: step\ndata: {json.dumps({'text': f'补图完成，{has_images}/{len(items)} 个商品有图片', 'status': 'done'}, ensure_ascii=False)}\n\n"
 
         # 图片并发分析（限流控制：最多3并发+间隔）
-        if settings.doubao_api_key:
-            img_items = [i for i in items if i.images][:12]
+        if settings.qwen_api_key:
+            img_items = [i for i in items if i.images]  # 所有有图样本
             if img_items:
                 sem_v = asyncio.Semaphore(3)
                 async def _analyze_with_sem_sse(item):

@@ -300,14 +300,11 @@ async def analyze_item_images(item_id: str, title: str, images: List[str]) -> di
   "brief": "一句话总结"}}
 只返回JSON，不要其他内容。"""
 
-    # 优先使用 Qwen VL，失败时回退豆包
+    # 优先使用 Qwen VL；不再回退到豆包（豆包接入点RPM过低易429）
     data = await call_qwen_vision(images, prompt)
-    if data.get("error") and settings.doubao_api_key:
-        logger.warning(f"Qwen Vision 失败({data['error']})，回退到豆包Vision")
-        data = await call_doubao_vision(images, prompt)
 
-    if "error" in data and not data.get("condition_score"):
-        return {"item_id": item_id, "image_score": None, "image_flags": [], "error": data.get("error")}
+    if data.get("error") or not data.get("condition_score"):
+        return {"item_id": item_id, "image_score": None, "image_flags": [], "error": data.get("error", "Qwen VL 返回为空")}
     score = float(data.get("condition_score", 70))
     is_complete = data.get("is_complete_unit", True)
     defects = data.get("visible_defects", [])
