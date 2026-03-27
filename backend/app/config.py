@@ -9,6 +9,8 @@ class Settings(BaseSettings):
 
     deepseek_model: str = "deepseek-chat"
     qwen_model: str = "qwen-max"
+    qwen_vision_model: str = "qwen-vl-max"
+    qwen_vision_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode"
     doubao_model: str = "ep-m-20260327193150-m6442"
     doubao_model_display: str = "doubao-seed-2.0-pro"
     doubao_vision_model: str = "ep-m-20260327193150-m6442"

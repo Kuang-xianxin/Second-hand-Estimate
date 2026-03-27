@@ -205,6 +205,47 @@ def _fallback_by_algorithm(model_name: str, base_price: float) -> LLMValuation:
     )
 
 
+async def call_qwen_vision(images: List[str], prompt: str) -> dict:
+    """调用 Qwen VL 多模态接口分析图片"""
+    if not settings.qwen_api_key:
+        return {"error": "未配置 Qwen API Key"}
+    if not images:
+        return {"error": "无图片"}
+    content = []
+    for img_url in images[:4]:
+        content.append({"type": "image_url", "image_url": {"url": img_url}})
+    content.append({"type": "text", "text": prompt})
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
+                resp = await client.post(
+                    f"{settings.qwen_vision_base_url.rstrip('/')}/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {settings.qwen_api_key}"},
+                    json={
+                        "model": settings.qwen_vision_model,
+                        "messages": [{"role": "user", "content": content}],
+                        "temperature": 0.2,
+                        "max_tokens": 400,
+                    },
+                )
+                if resp.status_code == 429 and attempt == 0:
+                    logger.warning("Qwen Vision 429，等待4秒后重试...")
+                    await asyncio.sleep(4)
+                    continue
+                resp.raise_for_status()
+                text = resp.json()["choices"][0]["message"]["content"]
+                return _parse_llm_json(text, settings.qwen_vision_model)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429 and attempt == 0:
+                logger.warning("Qwen Vision 429，等待4秒后重试...")
+                await asyncio.sleep(4)
+                continue
+            return {"error": _map_http_error("Qwen Vision", e.response.status_code, e.response.text)}
+        except Exception as e:
+            return {"error": _map_request_error("Qwen Vision", e)}
+    return {"error": "Qwen Vision 持续限流(429)，请稍后重试"}
+
+
 async def call_doubao_vision(images: List[str], prompt: str) -> dict:
     """调用豆包多模态接口分析图片，429时自动重试一次"""
     if not settings.doubao_api_key:
@@ -247,7 +288,7 @@ async def call_doubao_vision(images: List[str], prompt: str) -> dict:
 
 
 async def analyze_item_images(item_id: str, title: str, images: List[str]) -> dict:
-    """分析单个商品图片，返回图片质量评估结果"""
+    """分析单个商品图片，优先用 Qwen VL，失败时回退到豆包Vision"""
     if not images:
         return {"item_id": item_id, "image_score": None, "image_flags": [], "error": "无图片"}
     prompt = f"""你是二手相机成色鉴定专家。请仔细观察这些图片，对商品「{title}」进行成色评估。
@@ -258,9 +299,15 @@ async def analyze_item_images(item_id: str, title: str, images: List[str]) -> di
   "visible_defects": ["缺陷描述1", "缺陷描述2"],
   "brief": "一句话总结"}}
 只返回JSON，不要其他内容。"""
-    data = await call_doubao_vision(images, prompt)
-    if "error" in data:
-        return {"item_id": item_id, "image_score": None, "image_flags": [], "error": data["error"]}
+
+    # 优先使用 Qwen VL，失败时回退豆包
+    data = await call_qwen_vision(images, prompt)
+    if data.get("error") and settings.doubao_api_key:
+        logger.warning(f"Qwen Vision 失败({data['error']})，回退到豆包Vision")
+        data = await call_doubao_vision(images, prompt)
+
+    if "error" in data and not data.get("condition_score"):
+        return {"item_id": item_id, "image_score": None, "image_flags": [], "error": data.get("error")}
     score = float(data.get("condition_score", 70))
     is_complete = data.get("is_complete_unit", True)
     defects = data.get("visible_defects", [])
