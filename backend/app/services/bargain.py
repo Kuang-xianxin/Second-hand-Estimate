@@ -37,14 +37,14 @@ CCD_ACCESSORY_KEYWORDS = [
 ]
 
 CCD_BRANDS = {
-    "canon": ["canon", "佳能"],
-    "nikon": ["nikon", "尼康"],
-    "sony": ["sony", "索尼"],
-    "fujifilm": ["fujifilm", "fuji", "富士"],
-    "olympus": ["olympus", "奥林巴斯"],
-    "panasonic": ["panasonic", "松下"],
+    "canon": ["canon", "佳能", "ixus", "powershot", "ixy", "kiss"],
+    "nikon": ["nikon", "尼康", "coolpix"],
+    "sony": ["sony", "索尼", "cybershot", "dsc"],
+    "fujifilm": ["fujifilm", "fuji", "富士", "finepix"],
+    "olympus": ["olympus", "奥林巴斯", "mju", "stylus"],
+    "panasonic": ["panasonic", "松下", "lumix"],
     "ricoh": ["ricoh", "理光"],
-    "casio": ["casio", "卡西欧"],
+    "casio": ["casio", "卡西欧", "exilim"],
 }
 
 
