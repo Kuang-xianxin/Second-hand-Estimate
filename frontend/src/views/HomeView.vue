@@ -45,6 +45,25 @@
       <p v-if="error" class="error-msg">{{ error }}</p>
     </section>
 
+    <!-- 进度时间线 -->
+    <section v-if="steps.length" class="steps-section">
+      <div class="steps-list">
+        <div
+          v-for="step in steps"
+          :key="step.id"
+          class="step-item"
+          :class="'step-' + step.status"
+        >
+          <span class="step-icon">
+            <span v-if="step.status === 'done'">✓</span>
+            <span v-else-if="step.status === 'error'">✗</span>
+            <span v-else class="step-spinner"></span>
+          </span>
+          <span class="step-text">{{ step.text }}</span>
+        </div>
+      </div>
+    </section>
+
     <!-- 结果区 -->
     <section v-if="result" class="result-section">
       <!-- 算法基准卡片 -->
@@ -185,6 +204,19 @@ const keyword = ref('')
 const loading = ref(false)
 const error = ref('')
 const result = ref(null)
+const steps = ref([])  // 进度步骤列表
+
+function addStep(text, status = 'done') {
+  steps.value.push({ text, status, id: Date.now() + Math.random() })
+}
+function setLastStepPending(text) {
+  steps.value.push({ text, status: 'pending', id: Date.now() + Math.random() })
+}
+function resolveLastPending(text) {
+  const last = [...steps.value].reverse().find(s => s.status === 'pending')
+  if (last) last.status = 'done'
+  if (text) last && (last.text = text)
+}
 
 const isLoggedIn = ref(false)
 const checkingLogin = ref(false)
@@ -244,6 +276,8 @@ async function doValuate() {
   loading.value = true
   error.value = ''
   result.value = null
+  steps.value = []
+  setLastStepPending('正在爬取闲鱼数据...')
 
   // 初始化结果骨架，大模型列表为空数组，边收边填
   const partial = {
@@ -294,6 +328,7 @@ async function doValuate() {
             try { payload = JSON.parse(dataMatch[1]) } catch { continue }
 
             if (evtType === 'base') {
+              resolveLastPending(`爬取完成，获得 ${payload.sample_count} 条有效样本`)
               partial.keyword = payload.keyword
               partial.sample_count = payload.sample_count
               partial.algorithm = payload.algorithm
@@ -302,10 +337,22 @@ async function doValuate() {
               partial.bargains = payload.bargains
               result.value = { ...partial }
               loading.value = false
+              setLastStepPending('等待大模型分析结果...')
             } else if (evtType === 'llm') {
+              resolveLastPending(null)
+              const modelShort = payload.model.replace(/^ep-[^-]+-\d+-/, '').slice(0, 24)
+              if (payload.error) {
+                addStep(`${modelShort}：分析失败（${payload.error}）`, 'error')
+              } else {
+                addStep(`${modelShort} 估价完成：¥${payload.suggested_price}`, 'done')
+              }
               partial.llm_results = [...partial.llm_results, payload]
               result.value = { ...partial }
+              if (partial.llm_results.length < 3) {
+                setLastStepPending('等待剩余模型结果...')
+              }
             } else if (evtType === 'done') {
+              resolveLastPending('全部分析完成')
               resolve()
             } else if (evtType === 'error') {
               reject(new Error(payload.detail || 'SSE 错误'))
@@ -810,6 +857,59 @@ onMounted(() => {
   padding: 12px 0;
   animation: pulse 1.4s ease-in-out infinite;
 }
+
+.steps-section {
+  margin-bottom: 32px;
+}
+
+.steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px 24px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.step-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  transition: opacity 0.3s;
+}
+
+.step-done { color: var(--green); }
+.step-pending { color: var(--text2); }
+.step-error { color: var(--red); }
+
+.step-icon {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.step-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--text2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.step-text { flex: 1; }
 
 .bargain-title {
   color: var(--red);
