@@ -5,15 +5,15 @@ from typing import Optional
 class Settings(BaseSettings):
     deepseek_api_key: Optional[str] = None
     qwen_api_key: Optional[str] = None
-    kimi_api_key: Optional[str] = None
+    doubao_api_key: Optional[str] = None
 
     deepseek_model: str = "deepseek-chat"
     qwen_model: str = "qwen-max"
-    kimi_model: str = "moonshot-v1-8k"
+    doubao_model: str = "doubao-pro-32k"
 
     deepseek_base_url: str = "https://api.deepseek.com"
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode"
-    kimi_base_url: str = "https://api.moonshot.cn/v1"
+    doubao_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
     llm_timeout_seconds: int = 30
 
     database_url: str = "sqlite+aiosqlite:///./guessr.db"

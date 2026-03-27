@@ -146,6 +146,30 @@ async def call_kimi(prompt: str) -> dict:
         return {"error": _map_request_error("Kimi", e)}
 
 
+async def call_doubao(prompt: str) -> dict:
+    if not settings.doubao_api_key:
+        return {"error": "未配置豆包 API Key"}
+    try:
+        async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
+            resp = await client.post(
+                f"{settings.doubao_base_url.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.doubao_api_key}"},
+                json={
+                    "model": settings.doubao_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                    "max_tokens": 300,
+                },
+            )
+            resp.raise_for_status()
+            content = resp.json()["choices"][0]["message"]["content"]
+            return _parse_llm_json(content, settings.doubao_model)
+    except httpx.HTTPStatusError as e:
+        return {"error": _map_http_error("豆包", e.response.status_code, e.response.text)}
+    except Exception as e:
+        return {"error": _map_request_error("豆包", e)}
+
+
 def _to_valuation(data: dict, model_name: str) -> LLMValuation:
     if "error" in data:
         return LLMValuation(
@@ -253,16 +277,16 @@ async def multi_model_valuation(
 ) -> list[LLMValuation]:
     """并发调用三个大模型，返回估价结果列表"""
     prompt = _build_prompt(keyword, base_price, prices, sample_count)
-    ds, qw, km = await asyncio.gather(
+    ds, qw, db = await asyncio.gather(
         call_deepseek(prompt),
         call_qwen(prompt),
-        call_kimi(prompt),
+        call_doubao(prompt),
     )
 
     results = [
         _to_valuation(ds, settings.deepseek_model),
         _to_valuation(qw, settings.qwen_model),
-        _to_valuation(km, settings.kimi_model),
+        _to_valuation(db, settings.doubao_model),
     ]
 
     if all(r.error for r in results):
@@ -270,7 +294,7 @@ async def multi_model_valuation(
         return [
             _fallback_by_algorithm(settings.deepseek_model, base_price),
             _fallback_by_algorithm(settings.qwen_model, base_price),
-            _fallback_by_algorithm(settings.kimi_model, base_price),
+            _fallback_by_algorithm(settings.doubao_model, base_price),
         ]
 
     return results

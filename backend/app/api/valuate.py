@@ -15,7 +15,7 @@ from app.models.database import get_db
 from app.models.item import CrawledItem, ValuationRecord, BargainAlert
 from app.crawler.xianyu import get_crawler
 from app.services.pricing import calculate_price
-from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_kimi as call_kimi_fn, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
+from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
 from app.services.bargain import detect_bargains, filter_target_items
 from app.config import settings
 
@@ -576,7 +576,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
         tasks = {
             asyncio.create_task(run_model(call_deepseek_fn, settings.deepseek_model)): settings.deepseek_model,
             asyncio.create_task(run_model(call_qwen_fn, settings.qwen_model)): settings.qwen_model,
-            asyncio.create_task(run_model(call_kimi_fn, settings.kimi_model)): settings.kimi_model,
+            asyncio.create_task(run_model(call_kimi_fn, settings.doubao_model)): settings.doubao_model,
         }
         pending = set(tasks.keys())
         llm_results_collected = []
