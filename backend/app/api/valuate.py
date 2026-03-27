@@ -677,16 +677,17 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                 if existing.scalar_one_or_none() is None:
                     db.add(CrawledItem(item_id=item.item_id, title=item.title, price=item.price,
                                        condition=item.condition, description=item.description,
-                                       sold=item.sold, query_keyword=keyword, sold_at=item.sold_at))
+                                       sold=item.sold, query_keyword=keyword, sold_at=item.sold_at,
+                                       images=json.dumps(item.images, ensure_ascii=False) if item.images else None))
             r0 = next((x for x in llm_results_collected if x["model"] == settings.deepseek_model), {})
             r1 = next((x for x in llm_results_collected if x["model"] == settings.qwen_model), {})
-            r2 = next((x for x in llm_results_collected if x["model"] == settings.kimi_model), {})
+            r2 = next((x for x in llm_results_collected if x["model"] == settings.doubao_model), {})
             db.add(ValuationRecord(
                 keyword=keyword,
                 base_price=pricing.base_price, price_min=pricing.price_min, price_max=pricing.price_max,
                 sample_count=pricing.sample_count, raw_prices=json.dumps(pricing.raw_prices),
                 deepseek_result=json.dumps(r0, ensure_ascii=False),
-                qwen_result=json.dumps({**r1, "kimi": r2}, ensure_ascii=False),
+                qwen_result=json.dumps({**r1, "doubao": r2}, ensure_ascii=False),
             ))
             for b in bargains:
                 ex = await db.execute(select(BargainAlert).where(BargainAlert.item_id == b.item_id))
