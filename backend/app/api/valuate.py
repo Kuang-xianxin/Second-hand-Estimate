@@ -524,14 +524,14 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                         if it.item_id not in seen_ids:
                             seen_ids.add(it.item_id)
                             merged_items.append(it)
-                    yield f"event: step\ndata: {json.dumps({'text': f'第{round_i+1}轮[{q}]：获取{len(batch)}条 → 累计{len(merged_items)}条原始样本', 'status': 'done'}, ensure_ascii=False)}\n\n"
+                    yield f"event: step\ndata: {json.dumps({'text': f'第{round_i+1}轮[{q}]：已收集 {len(merged_items)} 条原始样本', 'status': 'done'}, ensure_ascii=False)}\n\n"
                     if len(merged_items) >= target_merged:
                         break
                 if len(merged_items) >= target_merged:
                     break
                 await asyncio.sleep(2)
 
-            yield f"event: step\ndata: {json.dumps({'text': f'规则筛选中（型号/品牌匹配，共{len(merged_items)}条）...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
+            yield f"event: step\ndata: {json.dumps({'text': f'规则筛选：{len(merged_items)} -> 规则筛中...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
             rule_filtered = filter_target_items(merged_items, keyword)
             yield f"event: step\ndata: {json.dumps({'text': f'规则筛选完成：保留 {len(rule_filtered)} 条', 'status': 'done'}, ensure_ascii=False)}\n\n"
             yield f"event: step\ndata: {json.dumps({'text': f'LLM精筛中（{len(rule_filtered)} 条）...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
@@ -568,12 +568,10 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             yield f"event: error\ndata: {json.dumps({'detail': '有效样本不足，请换关键词重试'}, ensure_ascii=False)}\n\n"
             return
 
-        yield f"event: step\ndata: {json.dumps({'text': f'样本准备完成，共{len(items)}条，计算基准价格...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
         prices = [i.price for i in items]
         quality_scores = [i.quality_score for i in items]
         pricing = calculate_price(prices, quality_scores=quality_scores)
         bargains = detect_bargains(items, pricing.base_price, query_keyword=keyword)
-        yield f"event: step\ndata: {json.dumps({'text': f'算法估价完成：基准价{pricing.base_price}元，区间[{pricing.price_min}, {pricing.price_max}]，发现捡漏{len(bargains)}条', 'status': 'done'}, ensure_ascii=False)}\n\n"
 
         # 详情页补图已禁用（耗时过长，使用列表页图片）
 
@@ -685,70 +683,130 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                     "confidence": v["confidence"],
                     "error": v["error"],
                 }
-                _price_str = str(v["suggested_price"]) + "元" if v.get("suggested_price") else "估价失败"
-                _model_name = v["model"]
-                _step_st = "done" if v.get("suggested_price") else "error"
-                yield f"event: step\ndata: {json.dumps({'text': f'{_model_name} 估价完成：{_price_str}', 'status': _step_st}, ensure_ascii=False)}\n\n"
+                yield f"event: llm\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+        yield "event: done\ndata: {}\n\n"
+
+        # 存储记录
+        try:
+            for item in items:
+                existing = await db.execute(select(CrawledItem).where(CrawledItem.item_id == item.item_id))
+                if existing.scalar_one_or_none() is None:
+                    db.add(CrawledItem(item_id=item.item_id, title=item.title, price=item.price,
+                                       condition=item.condition, description=item.description,
+                                       sold=item.sold, query_keyword=keyword, sold_at=item.sold_at,
+                                       images=json.dumps(item.images, ensure_ascii=False) if item.images else None))
+            r0 = next((x for x in llm_results_collected if x["model"] == settings.deepseek_model), {})
+            r1 = next((x for x in llm_results_collected if x["model"] == settings.qwen_model), {})
+            r2 = next((x for x in llm_results_collected if x["model"] == settings.doubao_model), {})
+            db.add(ValuationRecord(
+                keyword=keyword,
+                base_price=pricing.base_price, price_min=pricing.price_min, price_max=pricing.price_max,
+                sample_count=pricing.sample_count, raw_prices=json.dumps(pricing.raw_prices),
+                deepseek_result=json.dumps(r0, ensure_ascii=False),
+                qwen_result=json.dumps({**r1, "doubao": r2}, ensure_ascii=False),
+            ))
+            for b in bargains:
+                ex = await db.execute(select(BargainAlert).where(BargainAlert.item_id == b.item_id))
+                if ex.scalar_one_or_none() is None:
+                    db.add(BargainAlert(item_id=b.item_id, title=b.title, price=b.price,
+                                        estimated_price=b.estimated_price,
+                                        profit_estimate=b.profit_estimate, url=b.url))
+            await db.commit()
+        except Exception as e:
+            logger.warning(f"SSE 存储记录失败: {e}")
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-@router.get("/login-state")
+@router.get("/history")
+async def get_history(
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(ValuationRecord)
+        .order_by(ValuationRecord.created_at.desc())
+        .limit(limit)
+    )
+    records = result.scalars().all()
+    return [
+        {
+            "id": r.id,
+            "keyword": r.keyword,
+            "base_price": r.base_price,
+            "price_min": r.price_min,
+            "price_max": r.price_max,
+            "sample_count": r.sample_count,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in records
+    ]
+
+
+@router.get("/bargains")
+async def get_bargains(
+    unread_only: bool = Query(False),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(BargainAlert).order_by(BargainAlert.created_at.desc()).limit(50)
+    if unread_only:
+        query = query.where(BargainAlert.is_read == False)
+    result = await db.execute(query)
+    alerts = result.scalars().all()
+    return [
+        {
+            "id": a.id,
+            "item_id": a.item_id,
+            "title": a.title,
+            "price": a.price,
+            "estimated_price": a.estimated_price,
+            "profit_estimate": a.profit_estimate,
+            "url": a.url,
+            "is_read": a.is_read,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in alerts
+    ]
+
+
+@router.patch("/bargains/{alert_id}/read")
+async def mark_read(alert_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(BargainAlert).where(BargainAlert.id == alert_id)
+    )
+    alert = result.scalar_one_or_none()
+    if not alert:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    alert.is_read = True
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get('/login-state')
 async def get_login_state():
-    """检查闲鱼登录状态"""
-    from app.crawler.xianyu import COOKIE_FILE, STORAGE_STATE_FILE
-    has_cookie = COOKIE_FILE.exists() and COOKIE_FILE.stat().st_size > 0
-    has_state = STORAGE_STATE_FILE.exists() and STORAGE_STATE_FILE.stat().st_size > 0
+    logged_in = STORAGE_STATE_FILE.exists() and STORAGE_STATE_FILE.stat().st_size > 0
     return {
-        "logged_in": has_cookie or has_state,
-        "has_cookie": has_cookie,
-        "has_storage_state": has_state,
+        'logged_in': logged_in,
+        'storage_state_file': str(STORAGE_STATE_FILE),
     }
 
 
-@router.post("/open-xianyu-login")
+@router.post('/open-xianyu-login')
 async def open_xianyu_login():
-    """用 Playwright 打开闲鱼登录页，等待用户登录后保存 storage state"""
-    import threading
-    from playwright.sync_api import sync_playwright
-    from app.crawler.xianyu import STORAGE_STATE_FILE, COOKIE_FILE
+    ok = webbrowser.open('https://www.goofish.com/', new=2)
+    if not ok:
+        raise HTTPException(status_code=500, detail='打开闲鱼登录页失败，请手动访问 https://www.goofish.com/')
+    return {'ok': True, 'message': '已尝试打开闲鱼登录页，请完成登录后返回。'}
 
-    def _open_browser():
-        try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=False, args=["--start-maximized"])
-                context = browser.new_context(viewport=None)
-                if STORAGE_STATE_FILE.exists():
-                    try:
-                        context = p.chromium.launch(headless=False).new_context(
-                            storage_state=str(STORAGE_STATE_FILE),
-                            viewport=None
-                        )
-                    except Exception:
-                        pass
-                page = context.new_page()
-                page.goto("https://www.goofish.com", timeout=30000)
-                # 待用户手动登录，最多等120秒
-                deadline = 120
-                for _ in range(deadline):
-                    import time
-                    time.sleep(1)
-                    try:
-                        cookies = context.cookies()
-                        cookie_names = [c["name"] for c in cookies]
-                        if any(n in cookie_names for n in ["unb", "_nk_", "cookie2", "t"]):
-                            # 登录成功，保存 storage state
-                            context.storage_state(path=str(STORAGE_STATE_FILE))
-                            # 同时保存 cookie 字符串
-                            cookie_str = ";".join(f"{c['name']}={c['value']}" for c in cookies)
-                            COOKIE_FILE.write_text(cookie_str, encoding="utf-8")
-                            logger.info("闲鱼登录成功，已保存 storage state")
-                            break
-                    except Exception:
-                        pass
-                context.close()
-                browser.close()
-        except Exception as e:
-            logger.warning(f"打开登录页异常: {e}")
 
-    t = threading.Thread(target=_open_browser, daemon=True)
-    t.start()
-    return {"status": "opening", "message": "浏览器已在后台打开，请在弹出的窗口中完成登录"}
+class SyncCookieRequest(BaseModel):
+    cookie: str
+
+
+@router.post('/sync-cookie')
+async def sync_cookie(req: SyncCookieRequest):
+    crawler = get_crawler()
+    crawler.save_cookie(req.cookie)
+    return {'ok': True, 'message': 'Cookie已更新'}
