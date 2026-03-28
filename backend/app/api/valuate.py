@@ -516,6 +516,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
         try:
             for round_i in range(2):
                 for q in query_variants:
+                    yield f"event: step\ndata: {json.dumps({'text': f'第{round_i+1}轮[{q}]：正在爬取...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
                     batch = await crawler.search(
                         q, max_items=per_query_max_items,
                         cookie_override=req.cookies, filter_keyword=keyword,
@@ -559,6 +560,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                             used.add(it.item_id)
                             if len(items) >= floor:
                                 break
+                yield f"event: step\ndata: {json.dumps({'text': f'样本补充完成：最终样本 {len(items)} 条（含规则筛通过的补充项）', 'status': 'done'}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
             yield f"event: error\ndata: {json.dumps({'detail': repr(e)}, ensure_ascii=False)}\n\n"
