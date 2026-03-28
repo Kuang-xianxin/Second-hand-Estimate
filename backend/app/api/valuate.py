@@ -689,3 +689,66 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                 _model_name = v["model"]
                 _step_st = "done" if v.get("suggested_price") else "error"
                 yield f"event: step\ndata: {json.dumps({'text': f'{_model_name} 估价完成：{_price_str}', 'status': _step_st}, ensure_ascii=False)}\n\n"
+
+
+@router.get("/login-state")
+async def get_login_state():
+    """检查闲鱼登录状态"""
+    from app.crawler.xianyu import COOKIE_FILE, STORAGE_STATE_FILE
+    has_cookie = COOKIE_FILE.exists() and COOKIE_FILE.stat().st_size > 0
+    has_state = STORAGE_STATE_FILE.exists() and STORAGE_STATE_FILE.stat().st_size > 0
+    return {
+        "logged_in": has_cookie or has_state,
+        "has_cookie": has_cookie,
+        "has_storage_state": has_state,
+    }
+
+
+@router.post("/open-xianyu-login")
+async def open_xianyu_login():
+    """用 Playwright 打开闲鱼登录页，等待用户登录后保存 storage state"""
+    import threading
+    from playwright.sync_api import sync_playwright
+    from app.crawler.xianyu import STORAGE_STATE_FILE, COOKIE_FILE
+
+    def _open_browser():
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=False, args=["--start-maximized"])
+                context = browser.new_context(viewport=None)
+                if STORAGE_STATE_FILE.exists():
+                    try:
+                        context = p.chromium.launch(headless=False).new_context(
+                            storage_state=str(STORAGE_STATE_FILE),
+                            viewport=None
+                        )
+                    except Exception:
+                        pass
+                page = context.new_page()
+                page.goto("https://www.goofish.com", timeout=30000)
+                # 待用户手动登录，最多等120秒
+                deadline = 120
+                for _ in range(deadline):
+                    import time
+                    time.sleep(1)
+                    try:
+                        cookies = context.cookies()
+                        cookie_names = [c["name"] for c in cookies]
+                        if any(n in cookie_names for n in ["unb", "_nk_", "cookie2", "t"]):
+                            # 登录成功，保存 storage state
+                            context.storage_state(path=str(STORAGE_STATE_FILE))
+                            # 同时保存 cookie 字符串
+                            cookie_str = ";".join(f"{c['name']}={c['value']}" for c in cookies)
+                            COOKIE_FILE.write_text(cookie_str, encoding="utf-8")
+                            logger.info("闲鱼登录成功，已保存 storage state")
+                            break
+                    except Exception:
+                        pass
+                context.close()
+                browser.close()
+        except Exception as e:
+            logger.warning(f"打开登录页异常: {e}")
+
+    t = threading.Thread(target=_open_browser, daemon=True)
+    t.start()
+    return {"status": "opening", "message": "浏览器已在后台打开，请在弹出的窗口中完成登录"}
