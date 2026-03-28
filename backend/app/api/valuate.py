@@ -524,17 +524,22 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                         if it.item_id not in seen_ids:
                             seen_ids.add(it.item_id)
                             merged_items.append(it)
+                    yield f"event: step\ndata: {json.dumps({'text': f'第{round_i+1}轮[{q}]：已收集 {len(merged_items)} 条原始样本', 'status': 'done'}, ensure_ascii=False)}\n\n"
                     if len(merged_items) >= target_merged:
                         break
                 if len(merged_items) >= target_merged:
                     break
                 await asyncio.sleep(2)
 
+            yield f"event: step\ndata: {json.dumps({'text': f'规则筛选：{len(merged_items)} -> 规则筛中...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
             rule_filtered = filter_target_items(merged_items, keyword)
+            yield f"event: step\ndata: {json.dumps({'text': f'规则筛选完成：保留 {len(rule_filtered)} 条', 'status': 'done'}, ensure_ascii=False)}\n\n"
+            yield f"event: step\ndata: {json.dumps({'text': f'LLM精筛中（{len(rule_filtered)} 条）...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
             llm_input = [{"item_id": i.item_id, "title": i.title, "description": i.description, "price": i.price} for i in rule_filtered]
             llm_filtered = await classify_camera_items_by_llm(keyword, llm_input)
             keep_ids = {str(x.get("item_id", "")) for x in llm_filtered}
             items = [i for i in rule_filtered if i.item_id in keep_ids] if keep_ids else []
+            yield f"event: step\ndata: {json.dumps({'text': f'LLM精筛完成：保留 {len(items)} 条有效样本', 'status': 'done'}, ensure_ascii=False)}\n\n"
 
             min_keep = 10 if camera_like else 6
             if len(items) < min_keep and len(rule_filtered) >= min_keep:
@@ -572,6 +577,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
 
         # 图片并发分析（限流控制：最多3并发+间隔）
         if settings.qwen_api_key:
+            yield f"event: step\ndata: {json.dumps({'text': f'图片分析中（{len([i for i in items if i.images])} 个有图样本）...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
             img_items = [i for i in items if i.images]  # 所有有图样本
             if img_items:
                 sem_v = asyncio.Semaphore(3)
