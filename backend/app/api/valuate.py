@@ -502,11 +502,49 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
         query_variants = [keyword]
         if compact_keyword and compact_keyword != keyword:
             query_variants.append(compact_keyword)
+
+        # 品牌前缀变体映射
+        BRAND_PREFIX_MAP = {
+            # ixus / powershot / ixy / kiss -> 佳能
+            r"ixus\s*\d": [("canon ixus", "canon"), ("佳能 ixus", "佳能")],
+            r"powershot": [("canon powershot", "canon"), ("佳能", "佳能")],
+            r"ixy\s*\d": [("canon ixy", "canon"), ("佳能 ixy", "佳能")],
+            # dsc / cyber.shot / rx -> 索尼
+            r"dsc-": [("sony", "sony"), ("索尼", "索尼")],
+            r"cyber.shot": [("sony", "sony"), ("索尼", "索尼")],
+            r"\brx\s*\d": [("sony rx", "sony"), ("索尼 rx", "索尼")],
+            r"\bzx\s*\d": [("sony", "sony")],
+            # coolpix -> 尼康
+            r"coolpix": [("nikon coolpix", "nikon"), ("尼康 coolpix", "尼康")],
+            r"\bp\s*\d{3,4}\b": [("nikon", "nikon"), ("尼康", "尼康")],
+            # finepix / x100 -> 富士
+            r"finepix": [("fujifilm", "fuji"), ("富士", "富士")],
+            r"x100": [("fujifilm x100", "fuji x100"), ("富士 x100", "富士")],
+            r"\bxt\s*\d": [("fujifilm", "fuji"), ("富士", "富士")],
+            # lumix -> 松下
+            r"lumix": [("panasonic lumix", "panasonic"), ("松下 lumix", "松下")],
+            # sx系列补全
+            r"\bsx\s*\d+\b": [("powershot sx", "canon sx"), ("佳能 sx", "佳能")],
+        }
+        kw_lower = keyword.lower()
+        for pattern, prefixes in BRAND_PREFIX_MAP.items():
+            if re.search(pattern, kw_lower):
+                for prefix_en, prefix_cn in prefixes:
+                    # 如果关键词里没有品牌词，加前缀变体
+                    if not kw_lower.startswith(prefix_en.split()[0]) and prefix_en.split()[0] not in kw_lower:
+                        query_variants.append(f"{prefix_en} {compact_keyword}".strip())
+                    if prefix_cn and prefix_cn not in kw_lower:
+                        query_variants.append(f"{prefix_cn}{compact_keyword}".strip())
+                break  # 只匹配第一个规则
+
+        # SX系列特殊补全：sx500 -> sx500 is / powershot sx500 is
         if camera_like and re.search(r"\bsx\s*\d+\b", keyword, flags=re.IGNORECASE):
             v1 = re.sub(r"\b(sx\s*\d+)\b", r"\1 is", keyword, flags=re.IGNORECASE)
             v2 = re.sub(r"\b(sx\s*\d+)\b", r"PowerShot \1 IS", keyword, flags=re.IGNORECASE)
             query_variants.extend([v1, v2])
-        query_variants = list(dict.fromkeys([q.strip() for q in query_variants if q and q.strip()]))
+
+        # 去重保序，限制最多5个变体避免爬取时间过长
+        query_variants = list(dict.fromkeys([q.strip() for q in query_variants if q and q.strip()]))[:5]
 
         merged_items = []
         seen_ids = set()
