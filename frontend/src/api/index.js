@@ -2,8 +2,18 @@ import axios from 'axios'
 
 const http = axios.create({
   baseURL: '/api',
-  timeout: 120000,
+  timeout: 300000,
 })
+
+export async function getLoginState() {
+  const res = await http.get('/login-state')
+  return res.data
+}
+
+export async function openXianyuLogin() {
+  const res = await http.post('/open-xianyu-login')
+  return res.data
+}
 
 export async function valuate(keyword) {
   const res = await http.post('/valuate', { keyword })

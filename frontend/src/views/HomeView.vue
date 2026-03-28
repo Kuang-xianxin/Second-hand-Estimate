@@ -23,7 +23,45 @@
           在 `backend` 目录运行 `python save_xianyu_state.py`，登录成功后再回来估价。
         </div>
       </div>
+      <div v-if="showLoginModal" class="login-modal-mask">
+        <div class="login-modal">
+          <div class="login-modal-title">需要先登录闲鱼</div>
+          <div class="login-modal-text">
+            检测到当前无登录态。点击“打开闲鱼登录页”后，在浏览器完成登录，再点“我已登录，重新检测”。
+          </div>
+          <div class="login-modal-actions">
+            <button class="modal-btn primary" @click="openLoginPage" :disabled="openingLogin">
+              {{ openingLogin ? '打开中...' : '打开闲鱼登录页' }}
+            </button>
+            <button class="modal-btn ghost" @click="confirmLoginDone" :disabled="checkingLogin">
+              我已登录，重新检测
+            </button>
+            <button class="modal-btn text" @click="showLoginModal = false">
+              稍后再说
+            </button>
+          </div>
+        </div>
+      </div>
       <p v-if="error" class="error-msg">{{ error }}</p>
+    </section>
+
+    <!-- 进度时间线 -->
+    <section v-if="steps.length" class="steps-section">
+      <div class="steps-list">
+        <div
+          v-for="step in steps"
+          :key="step.id"
+          class="step-item"
+          :class="'step-' + step.status"
+        >
+          <span class="step-icon">
+            <span v-if="step.status === 'done'">✓</span>
+            <span v-else-if="step.status === 'error'">✗</span>
+            <span v-else class="step-spinner"></span>
+          </span>
+          <span class="step-text">{{ step.text }}</span>
+        </div>
+      </div>
     </section>
 
     <!-- 结果区 -->
@@ -31,16 +69,48 @@
       <!-- 算法基准卡片 -->
       <div class="card algo-card">
         <div class="card-label">算法基准估价</div>
-        <div class="base-price">¥{{ result.algorithm.base_price }}</div>
-        <div class="price-range">
-          合理区间：<span class="range-val">¥{{ result.algorithm.price_min }} — ¥{{ result.algorithm.price_max }}</span>
+        <template v-if="result.algorithm">
+          <div class="base-price">¥{{ result.algorithm.base_price }}</div>
+          <div class="price-range">
+            合理区间：<span class="range-val">¥{{ result.algorithm.price_min }} — ¥{{ result.algorithm.price_max }}</span>
+          </div>
+          <div class="sample-info">参与计算样本：{{ result.sample_count }} 条</div>
+          <div v-if="result.algorithm.low_outliers?.length" class="outlier-info low">
+            过低价格（已降权）：{{ result.algorithm.low_outliers.map(p => '¥'+p).join('、') }}
+          </div>
+          <div v-if="result.algorithm.high_outliers?.length" class="outlier-info high">
+            过高价格（已降权）：{{ result.algorithm.high_outliers.map(p => '¥'+p).join('、') }}
+          </div>
+        </template>
+        <template v-else>
+          <div class="loading-placeholder">正在计算中...</div>
+        </template>
+      </div>
+
+      <div v-if="result.quality_summary" class="card quality-card">
+        <div class="card-label">功能质量画像</div>
+        <div class="quality-head">
+          <div class="quality-score">{{ result.quality_summary.avg_score }}</div>
+          <div class="quality-meta">平均质量分（功能优先）</div>
         </div>
-        <div class="sample-info">参与计算样本：{{ result.sample_count }} 条</div>
-        <div v-if="result.algorithm.low_outliers.length" class="outlier-info low">
-          过低价格（已降权）：{{ result.algorithm.low_outliers.map(p => '¥'+p).join('、') }}
+        <div class="quality-stacked-bar">
+          <span
+            class="seg high"
+            :style="{ width: (result.quality_summary.high_quality_count / result.sample_count * 100 || 0) + '%' }"
+          />
+          <span
+            class="seg mid"
+            :style="{ width: (result.quality_summary.mid_quality_count / result.sample_count * 100 || 0) + '%' }"
+          />
+          <span
+            class="seg low"
+            :style="{ width: (result.quality_summary.low_quality_count / result.sample_count * 100 || 0) + '%' }"
+          />
         </div>
-        <div v-if="result.algorithm.high_outliers.length" class="outlier-info high">
-          过高价格（已降权）：{{ result.algorithm.high_outliers.map(p => '¥'+p).join('、') }}
+        <div class="quality-legend">
+          <span class="lg high">高质量 {{ result.quality_summary.high_quality_count }}</span>
+          <span class="lg mid">中质量 {{ result.quality_summary.mid_quality_count }}</span>
+          <span class="lg low">低质量 {{ result.quality_summary.low_quality_count }}</span>
         </div>
       </div>
 
@@ -62,7 +132,45 @@
             <div class="llm-reasoning">{{ m.reasoning }}</div>
           </template>
         </div>
+        <!-- 等待中的模型占位 -->
+        <div
+          v-for="n in (3 - result.llm_results.length)"
+          :key="'pending-'+n"
+          class="llm-card llm-card-pending"
+        >
+          <div class="llm-model-name">分析中...</div>
+          <div class="llm-pending-dots"><span>.</span><span>.</span><span>.</span></div>
+        </div>
       </div>
+
+      <!-- 样本数据 -->
+      <div class="section-title">样本数据（参与估价）</div>
+      <div v-if="result.samples?.length" class="sample-list">
+        <a
+          v-for="s in result.samples"
+          :key="s.item_id"
+          :href="s.url"
+          target="_blank"
+          class="sample-item"
+        >
+          <img v-if="s.images && s.images.length" :src="s.images[0]" class="sample-thumb" loading="lazy" />
+          <div v-else class="sample-thumb-placeholder">无图</div>
+          <div class="sample-main">
+            <div class="sample-title">{{ s.title }}</div>
+            <div class="sample-meta">
+              <span>成色：{{ s.condition || '未标注' }}</span>
+              <span>质量分：{{ s.quality_score }}</span>
+              <span>{{ s.sold ? '已售' : '在售' }}</span>
+            </div>
+            <div v-if="s.quality_flags && s.quality_flags.some(f => f.startsWith('图片'))" class="sample-img-flags">
+              <span v-for="f in s.quality_flags.filter(f => f.startsWith('图片'))"
+                    :key="f" class="img-flag-tag">{{ f }}</span>
+            </div>
+          </div>
+          <div class="sample-price">¥{{ s.price }}</div>
+        </a>
+      </div>
+      <div v-else class="sample-empty">暂无样本数据</div>
 
       <!-- 捡漏提醒 -->
       <div v-if="result.bargains.length" class="section-title bargain-title">
@@ -89,27 +197,192 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { valuate } from '@/api/index.js'
+import { onMounted, ref } from 'vue'
+import { getLoginState, openXianyuLogin, valuate } from '@/api/index.js'
 
 const keyword = ref('')
 const loading = ref(false)
 const error = ref('')
 const result = ref(null)
+const steps = ref([])  // 进度步骤列表
+
+function addStep(text, status = 'done') {
+  steps.value.push({ text, status, id: Date.now() + Math.random() })
+}
+function setLastStepPending(text) {
+  steps.value.push({ text, status: 'pending', id: Date.now() + Math.random() })
+}
+function resolveLastPending(text) {
+  const last = [...steps.value].reverse().find(s => s.status === 'pending')
+  if (last) last.status = 'done'
+  if (text) last && (last.text = text)
+}
+
+const isLoggedIn = ref(false)
+const checkingLogin = ref(false)
+const showLoginModal = ref(false)
+const openingLogin = ref(false)
+
+function parseErrorText(e) {
+  const detail = e?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  if (detail?.detail) return detail.detail
+  return e?.message || '请求失败，请检查后端是否启动'
+}
+
+function shouldPromptLogin(e) {
+  const status = e?.response?.status
+  const text = parseErrorText(e)
+  return status === 401 || /登录态|请先登录|重新登录/.test(text)
+}
+
+async function checkLoginState() {
+  checkingLogin.value = true
+  try {
+    const state = await getLoginState()
+    isLoggedIn.value = !!state?.logged_in
+    if (!isLoggedIn.value) showLoginModal.value = true
+  } catch {
+    isLoggedIn.value = false
+  } finally {
+    checkingLogin.value = false
+  }
+}
+
+async function openLoginPage() {
+  openingLogin.value = true
+  try {
+    await openXianyuLogin()
+  } catch (e) {
+    error.value = parseErrorText(e)
+  } finally {
+    openingLogin.value = false
+  }
+}
+
+async function confirmLoginDone() {
+  await checkLoginState()
+  if (isLoggedIn.value) showLoginModal.value = false
+}
 
 async function doValuate() {
   if (!keyword.value.trim()) return
+  if (checkingLogin.value) return
+  if (!isLoggedIn.value) {
+    showLoginModal.value = true
+    return
+  }
+
   loading.value = true
   error.value = ''
   result.value = null
+  steps.value = []
+  setLastStepPending('正在爬取闲鱼数据...')
+
+  // 初始化结果骨架，大模型列表为空数组，边收边填
+  const partial = {
+    keyword: keyword.value.trim(),
+    sample_count: 0,
+    algorithm: null,
+    quality_summary: null,
+    llm_results: [],
+    samples: [],
+    bargains: [],
+  }
+
   try {
-    result.value = await valuate(keyword.value.trim())
+    await new Promise((resolve, reject) => {
+      const es = new EventSource(
+        `/api/valuate/stream?_=${Date.now()}`,
+        { withCredentials: false }
+      )
+      // EventSource 只支持 GET，改用 fetch + ReadableStream
+      es.close()
+
+      fetch('/api/valuate/stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keyword: keyword.value.trim() }),
+        signal: AbortSignal.timeout(300000),
+      }).then(async (resp) => {
+        if (!resp.ok) {
+          const txt = await resp.text()
+          reject(new Error(txt))
+          return
+        }
+        const reader = resp.body.getReader()
+        const decoder = new TextDecoder()
+        let buf = ''
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          const parts = buf.split('\n\n')
+          buf = parts.pop() ?? ''
+          for (const part of parts) {
+            const eventMatch = part.match(/^event: (\w+)/m)
+            const dataMatch = part.match(/^data: (.+)/ms)
+            if (!eventMatch || !dataMatch) continue
+            const evtType = eventMatch[1]
+            let payload
+            try { payload = JSON.parse(dataMatch[1]) } catch { continue }
+
+            if (evtType === 'step') {
+              // 详情页补图等中间步骤
+              if (payload.status === 'pending') {
+                setLastStepPending(payload.text)
+              } else {
+                resolveLastPending(payload.text)
+              }
+            } else if (evtType === 'base') {
+              resolveLastPending(`爬取完成，获得 ${payload.sample_count} 条有效样本`)
+              partial.keyword = payload.keyword
+              partial.sample_count = payload.sample_count
+              partial.algorithm = payload.algorithm
+              partial.quality_summary = payload.quality_summary
+              partial.samples = payload.samples
+              partial.bargains = payload.bargains
+              result.value = { ...partial }
+              loading.value = false
+              setLastStepPending('等待大模型分析结果...')
+            } else if (evtType === 'llm') {
+              resolveLastPending(null)
+              const modelShort = payload.model.replace(/^ep-[^-]+-\d+-/, '').slice(0, 24)
+              if (payload.error) {
+                addStep(`${modelShort}：分析失败（${payload.error}）`, 'error')
+              } else {
+                addStep(`${modelShort} 估价完成：¥${payload.suggested_price}`, 'done')
+              }
+              partial.llm_results = [...partial.llm_results, payload]
+              result.value = { ...partial }
+              if (partial.llm_results.length < 3) {
+                setLastStepPending('等待剩余模型结果...')
+              }
+            } else if (evtType === 'done') {
+              resolveLastPending('全部分析完成')
+              resolve()
+            } else if (evtType === 'error') {
+              reject(new Error(payload.detail || 'SSE 错误'))
+            }
+          }
+        }
+        resolve()
+      }).catch(reject)
+    })
   } catch (e) {
-    error.value = e?.response?.data?.detail || e?.message || '请求失败，请检查后端是否启动'
+    error.value = e?.message || '请求失败，请检查后端是否启动'
+    if (/401|登录态|请先登录/.test(error.value)) {
+      showLoginModal.value = true
+      isLoggedIn.value = false
+    }
   } finally {
     loading.value = false
   }
 }
+
+onMounted(() => {
+  checkLoginState()
+})
 </script>
 
 <style scoped>
@@ -192,6 +465,73 @@ async function doValuate() {
   font-family: var(--font-mono);
 }
 
+.login-modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 8, 16, 0.72);
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+  backdrop-filter: blur(2px);
+}
+
+.login-modal {
+  width: min(560px, calc(100vw - 28px));
+  background: linear-gradient(180deg, rgba(22, 22, 30, 0.98), rgba(16, 16, 24, 0.98));
+  border: 1px solid rgba(232, 197, 71, 0.35);
+  border-radius: 12px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+  padding: 20px 20px 16px;
+}
+
+.login-modal-title {
+  color: var(--accent);
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.login-modal-text {
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.login-modal-actions {
+  margin-top: 16px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.modal-btn {
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.modal-btn.primary {
+  background: var(--accent);
+  color: #18140a;
+}
+
+.modal-btn.ghost {
+  background: rgba(232, 197, 71, 0.08);
+  color: var(--accent);
+  border: 1px solid rgba(232, 197, 71, 0.35);
+}
+
+.modal-btn.text {
+  background: transparent;
+  color: var(--text2);
+}
+
+.modal-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .error-msg {
   color: var(--red);
   font-size: 13px;
@@ -251,6 +591,65 @@ async function doValuate() {
 }
 .outlier-info.low { background: rgba(92,184,122,0.08); color: var(--green); }
 .outlier-info.high { background: rgba(224,92,92,0.08); color: var(--red); }
+
+.quality-card {
+  margin-top: -10px;
+}
+
+.quality-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.quality-score {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--green);
+  font-family: var(--font-mono);
+}
+
+.quality-meta {
+  font-size: 12px;
+  color: var(--text2);
+}
+
+.quality-stacked-bar {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  display: flex;
+}
+
+.seg {
+  height: 100%;
+  display: inline-block;
+}
+
+.seg.high { background: linear-gradient(90deg, #2da66f, #51c087); }
+.seg.mid { background: linear-gradient(90deg, #caa83d, #e0c35e); }
+.seg.low { background: linear-gradient(90deg, #b74a4a, #d66767); }
+
+.quality-legend {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.lg {
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.lg.high { background: rgba(92,184,122,0.15); color: var(--green); }
+.lg.mid { background: rgba(232,197,71,0.15); color: var(--accent); }
+.lg.low { background: rgba(224,92,92,0.15); color: var(--red); }
 
 .section-title {
   font-size: 13px;
@@ -329,6 +728,195 @@ async function doValuate() {
   color: var(--red);
   line-height: 1.6;
 }
+
+.sample-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 28px;
+}
+
+.sample-item {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  transition: border-color 0.2s, background 0.2s;
+}
+.sample-item:hover {
+  border-color: var(--accent);
+  background: rgba(232,197,71,0.05);
+}
+
+.sample-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+}
+
+.sample-thumb-placeholder {
+  width: 64px;
+  height: 64px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text2);
+}
+
+.sample-img-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.img-flag-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255,180,0,0.12);
+  color: #c8960a;
+  border: 1px solid rgba(255,180,0,0.25);
+}
+
+.sample-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.sample-title {
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sample-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--text2);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.sample-price {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sample-empty {
+  color: var(--text2);
+  font-size: 12px;
+  margin-top: -8px;
+  margin-bottom: 20px;
+}
+
+.llm-card-pending {
+  opacity: 0.6;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 0.3; }
+}
+
+.llm-pending-dots {
+  font-size: 24px;
+  color: var(--accent);
+  letter-spacing: 4px;
+  margin-top: 12px;
+}
+
+.llm-pending-dots span {
+  animation: blink 1.2s step-start infinite;
+}
+.llm-pending-dots span:nth-child(2) { animation-delay: 0.2s; }
+.llm-pending-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes blink {
+  0%, 80%, 100% { opacity: 0; }
+  40% { opacity: 1; }
+}
+
+.loading-placeholder {
+  color: var(--text2);
+  font-size: 14px;
+  padding: 12px 0;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.steps-section {
+  margin-bottom: 32px;
+}
+
+.steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 20px 24px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.step-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-family: var(--font-mono);
+  transition: opacity 0.3s;
+}
+
+.step-done { color: var(--green); }
+.step-pending { color: var(--text2); }
+.step-error { color: var(--red); }
+
+.step-icon {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.step-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--text2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.step-text { flex: 1; }
 
 .bargain-title {
   color: var(--red);

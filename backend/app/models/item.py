@@ -18,6 +18,8 @@ class CrawledItem(Base):
     seller_id = Column(String(64), nullable=True)
     sold = Column(Boolean, default=False)  # 是否已售出
     query_keyword = Column(String(256))    # 搜索关键词
+
+    images = Column(Text, nullable=True)   # JSON 存储图片URL列表
     crawled_at = Column(DateTime, server_default=func.now())
     sold_at = Column(DateTime, nullable=True)  # 出售时间（已售）
 
@@ -35,7 +37,6 @@ class ValuationRecord(Base):
     raw_prices = Column(Text)           # JSON 存储原始价格列表
     deepseek_result = Column(Text, nullable=True)   # DeepSeek 分析结果 JSON
     qwen_result = Column(Text, nullable=True)        # Qwen 分析结果 JSON
-    openai_result = Column(Text, nullable=True)      # GPT 分析结果 JSON
     created_at = Column(DateTime, server_default=func.now())
 
 
