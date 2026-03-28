@@ -287,8 +287,33 @@ async def call_doubao_vision(images: List[str], prompt: str) -> dict:
     return {"error": "豆包Vision 持续限流(429)，请稍后重试"}
 
 
-async def analyze_item_images(item_id: str, title: str, images: List[str]) -> dict:
-    """分析单个商品图片，豆包+Qwen VL并发分析，取平均分"""
+
+async def check_image_model_match(item_id: str, keyword: str, title: str, images: List[str]) -> dict:
+    """轻量视觉核查：图片内容是否和目标型号吻合，不吻合则排除样本"""
+    if not images:
+        return {"item_id": item_id, "match": True, "reason": "无图片跳过"}  # 无图默认保留
+    prompt = f"""请观察图片，判断这个商品是否是「{keyword}」型号的相机整机。
+目标型号：{keyword}
+商品标题：{title}
+
+只返回JSON：
+{{"is_target_model": true或false, "reason": "一句话"}}
+如果图片显示的是其他型号、配件、或无法判断，返回false。
+只返回JSON，不要其他文字。"""
+    try:
+        data = await call_qwen_vision(images, prompt)
+        if isinstance(data, dict) and not data.get("error"):
+            return {
+                "item_id": item_id,
+                "match": bool(data.get("is_target_model", True)),
+                "reason": data.get("reason", "")
+            }
+    except Exception:
+        pass
+    return {"item_id": item_id, "match": True, "reason": "检查失败默认保留"}  # 失败默认保留
+
+async def analyze_item_images(item_id: str, title: str, images: List[str], price: float = 0.0) -> dict:
+    """分析单个商品图片成色（单模型，快速），并检查成色差时价格是否合理"""
     if not images:
         return {"item_id": item_id, "image_score": None, "image_flags": [], "error": "无图片"}
     prompt = f"""你是二手相机成色鉴定专家。请仔细观察这些图片，对商品「{title}」进行成色评估。
@@ -300,37 +325,18 @@ async def analyze_item_images(item_id: str, title: str, images: List[str]) -> di
   "brief": "一句话总结"}}
 只返回JSON，不要其他内容。"""
 
-    # 豆包 + Qwen VL 并发分析，取成功结果平均分
-    async def _safe_doubao():
-        if not settings.doubao_api_key:
-            return {"error": "未配置豆包"}
-        return await call_doubao_vision(images, prompt)
+    # 单模型快速分析（Qwen VL）
+    data = await call_qwen_vision(images, prompt)
+    if isinstance(data, Exception) or not isinstance(data, dict) or data.get("error") or not data.get("condition_score"):
+        return {"item_id": item_id, "image_score": None, "image_flags": [], "error": str(data.get("error", "Qwen VL无返回")) if isinstance(data, dict) else "异常"}
 
-    qwen_data, doubao_data = await asyncio.gather(
-        call_qwen_vision(images, prompt),
-        _safe_doubao(),
-        return_exceptions=True
-    )
-
-    # 收集有效结果
-    valid = []
-    all_defects = []
-    all_briefs = []
-    is_complete = True
-    for data in [qwen_data, doubao_data]:
-        if isinstance(data, Exception) or not isinstance(data, dict):
-            continue
-        if data.get("error") or not data.get("condition_score"):
-            continue
-        valid.append(float(data["condition_score"]))
-        if not data.get("is_complete_unit", True):
-            is_complete = False
-        all_defects.extend(data.get("visible_defects", [])[:2])
-        if data.get("brief"):
-            all_briefs.append(data["brief"])
+    valid = [float(data["condition_score"])]
+    is_complete = data.get("is_complete_unit", True)
+    all_defects = data.get("visible_defects", [])[:3]
+    all_briefs = [data["brief"]] if data.get("brief") else []
 
     if not valid:
-        return {"item_id": item_id, "image_score": None, "image_flags": [], "error": "两个模型均未返回有效结果"}
+        return {"item_id": item_id, "image_score": None, "image_flags": [], "error": "模型未返回有效结果"}
 
     score = round(sum(valid) / len(valid), 1)
     flags = []
@@ -343,11 +349,19 @@ async def analyze_item_images(item_id: str, title: str, images: List[str]) -> di
             seen_defects.add(d)
     if all_briefs:
         flags.append(f"图片总结:{all_briefs[0]}")
+
+    # 成色很差（<45分）且价格偏高（>400元）时标记降权
+    price_penalty = False
+    if score < 45 and price > 400:
+        flags.append("图片警告:成色差但价格偏高，已降权")
+        price_penalty = True
+
     return {
         "item_id": item_id,
         "image_score": score,
         "is_complete_unit": is_complete,
         "image_flags": flags,
+        "price_penalty": price_penalty,
         "error": None,
     }
 

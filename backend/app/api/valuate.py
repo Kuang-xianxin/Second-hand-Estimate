@@ -15,7 +15,7 @@ from app.models.database import get_db
 from app.models.item import CrawledItem, ValuationRecord, BargainAlert
 from app.crawler.xianyu import get_crawler
 from app.services.pricing import calculate_price
-from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, analyze_item_images, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
+from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, analyze_item_images, check_image_model_match, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
 from app.services.bargain import detect_bargains, filter_target_items
 from app.config import settings
 
@@ -577,32 +577,55 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
 
         # 图片并发分析（限流控制：最多3并发+间隔）
         if settings.qwen_api_key:
-            yield f"event: step\ndata: {json.dumps({'text': f'图片分析中（{len([i for i in items if i.images])} 个有图样本）...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
-            img_items = [i for i in items if i.images]  # 所有有图样本
+            img_items = [i for i in items if i.images]
+            yield f"event: step\ndata: {json.dumps({'text': f'图片核查中（{len(img_items)} 个有图样本）...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
             if img_items:
-                sem_v = asyncio.Semaphore(3)
-                async def _analyze_with_sem_sse(item):
-                    async with sem_v:
-                        await asyncio.sleep(0.5)
-                        return await analyze_item_images(item.item_id, item.title, item.images)
-                img_results = await asyncio.gather(*[_analyze_with_sem_sse(i) for i in img_items], return_exceptions=True)
-                img_map = {}
-                for r in img_results:
-                    if isinstance(r, dict) and r.get("item_id") and r.get("image_score") is not None:
-                        img_map[r["item_id"]] = r
-                for item in items:
-                    r = img_map.get(item.item_id)
-                    if not r:
-                        continue
-                    item.quality_score = round(item.quality_score * 0.7 + r["image_score"] * 0.3, 2)
-                    item.quality_flags = item.quality_flags + r.get("image_flags", [])
-                    if not r.get("is_complete_unit", True):
-                        item.quality_score = max(20.0, item.quality_score - 20)
-                        item.quality_flags.append("图片判断:疑似非整机")
-                    item.quality_flags = item.quality_flags + r.get("image_flags", [])
-                    if not r.get("is_complete_unit", True):
-                        item.quality_score = max(20.0, item.quality_score - 20)
-                        item.quality_flags.append("图片判断:疑似非整机")
+                # 第一步：轻量型号核查，过滤图片与目标型号明显不符的样本
+                sem_check = asyncio.Semaphore(5)
+                async def _check_match(item):
+                    async with sem_check:
+                        return await check_image_model_match(item.item_id, keyword, item.title, item.images[:1])
+                match_results = await asyncio.gather(*[_check_match(i) for i in img_items], return_exceptions=True)
+                mismatch_ids = set()
+                for r in match_results:
+                    if isinstance(r, dict) and not r.get("match", True):
+                        mismatch_ids.add(r["item_id"])
+                        logger.info(f"图片型号不符排除: {r['item_id']} - {r.get('reason', '')}")  
+                # 排除型号不符的样本
+                items = [i for i in items if i.item_id not in mismatch_ids]
+                yield f"event: step\ndata: {json.dumps({'text': f'型号核查完成：排除 {len(mismatch_ids)} 个不符样本，剩余 {len(items)} 条', 'status': 'done'}, ensure_ascii=False)}\n\n"
+
+                # 第二步：对成色可疑的样本做成色分析（质量分<70或标题含成色差词）
+                POOR_COND_WORDS = ['磨损', '划痕', '刮花', '碰撞', '摔', '瑕疵', '故障', '维修', '零件机']
+                def _needs_condition_check(item):
+                    text = (item.title + " " + (item.description or "")).lower()
+                    return item.quality_score < 70 or any(w in text for w in POOR_COND_WORDS)
+                cond_items = [i for i in items if i.images and _needs_condition_check(i)]
+                yield f"event: step\ndata: {json.dumps({'text': f'成色分析中（{len(cond_items)} 个可疑样本）...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
+                if cond_items:
+                    sem_v = asyncio.Semaphore(3)
+                    async def _analyze_with_sem_sse(item):
+                        async with sem_v:
+                            await asyncio.sleep(0.3)
+                            return await analyze_item_images(item.item_id, item.title, item.images, price=item.price)
+                    img_results = await asyncio.gather(*[_analyze_with_sem_sse(i) for i in cond_items], return_exceptions=True)
+                    img_map = {}
+                    for r in img_results:
+                        if isinstance(r, dict) and r.get("item_id") and r.get("image_score") is not None:
+                            img_map[r["item_id"]] = r
+                    for item in items:
+                        r = img_map.get(item.item_id)
+                        if not r:
+                            continue
+                        item.quality_score = round(item.quality_score * 0.6 + r["image_score"] * 0.4, 2)
+                        item.quality_flags = item.quality_flags + r.get("image_flags", [])
+                        if not r.get("is_complete_unit", True):
+                            item.quality_score = max(20.0, item.quality_score - 20)
+                            item.quality_flags.append("图片判断:疑似非整机")
+                        # 成色差+价格偏高：降权（质量分额外扣15）
+                        if r.get("price_penalty"):
+                            item.quality_score = max(10.0, item.quality_score - 15)
+                    yield f"event: step\ndata: {json.dumps({'text': f'成色分析完成', 'status': 'done'}, ensure_ascii=False)}\n\n"
 
         base_payload = {
             "type": "base",
