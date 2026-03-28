@@ -198,6 +198,7 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
+defineOptions({ name: 'HomeView' })
 import { getLoginState, openXianyuLogin, valuate } from '@/api/index.js'
 
 const keyword = ref('')
