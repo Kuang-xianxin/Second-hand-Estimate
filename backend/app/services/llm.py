@@ -288,7 +288,7 @@ async def call_doubao_vision(images: List[str], prompt: str) -> dict:
 
 
 async def analyze_item_images(item_id: str, title: str, images: List[str]) -> dict:
-    """分析单个商品图片，优先用 Qwen VL，失败时回退到豆包Vision"""
+    """分析单个商品图片，豆包+Qwen VL并发分析，取平均分"""
     if not images:
         return {"item_id": item_id, "image_score": None, "image_flags": [], "error": "无图片"}
     prompt = f"""你是二手相机成色鉴定专家。请仔细观察这些图片，对商品「{title}」进行成色评估。
@@ -300,25 +300,52 @@ async def analyze_item_images(item_id: str, title: str, images: List[str]) -> di
   "brief": "一句话总结"}}
 只返回JSON，不要其他内容。"""
 
-    # 优先使用 Qwen VL；不再回退到豆包（豆包接入点RPM过低易429）
-    data = await call_qwen_vision(images, prompt)
+    # 豆包 + Qwen VL 并发分析，取成功结果平均分
+    async def _safe_doubao():
+        if not settings.doubao_api_key:
+            return {"error": "未配置豆包"}
+        return await call_doubao_vision(images, prompt)
 
-    if data.get("error") or not data.get("condition_score"):
-        return {"item_id": item_id, "image_score": None, "image_flags": [], "error": data.get("error", "Qwen VL 返回为空")}
-    score = float(data.get("condition_score", 70))
-    is_complete = data.get("is_complete_unit", True)
-    defects = data.get("visible_defects", [])
-    brief = data.get("brief", "")
+    qwen_data, doubao_data = await asyncio.gather(
+        call_qwen_vision(images, prompt),
+        _safe_doubao(),
+        return_exceptions=True
+    )
+
+    # 收集有效结果
+    valid = []
+    all_defects = []
+    all_briefs = []
+    is_complete = True
+    for data in [qwen_data, doubao_data]:
+        if isinstance(data, Exception) or not isinstance(data, dict):
+            continue
+        if data.get("error") or not data.get("condition_score"):
+            continue
+        valid.append(float(data["condition_score"]))
+        if not data.get("is_complete_unit", True):
+            is_complete = False
+        all_defects.extend(data.get("visible_defects", [])[:2])
+        if data.get("brief"):
+            all_briefs.append(data["brief"])
+
+    if not valid:
+        return {"item_id": item_id, "image_score": None, "image_flags": [], "error": "两个模型均未返回有效结果"}
+
+    score = round(sum(valid) / len(valid), 1)
     flags = []
     if not is_complete:
         flags.append("图片判断:非整机")
-    for d in defects[:3]:
-        flags.append(f"图片缺陷:{d}")
-    if brief:
-        flags.append(f"图片总结:{brief}")
+    seen_defects = set()
+    for d in all_defects:
+        if d not in seen_defects:
+            flags.append(f"图片缺陷:{d}")
+            seen_defects.add(d)
+    if all_briefs:
+        flags.append(f"图片总结:{all_briefs[0]}")
     return {
         "item_id": item_id,
-        "image_score": round(score, 1),
+        "image_score": score,
         "is_complete_unit": is_complete,
         "image_flags": flags,
         "error": None,
