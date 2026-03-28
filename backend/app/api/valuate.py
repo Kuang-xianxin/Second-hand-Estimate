@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import logging
 import re
@@ -327,7 +327,10 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
     items_needing_images = [i for i in items if not i.images]
     if items_needing_images:
         logger.info(f"对 {len(items_needing_images)} 个无图商品补充详情页图片...")
-        await crawler.fetch_images_for_items(items, max_concurrent=5)
+        try:
+            await crawler.fetch_images_for_items(items, max_concurrent=3)
+        except Exception as img_e:
+            logger.warning(f"补图失败（已跳过）: {img_e}")
         has_images_count = len([i for i in items if i.images])
         logger.info(f"补图完成，{has_images_count}/{len(items)} 个商品有图片")
 
@@ -578,7 +581,10 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
         items_needing_images = [i for i in items if not i.images]
         if items_needing_images:
             yield f"event: step\ndata: {json.dumps({'text': f'正在补充 {len(items_needing_images)} 个商品的详情图片...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
-            await crawler.fetch_images_for_items(items, max_concurrent=5)
+            try:
+                await crawler.fetch_images_for_items(items, max_concurrent=3)
+            except Exception as img_e:
+                logger.warning(f"补图失败（已跳过）: {img_e}")
             has_images = len([i for i in items if i.images])
             yield f"event: step\ndata: {json.dumps({'text': f'补图完成，{has_images}/{len(items)} 个商品有图片', 'status': 'done'}, ensure_ascii=False)}\n\n"
 
