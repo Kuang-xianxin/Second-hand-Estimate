@@ -1,4 +1,4 @@
-import json
+﻿import json
 import asyncio
 import logging
 from typing import Optional, List
@@ -150,7 +150,7 @@ async def call_doubao(prompt: str) -> dict:
     if not settings.doubao_api_key:
         return {"error": "未配置豆包 API Key"}
     try:
-        async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
+        async with httpx.AsyncClient(timeout=settings.doubao_timeout_seconds) as client:
             resp = await client.post(
                 f"{settings.doubao_base_url.rstrip('/')}/chat/completions",
                 headers={"Authorization": f"Bearer {settings.doubao_api_key}"},
@@ -258,7 +258,7 @@ async def call_doubao_vision(images: List[str], prompt: str) -> dict:
     content.append({"type": "text", "text": prompt})
     for attempt in range(2):
         try:
-            async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=settings.doubao_timeout_seconds) as client:
                 resp = await client.post(
                     f"{settings.doubao_vision_base_url.rstrip('/')}/chat/completions",
                     headers={"Authorization": f"Bearer {settings.doubao_api_key}"},

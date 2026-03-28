@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode"
     doubao_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
     doubao_vision_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
-    llm_timeout_seconds: int = 30
+    llm_timeout_seconds: int = 60
+    doubao_timeout_seconds: int = 90
 
     database_url: str = "sqlite+aiosqlite:///./guessr.db"
     backend_port: int = 8000
