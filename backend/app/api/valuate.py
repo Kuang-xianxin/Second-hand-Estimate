@@ -607,7 +607,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                     async def _analyze_with_sem_sse(item):
                         async with sem_v:
                             await asyncio.sleep(0.3)
-                            return await analyze_item_images(item.item_id, item.title, item.images, price=item.price)
+                            return await analyze_item_images(item.item_id, item.title, item.images, price=item.price, base_price=pricing.base_price)
                     img_results = await asyncio.gather(*[_analyze_with_sem_sse(i) for i in cond_items], return_exceptions=True)
                     img_map = {}
                     for r in img_results:

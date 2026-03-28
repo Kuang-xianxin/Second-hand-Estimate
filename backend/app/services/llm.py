@@ -312,7 +312,7 @@ async def check_image_model_match(item_id: str, keyword: str, title: str, images
         pass
     return {"item_id": item_id, "match": True, "reason": "检查失败默认保留"}  # 失败默认保留
 
-async def analyze_item_images(item_id: str, title: str, images: List[str], price: float = 0.0) -> dict:
+async def analyze_item_images(item_id: str, title: str, images: List[str], price: float = 0.0, base_price: float = 0.0) -> dict:
     """分析单个商品图片成色（单模型，快速），并检查成色差时价格是否合理"""
     if not images:
         return {"item_id": item_id, "image_score": None, "image_flags": [], "error": "无图片"}
@@ -352,7 +352,9 @@ async def analyze_item_images(item_id: str, title: str, images: List[str], price
 
     # 成色很差（<45分）且价格偏高（>400元）时标记降权
     price_penalty = False
-    if score < 45 and price > 400:
+    # 成色很差且价格虚高：商品价格高于基准价的80%才触发降权（说明卖家没有体现成色折扣）
+    price_high_threshold = base_price * 0.8 if base_price > 0 else float('inf')
+    if score < 45 and price > 0 and price > price_high_threshold:
         flags.append("图片警告:成色差但价格偏高，已降权")
         price_penalty = True
 
