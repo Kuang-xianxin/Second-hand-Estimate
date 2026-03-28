@@ -785,6 +785,64 @@ async def get_history(
     ]
 
 
+
+
+@router.get("/history/{record_id}")
+async def get_history_detail(
+    record_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(ValuationRecord).where(ValuationRecord.id == record_id))
+    r = result.scalar_one_or_none()
+    if r is None:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    deepseek = {}
+    qwen_data = {}
+    doubao = {}
+    try:
+        deepseek = json.loads(r.deepseek_result) if r.deepseek_result else {}
+    except Exception:
+        pass
+    try:
+        qwen_raw = json.loads(r.qwen_result) if r.qwen_result else {}
+        doubao = qwen_raw.pop("doubao", {})
+        qwen_data = qwen_raw
+    except Exception:
+        pass
+    raw_prices = []
+    try:
+        raw_prices = json.loads(r.raw_prices) if r.raw_prices else []
+    except Exception:
+        pass
+    bargain_result = await db.execute(
+        select(BargainAlert)
+        .where(BargainAlert.created_at >= r.created_at)
+        .order_by(BargainAlert.created_at.asc())
+        .limit(20)
+    )
+    bargains = bargain_result.scalars().all()
+    return {
+        "id": r.id,
+        "keyword": r.keyword,
+        "base_price": r.base_price,
+        "price_min": r.price_min,
+        "price_max": r.price_max,
+        "sample_count": r.sample_count,
+        "raw_prices": raw_prices,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "llm_results": [x for x in [deepseek, qwen_data, doubao] if x],
+        "bargains": [
+            {
+                "item_id": b.item_id,
+                "title": b.title,
+                "price": b.price,
+                "estimated_price": b.estimated_price,
+                "profit_estimate": b.profit_estimate,
+                "url": b.url,
+            } for b in bargains
+        ],
+    }
+
 @router.get("/bargains")
 async def get_bargains(
     unread_only: bool = Query(False),

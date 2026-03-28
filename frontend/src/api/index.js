@@ -25,6 +25,11 @@ export async function getHistory(limit = 20) {
   return res.data
 }
 
+export async function getHistoryDetail(id) {
+  const res = await http.get(`/history/${id}`)
+  return res.data
+}
+
 export async function getBargains(unreadOnly = false) {
   const res = await http.get('/bargains', { params: { unread_only: unreadOnly } })
   return res.data
