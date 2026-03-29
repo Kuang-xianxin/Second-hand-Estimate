@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import logging
 import re
@@ -16,7 +16,7 @@ from app.models.item import CrawledItem, ValuationRecord, BargainAlert
 from app.crawler.xianyu import get_crawler
 from app.services.pricing import calculate_price
 from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, analyze_item_images, check_image_model_match, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
-from app.services.bargain import detect_bargains, filter_target_items
+from app.services.bargain import detect_bargains, filter_target_items, filter_target_items_with_reasons
 from app.config import settings
 
 router = APIRouter(prefix="/api", tags=["估价"])
@@ -542,8 +542,45 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             v1 = re.sub(r"\b(sx\s*\d+)\b", r"\1 is", keyword, flags=re.IGNORECASE)
             v2 = re.sub(r"\b(sx\s*\d+)\b", r"PowerShot \1 IS", keyword, flags=re.IGNORECASE)
             query_variants.extend([v1, v2])
+        # 型号后缀模糊扩展：用户常省略后缀字母，自动补全常见变体
+        # 例：j150 -> j150w/j150s；ixus130 -> ixus130hs；e620 -> e620s
+        # 型号后缀模糊扩展：用户常省略后缀字母，自动补全常见变体
+        # 例：j150 -> j150w/j150s；ixus130 -> ixus130hs；尼庶620 -> 尼庶e620
+        SUFFIX_RULES = [
+            # 富士J/Z/A/F/S系列：数字结尾补 w/s/f/fd
+            (r"(?:^|(?<=[^a-z]))([jzafsJZAFS]\d{3,4})$", ["w", "s", "f", "fd"]),
+            # 佳能IXUS补HS
+            (r"ixus\s*(\d{2,4})$", ["hs", " hs"]),
+            # 尼庶E系列：e620补e620s
+            (r"(?:^|(?<=[^a-z]))(e\d{3,4})$", ["s"]),
+            # 通用：纯数字结尾型号补w/s
+            (r"([a-z]{1,3}\d{3,4})$", ["w", "s"]),
+        ]
+        # 尼庶纯数字变体：用户输入「尼庶620」补全为「尼庶e620」
+        if camera_like and ('尼庶' in keyword or 'nikon' in kw_lower):
+            m_nikon = re.search(r'(\d{3,4})$', compact_keyword)
+            if m_nikon and not re.search(r'[a-z]\d{3,4}$', compact_keyword, re.IGNORECASE):
+                num = m_nikon.group(1)
+                query_variants.append('e' + num)
+                query_variants.append('尼庶e' + num)
+                query_variants.append('nikon e' + num)
+                query_variants.append('coolpix e' + num)
+        if camera_like:
+            for pattern, suffixes in SUFFIX_RULES:
+                m = re.search(pattern, compact_keyword, flags=re.IGNORECASE)
+                if m:
+                    for suf in suffixes:
+                        if not compact_keyword.lower().endswith(suf.lower().strip()):
+                            new_v = compact_keyword + suf
+                            query_variants.append(new_v)
+                            for cn in ["富士", "尼庶", "佳能", "索尼", "松下"]:
+                                if cn in keyword:
+                                    query_variants.append(cn + new_v)
+                                    break
+                    break
 
-        # 去重保序，限制最多5个变体避免爬取时间过长
+        # 去重保序，限制68个变体避免爬取时间过长
+        query_variants = list(dict.fromkeys([q.strip() for q in query_variants if q and q.strip()]))[:6]
         query_variants = list(dict.fromkeys([q.strip() for q in query_variants if q and q.strip()]))[:5]
 
         merged_items = []
@@ -571,14 +608,19 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                 await asyncio.sleep(2)
 
             yield f"event: step\ndata: {json.dumps({'text': f'规则筛选：{len(merged_items)} -> 规则筛中...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
-            rule_filtered = filter_target_items(merged_items, keyword)
-            yield f"event: step\ndata: {json.dumps({'text': f'规则筛选完成：保留 {len(rule_filtered)} 条', 'status': 'done'}, ensure_ascii=False)}\n\n"
+            rule_filtered, rule_filtered_out = filter_target_items_with_reasons(merged_items, keyword)
+            yield f"event: step\ndata: {json.dumps({'text': f'规则筛选完成：保留 {len(rule_filtered)} 条', 'status': 'done', 'filtered_out': rule_filtered_out}, ensure_ascii=False)}\n\n"
             yield f"event: step\ndata: {json.dumps({'text': f'LLM精筛中（{len(rule_filtered)} 条）...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
             llm_input = [{"item_id": i.item_id, "title": i.title, "description": i.description, "price": i.price} for i in rule_filtered]
             llm_filtered = await classify_camera_items_by_llm(keyword, llm_input)
             keep_ids = {str(x.get("item_id", "")) for x in llm_filtered}
-            items = [i for i in rule_filtered if i.item_id in keep_ids] if keep_ids else []
-            yield f"event: step\ndata: {json.dumps({'text': f'LLM精筛完成：保留 {len(items)} 条有效样本', 'status': 'done'}, ensure_ascii=False)}\n\n"
+            llm_kept = [i for i in rule_filtered if i.item_id in keep_ids] if keep_ids else []
+            llm_filtered_out = [
+                {"title": i.title, "price": i.price, "reason": "LLM判断不符"}
+                for i in rule_filtered if i.item_id not in keep_ids
+            ]
+            items = llm_kept
+            yield f"event: step\ndata: {json.dumps({'text': f'LLM精筛完成：保留 {len(items)} 条有效样本', 'status': 'done', 'filtered_out': llm_filtered_out}, ensure_ascii=False)}\n\n"
 
             min_keep = 10 if camera_like else 6
             if len(items) < min_keep and len(rule_filtered) >= min_keep:
@@ -633,7 +675,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                         logger.info(f"图片型号不符排除: {r['item_id']} - {r.get('reason', '')}")  
                 # 排除型号不符的样本
                 items = [i for i in items if i.item_id not in mismatch_ids]
-                yield f"event: step\ndata: {json.dumps({'text': f'型号核查完成：排除 {len(mismatch_ids)} 个不符样本，剩余 {len(items)} 条', 'status': 'done'}, ensure_ascii=False)}\n\n"
+                yield f"event: step\ndata: {json.dumps({'text': f'型号核查完成：排除 {len(mismatch_ids)} 个不符样本，剩余 {len(items)} 条', 'status': 'done', 'filtered_out': [{"title": it.title, "price": it.price, "reason": next((r.get("reason", "图片型号不符") for r in match_results if isinstance(r, dict) and r.get("item_id") == it.item_id), "图片型号不符")} for it in img_items if it.item_id in mismatch_ids]}, ensure_ascii=False)}\n\n"
 
                 # 第二步：对成色可疑的样本做成色分析（质量分<70或标题含成色差词）
                 POOR_COND_WORDS = ['磨损', '划痕', '刮花', '碰撞', '摔', '瑕疵', '故障', '维修', '零件机']
@@ -665,7 +707,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                         # 成色差+价格偏高：降权（质量分额外扣15）
                         if r.get("price_penalty"):
                             item.quality_score = max(10.0, item.quality_score - 15)
-                    yield f"event: step\ndata: {json.dumps({'text': f'成色分析完成', 'status': 'done'}, ensure_ascii=False)}\n\n"
+                    yield f"event: step\ndata: {json.dumps({'text': f'成色分析完成', 'status': 'done', 'filtered_out': [{'title': it.title, 'price': it.price, 'reason': '、'.join(img_map[it.item_id].get("image_flags", ["成色分析"])) if img_map.get(it.item_id) else '成色分析'} for it in cond_items if img_map.get(it.item_id)]}, ensure_ascii=False)}\n\n"
 
         base_payload = {
             "type": "base",

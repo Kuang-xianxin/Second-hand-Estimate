@@ -48,19 +48,31 @@
     <!-- 进度时间线 -->
     <section v-if="steps.length" class="steps-section">
       <div class="steps-list">
-        <div
-          v-for="step in steps"
-          :key="step.id"
-          class="step-item"
-          :class="'step-' + step.status"
-        >
-          <span class="step-icon">
-            <span v-if="step.status === 'done'">✓</span>
-            <span v-else-if="step.status === 'error'">✗</span>
-            <span v-else class="step-spinner"></span>
-          </span>
-          <span class="step-text">{{ step.text }}</span>
-        </div>
+        <template v-for="step in steps" :key="step.id">
+          <div
+            class="step-item"
+            :class="['step-' + step.status, step.filteredOut?.length ? 'step-expandable' : '']"
+            @click="step.filteredOut?.length && (step.expanded = !step.expanded)"
+          >
+            <span class="step-icon">
+              <span v-if="step.status === 'done'">✓</span>
+              <span v-else-if="step.status === 'error'">✗</span>
+              <span v-else class="step-spinner"></span>
+            </span>
+            <span class="step-text">{{ step.text }}</span>
+            <span v-if="step.filteredOut?.length" class="step-expand-hint">
+              {{ step.expanded ? '▲' : '▼' }} {{ step.filteredOut.length }} 条被筛除
+            </span>
+          </div>
+          <div v-if="step.expanded && step.filteredOut?.length" class="filtered-out-block">
+            <div class="filtered-out-title">被筛除详情</div>
+            <div v-for="(item, idx) in step.filteredOut" :key="idx" class="filtered-out-item">
+              <span class="fo-reason">{{ item.reason }}</span>
+              <span class="fo-title">{{ item.title }}</span>
+              <span class="fo-price">¥{{ item.price }}</span>
+            </div>
+          </div>
+        </template>
       </div>
     </section>
 
@@ -207,16 +219,17 @@ const error = ref('')
 const result = ref(null)
 const steps = ref([])  // 进度步骤列表
 
-function addStep(text, status = 'done') {
-  steps.value.push({ text, status, id: Date.now() + Math.random() })
+function addStep(text, status = 'done', filteredOut = []) {
+  steps.value.push({ text, status, id: Date.now() + Math.random(), filteredOut, expanded: false })
 }
 function setLastStepPending(text) {
-  steps.value.push({ text, status: 'pending', id: Date.now() + Math.random() })
+  steps.value.push({ text, status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
 }
-function resolveLastPending(text) {
+function resolveLastPending(text, filteredOut = []) {
   const last = [...steps.value].reverse().find(s => s.status === 'pending')
   if (last) last.status = 'done'
   if (text) last && (last.text = text)
+  if (filteredOut.length) last && (last.filteredOut = filteredOut)
 }
 
 const isLoggedIn = ref(false)
@@ -333,7 +346,7 @@ async function doValuate() {
               if (payload.status === 'pending') {
                 setLastStepPending(payload.text)
               } else {
-                resolveLastPending(payload.text)
+                resolveLastPending(payload.text, payload.filtered_out || [])
               }
             } else if (evtType === 'base') {
               resolveLastPending(`爬取完成，获得 ${payload.sample_count} 条有效样本`)
@@ -888,6 +901,73 @@ onMounted(() => {
   font-family: var(--font-mono);
   transition: opacity 0.3s;
 }
+
+.step-expandable {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: 0 -4px;
+}
+.step-expandable:hover { background: var(--bg3); }
+
+.step-expand-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text2);
+  white-space: nowrap;
+}
+
+.filtered-out-block {
+  margin: 2px 0 8px 24px;
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+}
+
+.filtered-out-title {
+  font-size: 11px;
+  color: var(--text2);
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.filtered-out-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--bg3);
+  border-radius: 4px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.fo-reason {
+  color: var(--red);
+  font-size: 11px;
+  background: rgba(224,92,92,0.12);
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.fo-title {
+  flex: 1;
+  color: var(--text2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fo-price {
+  color: var(--text2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
 
 .step-done { color: var(--green); }
 .step-pending { color: var(--text2); }

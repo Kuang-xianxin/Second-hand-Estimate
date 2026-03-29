@@ -124,8 +124,17 @@ def _ccd_model_mismatch(keyword: str, title: str) -> bool:
 
     kw_tokens = _extract_model_tokens(keyword)
     item_tokens = _extract_model_tokens(title)
-    if kw_tokens and item_tokens and kw_tokens.isdisjoint(item_tokens):
-        return True
+    if kw_tokens and item_tokens:
+        # 允许前缀匹配：j150 匹配 j150w，j150w 匹配 j150
+        # 只要任意一对 token 互为前缀关系就认为匹配
+        def _tokens_overlap(a, b):
+            for ta in a:
+                for tb in b:
+                    if ta == tb or ta.startswith(tb) or tb.startswith(ta):
+                        return True
+            return False
+        if not _tokens_overlap(kw_tokens, item_tokens):
+            return True
 
     return False
 
@@ -144,13 +153,25 @@ def _is_risky_by_category(item, category: Literal["phone", "ccd", "other"]) -> b
 
 def filter_target_items(items: list, query_keyword: str) -> list:
     """仅按型号一致性过滤样本（估价主流程），配件/故障判断交给LLM"""
+    kept, _ = filter_target_items_with_reasons(items, query_keyword)
+    return kept
+
+
+def filter_target_items_with_reasons(items: list, query_keyword: str):
+    """返回 (kept, filtered_out)，filtered_out 是被排除条目的原因列表"""
     category = _infer_category(query_keyword)
     kept = []
+    filtered_out = []
     for item in items:
         if _is_model_mismatch(query_keyword, item.title, category):
+            filtered_out.append({
+                "title": item.title,
+                "price": item.price,
+                "reason": "型号不符",
+            })
             continue
         kept.append(item)
-    return kept
+    return kept, filtered_out
 
 
 def _is_model_mismatch(query_keyword: str, item_title: str, category: Literal["phone", "ccd", "other"]) -> bool:
