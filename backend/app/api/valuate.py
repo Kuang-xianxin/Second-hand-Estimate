@@ -2,25 +2,29 @@ import asyncio
 import json
 import logging
 import re
+import uuid
 import webbrowser
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict
 from pathlib import Path
 
 from app.models.database import get_db
 from app.models.item import CrawledItem, ValuationRecord, BargainAlert
 from app.crawler.xianyu import get_crawler
 from app.services.pricing import calculate_price
-from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, analyze_item_images, check_image_model_match, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
+from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, analyze_item_images, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
 from app.services.bargain import detect_bargains, filter_target_items, filter_target_items_with_reasons
 from app.config import settings
 
 router = APIRouter(prefix="/api", tags=["估价"])
 logger = logging.getLogger(__name__)
+
+# 内存中的流式任务控制器：支持并行估价 + 按任务停止
+stream_task_controls: Dict[str, Dict[str, object]] = {}
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 STORAGE_STATE_FILE = BASE_DIR / "xianyu_storage_state.json"
@@ -179,18 +183,81 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
     compact_keyword = re.sub(r"\s+", "", keyword)
     camera_like = bool(re.search(r"(canon|nikon|sony|佳能|索尼|尼康|富士|松下|奥林巴斯|sx\s*\d|rx\s*\d|a\s*\d)", keyword, flags=re.IGNORECASE))
 
-    query_variants = [keyword]
-    if compact_keyword and compact_keyword != keyword:
+    # 优先保留用户原始输入作为第一个搜索词，其次是规范化后的英文关键词
+    query_variants = [original_keyword]
+    if keyword != original_keyword:
+        query_variants.append(keyword)
+    if compact_keyword and compact_keyword not in query_variants:
         query_variants.append(compact_keyword)
 
-    # 型号词补全：例如 sx500 -> sx500 is / powershot sx500 is
+    # 品牌前缀变体
+    BRAND_PREFIX_MAP = {
+        r"ixus\s*\d": [("canon ixus", "佳能 ixus")],
+        r"powershot": [("canon powershot", "佳能")],
+        r"ixy\s*\d": [("canon ixy", "佳能 ixy")],
+        r"dsc-": [("sony", "索尼")],
+        r"cyber.shot": [("sony", "索尼")],
+        r"\brx\s*\d": [("sony rx", "索尼 rx")],
+        r"coolpix": [("nikon coolpix", "尼康 coolpix")],
+        r"finepix": [("fujifilm", "富士")],
+        r"lumix": [("panasonic lumix", "松下 lumix")],
+        r"\bsx\s*\d+\b": [("powershot sx", "佳能 sx")],
+    }
+    kw_lower = keyword.lower()
+    for pattern, pairs in BRAND_PREFIX_MAP.items():
+        if re.search(pattern, kw_lower):
+            for en_prefix, cn_prefix in pairs:
+                query_variants.append(f"{en_prefix} {compact_keyword}".strip())
+                query_variants.append(f"{cn_prefix}{compact_keyword}".strip())
+            break
+
+    # SX系列补全：sx500 -> sx500 is / powershot sx500 is
     if camera_like and re.search(r"\bsx\s*\d+\b", keyword, flags=re.IGNORECASE):
         v1 = re.sub(r"\b(sx\s*\d+)\b", r"\1 is", keyword, flags=re.IGNORECASE)
         v2 = re.sub(r"\b(sx\s*\d+)\b", r"PowerShot \1 IS", keyword, flags=re.IGNORECASE)
         query_variants.extend([v1, v2])
 
-    # 去重保序
-    query_variants = list(dict.fromkeys([q.strip() for q in query_variants if q and q.strip()]))
+    # 型号后缀扩展：j150 -> j150w/j150s；ixus130 -> ixus130hs；e620 -> e620s
+    SUFFIX_RULES = [
+        (r"(?:^|(?<=[^a-z]))([jzafsJZAFS]\d{3,4})$", ["w", "s", "f", "fd"]),
+        (r"ixus\s*(\d{2,4})$", ["hs", " hs"]),
+        (r"(?:^|(?<=[^a-z]))(e\d{3,4})$", ["s"]),
+        (r"([a-z]{1,3}\d{3,4})$", ["w", "s"]),
+    ]
+
+    if camera_like and ('尼康' in keyword or 'nikon' in kw_lower):
+        m_nikon = re.search(r'(\d{3,4})$', compact_keyword)
+        if m_nikon and not re.search(r'[a-z]\d{3,4}$', compact_keyword, re.IGNORECASE):
+            num = m_nikon.group(1)
+            query_variants.extend([f'e{num}', f'尼康e{num}', f'nikon e{num}', f'coolpix e{num}'])
+
+    # 富士 J/Z/A/F/S 系列：显式补齐字母后缀（j150 -> j150w）
+    if camera_like and ('富士' in keyword or 'fuji' in kw_lower or 'fujifilm' in kw_lower):
+        m_fuji = re.search(r'([jzafs]\d{3,4})$', compact_keyword, flags=re.IGNORECASE)
+        if m_fuji:
+            model = m_fuji.group(1).lower()
+            query_variants.extend([
+                model + 'w',
+                f'finepix {model}w',
+                f'富士{model}w',
+            ])
+
+    if camera_like:
+        for pattern, suffixes in SUFFIX_RULES:
+            m = re.search(pattern, compact_keyword, flags=re.IGNORECASE)
+            if m:
+                for suf in suffixes:
+                    if not compact_keyword.lower().endswith(suf.lower().strip()):
+                        new_v = compact_keyword + suf
+                        query_variants.append(new_v)
+                        for cn in ["富士", "尼康", "佳能", "索尼", "松下"]:
+                            if cn in keyword:
+                                query_variants.append(cn + new_v)
+                                break
+                break
+
+    # 去重保序，适度放宽变体数量
+    query_variants = list(dict.fromkeys([q.strip() for q in query_variants if q and q.strip()]))[:8]
 
     try:
         merged_items = []
@@ -402,13 +469,16 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
         ),
     )
     db.add(record)
+    await db.flush()
 
     for b in bargains:
         existing = await db.execute(
             select(BargainAlert).where(BargainAlert.item_id == b.item_id)
         )
-        if existing.scalar_one_or_none() is None:
+        exists_alert = existing.scalar_one_or_none()
+        if exists_alert is None:
             db.add(BargainAlert(
+                valuation_record_id=record.id,
                 item_id=b.item_id,
                 title=b.title,
                 price=b.price,
@@ -416,6 +486,8 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
                 profit_estimate=b.profit_estimate,
                 url=b.url,
             ))
+        elif exists_alert.valuation_record_id is None:
+            exists_alert.valuation_record_id = record.id
     await db.commit()
 
     return {
@@ -483,15 +555,66 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
     }
 
 
+def _register_stream_task(task_id: str):
+    stream_task_controls[task_id] = {
+        "stop": asyncio.Event(),
+        "finished": False,
+    }
+
+
+def _is_stream_task_stopped(task_id: str) -> bool:
+    state = stream_task_controls.get(task_id)
+    if not state:
+        return False
+    stop_event = state.get("stop")
+    return bool(isinstance(stop_event, asyncio.Event) and stop_event.is_set())
+
+
+def _mark_stream_task_finished(task_id: str):
+    state = stream_task_controls.get(task_id)
+    if state:
+        state["finished"] = True
+
+
+@router.post("/valuate/stop/{task_id}")
+async def stop_valuate_task(task_id: str):
+    state = stream_task_controls.get(task_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="估价任务不存在")
+    stop_event = state.get("stop")
+    if isinstance(stop_event, asyncio.Event):
+        stop_event.set()
+    return {"ok": True, "task_id": task_id, "message": "已请求停止任务"}
+
+
+@router.get("/valuate/tasks")
+async def get_valuate_tasks():
+    return [
+        {
+            "task_id": task_id,
+            "finished": bool(state.get("finished", False)),
+            "stopped": bool(isinstance(state.get("stop"), asyncio.Event) and state["stop"].is_set()),
+        }
+        for task_id, state in stream_task_controls.items()
+    ]
+
+
 @router.post("/valuate/stream")
-async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
+async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db), task_id: Optional[str] = Query(None)):
     """SSE 流式估价：爬取完立即推送基础数据，大模型结果谁先完成先推送谁。"""
+    task_id = (task_id or str(uuid.uuid4())).strip()
+    _register_stream_task(task_id)
     original_keyword = req.keyword.strip()
     keyword = _canonicalize_keyword(original_keyword)
     if not keyword:
         raise HTTPException(status_code=400, detail="关键词不能为空")
 
     async def event_stream():
+        yield f"event: start\ndata: {json.dumps({'task_id': task_id}, ensure_ascii=False)}\n\n"
+        if _is_stream_task_stopped(task_id):
+            yield f"event: stopped\ndata: {json.dumps({'task_id': task_id, 'detail': '任务已停止'}, ensure_ascii=False)}\n\n"
+            _mark_stream_task_finished(task_id)
+            return
         # ---- 阶段1：爬取 + 算法估价 ----
         crawler = get_crawler()
         compact_keyword = re.sub(r"\s+", "", keyword)
@@ -499,8 +622,11 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             r"(canon|nikon|sony|佳能|索尼|尼康|富士|松下|奥林巴斯|sx\s*\d|rx\s*\d|a\s*\d)",
             keyword, flags=re.IGNORECASE
         ))
-        query_variants = [keyword]
-        if compact_keyword and compact_keyword != keyword:
+        # 流式场景同样保证第一个 query 就是用户原始输入，避免“索尼T300”被直接规范成 “Sony T300”
+        query_variants = [original_keyword]
+        if keyword != original_keyword:
+            query_variants.append(keyword)
+        if compact_keyword and compact_keyword not in query_variants:
             query_variants.append(compact_keyword)
 
         # 品牌前缀变体映射
@@ -556,15 +682,24 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             # 通用：纯数字结尾型号补w/s
             (r"([a-z]{1,3}\d{3,4})$", ["w", "s"]),
         ]
-        # 尼庶纯数字变体：用户输入「尼庶620」补全为「尼庶e620」
-        if camera_like and ('尼庶' in keyword or 'nikon' in kw_lower):
+        # 尼康纯数字变体：用户输入「尼康620」补全为「尼康e620」
+        if camera_like and ('尼康' in keyword or 'nikon' in kw_lower):
             m_nikon = re.search(r'(\d{3,4})$', compact_keyword)
             if m_nikon and not re.search(r'[a-z]\d{3,4}$', compact_keyword, re.IGNORECASE):
                 num = m_nikon.group(1)
                 query_variants.append('e' + num)
-                query_variants.append('尼庶e' + num)
+                query_variants.append('尼康e' + num)
                 query_variants.append('nikon e' + num)
                 query_variants.append('coolpix e' + num)
+
+        # 富士 J/Z/A/F/S 系列：显式补齐字母后缀（j150 -> j150w）
+        if camera_like and ('富士' in keyword or 'fuji' in kw_lower or 'fujifilm' in kw_lower):
+            m_fuji = re.search(r'([jzafs]\d{3,4})$', compact_keyword, flags=re.IGNORECASE)
+            if m_fuji:
+                model = m_fuji.group(1).lower()
+                query_variants.append(model + 'w')
+                query_variants.append(f'finepix {model}w')
+                query_variants.append(f'富士{model}w')
         if camera_like:
             for pattern, suffixes in SUFFIX_RULES:
                 m = re.search(pattern, compact_keyword, flags=re.IGNORECASE)
@@ -573,15 +708,14 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                         if not compact_keyword.lower().endswith(suf.lower().strip()):
                             new_v = compact_keyword + suf
                             query_variants.append(new_v)
-                            for cn in ["富士", "尼庶", "佳能", "索尼", "松下"]:
+                            for cn in ["富士", "尼康", "佳能", "索尼", "松下"]:
                                 if cn in keyword:
                                     query_variants.append(cn + new_v)
                                     break
                     break
 
-        # 去重保序，限制68个变体避免爬取时间过长
-        query_variants = list(dict.fromkeys([q.strip() for q in query_variants if q and q.strip()]))[:6]
-        query_variants = list(dict.fromkeys([q.strip() for q in query_variants if q and q.strip()]))[:5]
+        # 去重保序，放宽变体数量，提升召回
+        query_variants = list(dict.fromkeys([q.strip() for q in query_variants if q and q.strip()]))[:8]
 
         merged_items = []
         seen_ids = set()
@@ -590,7 +724,15 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
 
         try:
             for round_i in range(2):
+                if _is_stream_task_stopped(task_id):
+                    yield f"event: stopped\ndata: {json.dumps({'task_id': task_id, 'detail': '任务已停止'}, ensure_ascii=False)}\n\n"
+                    _mark_stream_task_finished(task_id)
+                    return
                 for q in query_variants:
+                    if _is_stream_task_stopped(task_id):
+                        yield f"event: stopped\ndata: {json.dumps({'task_id': task_id, 'detail': '任务已停止'}, ensure_ascii=False)}\n\n"
+                        _mark_stream_task_finished(task_id)
+                        return
                     yield f"event: step\ndata: {json.dumps({'text': f'第{round_i+1}轮[{q}]：正在爬取...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
                     batch = await crawler.search(
                         q, max_items=per_query_max_items,
@@ -643,10 +785,12 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                 yield f"event: step\ndata: {json.dumps({'text': f'样本补充完成：最终样本 {len(items)} 条（含规则筛通过的补充项）', 'status': 'done'}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
+            _mark_stream_task_finished(task_id)
             yield f"event: error\ndata: {json.dumps({'detail': repr(e)}, ensure_ascii=False)}\n\n"
             return
 
         if len(items) < 3:
+            _mark_stream_task_finished(task_id)
             yield f"event: error\ndata: {json.dumps({'detail': '有效样本不足，请换关键词重试'}, ensure_ascii=False)}\n\n"
             return
 
@@ -662,22 +806,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             img_items = [i for i in items if i.images]
             yield f"event: step\ndata: {json.dumps({'text': f'图片核查中（{len(img_items)} 个有图样本）...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
             if img_items:
-                # 第一步：轻量型号核查，过滤图片与目标型号明显不符的样本
-                sem_check = asyncio.Semaphore(5)
-                async def _check_match(item):
-                    async with sem_check:
-                        return await check_image_model_match(item.item_id, keyword, item.title, item.images[:1])
-                match_results = await asyncio.gather(*[_check_match(i) for i in img_items], return_exceptions=True)
-                mismatch_ids = set()
-                for r in match_results:
-                    if isinstance(r, dict) and not r.get("match", True):
-                        mismatch_ids.add(r["item_id"])
-                        logger.info(f"图片型号不符排除: {r['item_id']} - {r.get('reason', '')}")  
-                # 排除型号不符的样本
-                items = [i for i in items if i.item_id not in mismatch_ids]
-                yield f"event: step\ndata: {json.dumps({'text': f'型号核查完成：排除 {len(mismatch_ids)} 个不符样本，剩余 {len(items)} 条', 'status': 'done', 'filtered_out': [{"title": it.title, "price": it.price, "reason": next((r.get("reason", "图片型号不符") for r in match_results if isinstance(r, dict) and r.get("item_id") == it.item_id), "图片型号不符")} for it in img_items if it.item_id in mismatch_ids]}, ensure_ascii=False)}\n\n"
-
-                # 第二步：对成色可疑的样本做成色分析（质量分<70或标题含成色差词）
+                # 对成色可疑的样本做成色分析（质量分<70或标题含成色差词）
                 POOR_COND_WORDS = ['磨损', '划痕', '刮花', '碰撞', '摔', '瑕疵', '故障', '维修', '零件机']
                 def _needs_condition_check(item):
                     text = (item.title + " " + (item.description or "")).lower()
@@ -751,6 +880,12 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
         pending = set(tasks.keys())
         llm_results_collected = []
         while pending:
+            if _is_stream_task_stopped(task_id):
+                for p in pending:
+                    p.cancel()
+                yield f"event: stopped\ndata: {json.dumps({'task_id': task_id, 'detail': '任务已停止'}, ensure_ascii=False)}\n\n"
+                _mark_stream_task_finished(task_id)
+                return
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             for t in done:
                 v = t.result()
@@ -767,6 +902,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                 }
                 yield f"event: llm\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
+        _mark_stream_task_finished(task_id)
         yield "event: done\ndata: {}\n\n"
 
         # 存储记录
@@ -781,19 +917,30 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             r0 = next((x for x in llm_results_collected if x["model"] == settings.deepseek_model), {})
             r1 = next((x for x in llm_results_collected if x["model"] == settings.qwen_model), {})
             r2 = next((x for x in llm_results_collected if x["model"] == settings.doubao_model), {})
-            db.add(ValuationRecord(
+            record = ValuationRecord(
                 keyword=keyword,
                 base_price=pricing.base_price, price_min=pricing.price_min, price_max=pricing.price_max,
                 sample_count=pricing.sample_count, raw_prices=json.dumps(pricing.raw_prices),
                 deepseek_result=json.dumps(r0, ensure_ascii=False),
                 qwen_result=json.dumps({**r1, "doubao": r2}, ensure_ascii=False),
-            ))
+            )
+            db.add(record)
+            await db.flush()
             for b in bargains:
                 ex = await db.execute(select(BargainAlert).where(BargainAlert.item_id == b.item_id))
-                if ex.scalar_one_or_none() is None:
-                    db.add(BargainAlert(item_id=b.item_id, title=b.title, price=b.price,
-                                        estimated_price=b.estimated_price,
-                                        profit_estimate=b.profit_estimate, url=b.url))
+                ex_alert = ex.scalar_one_or_none()
+                if ex_alert is None:
+                    db.add(BargainAlert(
+                        valuation_record_id=record.id,
+                        item_id=b.item_id,
+                        title=b.title,
+                        price=b.price,
+                        estimated_price=b.estimated_price,
+                        profit_estimate=b.profit_estimate,
+                        url=b.url,
+                    ))
+                elif ex_alert.valuation_record_id is None:
+                    ex_alert.valuation_record_id = record.id
             await db.commit()
         except Exception as e:
             logger.warning(f"SSE 存储记录失败: {e}")
@@ -858,7 +1005,7 @@ async def get_history_detail(
         pass
     bargain_result = await db.execute(
         select(BargainAlert)
-        .where(BargainAlert.created_at >= r.created_at)
+        .where(BargainAlert.valuation_record_id == r.id)
         .order_by(BargainAlert.created_at.asc())
         .limit(20)
     )

@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     qwen_api_key: Optional[str] = None
     doubao_api_key: Optional[str] = None
 
-    deepseek_model: str = "deepseek-chat"
+    deepseek_model: str = "deepseek-reasoner"
     qwen_model: str = "qwen-max"
     qwen_vision_model: str = "qwen-vl-max"
     qwen_vision_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode"
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode"
     doubao_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
     doubao_vision_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
-    llm_timeout_seconds: int = 60
+    llm_timeout_seconds: int = 120
     doubao_timeout_seconds: int = 90
 
     database_url: str = "sqlite+aiosqlite:///./guessr.db"

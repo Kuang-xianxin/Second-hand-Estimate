@@ -10,12 +10,16 @@
           class="search-input"
           placeholder="例如：iPhone 15 Pro 256G"
           @keydown.enter="doValuate"
-          :disabled="loading"
+          :disabled="false"
         />
-        <button class="search-btn" @click="doValuate" :disabled="loading">
+        <button class="search-btn" @click="doValuate" :disabled="checkingLogin">
           <span v-if="!loading">开始估价</span>
           <span v-else class="loading-dots">分析中<span>.</span><span>.</span><span>.</span></span>
         </button>
+      </div>
+      <div class="task-actions">
+        <button class="task-btn" @click="doValuate" :disabled="checkingLogin">新增并行估价</button>
+        <button class="task-btn stop" @click="stopCurrentTask" :disabled="!loading || !currentTaskId">停止当前估价</button>
       </div>
       <div class="login-tip">
         <div class="login-tip-title">请先完成一次闲鱼登录授权</div>
@@ -43,6 +47,21 @@
         </div>
       </div>
       <p v-if="error" class="error-msg">{{ error }}</p>
+      <div v-if="tasks.length" class="task-tabs">
+        <button
+          v-for="t in tasks"
+          :key="t.id"
+          class="task-tab"
+          :class="{ active: t.id === currentTaskId }"
+          @click="selectTask(t.id)"
+        >
+          <span class="task-tab-keyword">{{ t.keyword }}</span>
+          <span class="task-tab-status" :class="t.loading ? 'running' : (t.error ? 'failed' : 'done')">
+            {{ t.loading ? '进行中' : (t.error ? '失败' : '完成') }}
+          </span>
+          <span class="task-tab-remove" title="删除该任务" @click.stop="removeTask(t.id)">×</span>
+        </button>
+      </div>
     </section>
 
     <!-- 进度时间线 -->
@@ -61,11 +80,18 @@
             </span>
             <span class="step-text">{{ step.text }}</span>
             <span v-if="step.filteredOut?.length" class="step-expand-hint">
-              {{ step.expanded ? '▲' : '▼' }} {{ step.filteredOut.length }} 条被筛除
+              <template v-if="stepDetailKind(step) === 'condition'">
+                {{ step.expanded ? '▲' : '▼' }} {{ step.filteredOut.length }} 条成色分析记录
+              </template>
+              <template v-else>
+                {{ step.expanded ? '▲' : '▼' }} {{ step.filteredOut.length }} 条被筛除
+              </template>
             </span>
           </div>
           <div v-if="step.expanded && step.filteredOut?.length" class="filtered-out-block">
-            <div class="filtered-out-title">被筛除详情</div>
+            <div class="filtered-out-title">
+              {{ stepDetailKind(step) === 'condition' ? '成色分析详情' : '被筛除详情' }}
+            </div>
             <div v-for="(item, idx) in step.filteredOut" :key="idx" class="filtered-out-item">
               <span class="fo-reason">{{ item.reason }}</span>
               <span class="fo-title">{{ item.title }}</span>
@@ -211,25 +237,82 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 defineOptions({ name: 'HomeView' })
-import { getLoginState, openXianyuLogin, valuate } from '@/api/index.js'
+import { getLoginState, openXianyuLogin, stopValuateTask } from '@/api/index.js'
 
 const keyword = ref('')
 const loading = ref(false)
 const error = ref('')
 const result = ref(null)
-const steps = ref([])  // 进度步骤列表
+const steps = ref([])  // 当前选中任务的进度
+const currentTaskId = ref('')
+const activeController = ref(null)
+const tasks = ref([])
 
-function addStep(text, status = 'done', filteredOut = []) {
-  steps.value.push({ text, status, id: Date.now() + Math.random(), filteredOut, expanded: false })
+function buildTask(keywordText) {
+  return {
+    id: `task-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    keyword: keywordText,
+    loading: true,
+    error: '',
+    result: null,
+    steps: [{ text: '正在爬取闲鱼数据...', status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false }],
+    partial: {
+      keyword: keywordText,
+      sample_count: 0,
+      algorithm: null,
+      quality_summary: null,
+      llm_results: [],
+      samples: [],
+      bargains: [],
+    },
+  }
 }
-function setLastStepPending(text) {
-  steps.value.push({ text, status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
+
+function syncViewByTask(task) {
+  if (!task) return
+  loading.value = !!task.loading
+  error.value = task.error || ''
+  result.value = task.result
+  steps.value = task.steps
 }
-function resolveLastPending(text, filteredOut = []) {
-  const last = [...steps.value].reverse().find(s => s.status === 'pending')
-  if (last) last.status = 'done'
-  if (text) last && (last.text = text)
-  if (filteredOut.length) last && (last.filteredOut = filteredOut)
+
+function selectTask(taskId) {
+  const task = tasks.value.find(t => t.id === taskId)
+  if (!task) return
+  currentTaskId.value = taskId
+  syncViewByTask(task)
+}
+
+async function removeTask(taskId) {
+  const idx = tasks.value.findIndex(t => t.id === taskId)
+  if (idx < 0) return
+  const target = tasks.value[idx]
+
+  if (target.loading) {
+    try {
+      await stopValuateTask(target.id)
+    } catch {}
+    if (currentTaskId.value === target.id && activeController.value) {
+      activeController.value.abort()
+      activeController.value = null
+    }
+  }
+
+  tasks.value.splice(idx, 1)
+
+  if (currentTaskId.value === taskId) {
+    const nextTask = tasks.value[0]
+    if (nextTask) {
+      currentTaskId.value = nextTask.id
+      syncViewByTask(nextTask)
+    } else {
+      currentTaskId.value = ''
+      loading.value = false
+      error.value = ''
+      result.value = null
+      steps.value = []
+    }
+  }
 }
 
 const isLoggedIn = ref(false)
@@ -244,10 +327,11 @@ function parseErrorText(e) {
   return e?.message || '请求失败，请检查后端是否启动'
 }
 
-function shouldPromptLogin(e) {
-  const status = e?.response?.status
-  const text = parseErrorText(e)
-  return status === 401 || /登录态|请先登录|重新登录/.test(text)
+/** 时间线里带展开列表的步骤：成色分析是「记录」而非「筛除」 */
+function stepDetailKind(step) {
+  const t = step?.text || ''
+  if (t.includes('成色分析完成')) return 'condition'
+  return 'filter'
 }
 
 async function checkLoginState() {
@@ -279,6 +363,26 @@ async function confirmLoginDone() {
   if (isLoggedIn.value) showLoginModal.value = false
 }
 
+async function stopCurrentTask() {
+  if (!currentTaskId.value) return
+  const task = tasks.value.find(t => t.id === currentTaskId.value)
+  if (!task || !task.loading) return
+
+  try {
+    await stopValuateTask(task.id)
+  } catch {}
+
+  if (activeController.value) {
+    activeController.value.abort()
+    activeController.value = null
+  }
+
+  task.loading = false
+  task.error = '已手动停止'
+  task.steps.push({ text: '已停止当前估价任务', status: 'error', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
+  syncViewByTask(task)
+}
+
 async function doValuate() {
   if (!keyword.value.trim()) return
   if (checkingLogin.value) return
@@ -287,37 +391,20 @@ async function doValuate() {
     return
   }
 
-  loading.value = true
-  error.value = ''
-  result.value = null
-  steps.value = []
-  setLastStepPending('正在爬取闲鱼数据...')
+  const task = buildTask(keyword.value.trim())
+  tasks.value.unshift(task)
+  selectTask(task.id)
 
-  // 初始化结果骨架，大模型列表为空数组，边收边填
-  const partial = {
-    keyword: keyword.value.trim(),
-    sample_count: 0,
-    algorithm: null,
-    quality_summary: null,
-    llm_results: [],
-    samples: [],
-    bargains: [],
-  }
+  const controller = new AbortController()
+  activeController.value = controller
 
   try {
     await new Promise((resolve, reject) => {
-      const es = new EventSource(
-        `/api/valuate/stream?_=${Date.now()}`,
-        { withCredentials: false }
-      )
-      // EventSource 只支持 GET，改用 fetch + ReadableStream
-      es.close()
-
-      fetch('/api/valuate/stream', {
+      fetch(`/api/valuate/stream?task_id=${encodeURIComponent(task.id)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyword: keyword.value.trim() }),
-        signal: AbortSignal.timeout(300000),
+        body: JSON.stringify({ keyword: task.keyword }),
+        signal: controller.signal,
       }).then(async (resp) => {
         if (!resp.ok) {
           const txt = await resp.text()
@@ -341,56 +428,87 @@ async function doValuate() {
             let payload
             try { payload = JSON.parse(dataMatch[1]) } catch { continue }
 
-            if (evtType === 'step') {
-              // 详情页补图等中间步骤
+            if (evtType === 'start') {
+              task.id = payload.task_id || task.id
+            } else if (evtType === 'step') {
               if (payload.status === 'pending') {
-                setLastStepPending(payload.text)
+                task.steps.push({ text: payload.text, status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
               } else {
-                resolveLastPending(payload.text, payload.filtered_out || [])
+                const last = [...task.steps].reverse().find(s => s.status === 'pending')
+                if (last) {
+                  last.status = 'done'
+                  if (payload.text) last.text = payload.text
+                  if (payload.filtered_out?.length) last.filteredOut = payload.filtered_out
+                }
               }
             } else if (evtType === 'base') {
-              resolveLastPending(`爬取完成，获得 ${payload.sample_count} 条有效样本`)
-              partial.keyword = payload.keyword
-              partial.sample_count = payload.sample_count
-              partial.algorithm = payload.algorithm
-              partial.quality_summary = payload.quality_summary
-              partial.samples = payload.samples
-              partial.bargains = payload.bargains
-              result.value = { ...partial }
-              loading.value = false
-              setLastStepPending('等待大模型分析结果...')
-            } else if (evtType === 'llm') {
-              resolveLastPending(null)
-              const modelShort = payload.model.replace(/^ep-[^-]+-\d+-/, '').slice(0, 24)
-              if (payload.error) {
-                addStep(`${modelShort}：分析失败（${payload.error}）`, 'error')
-              } else {
-                addStep(`${modelShort} 估价完成：¥${payload.suggested_price}`, 'done')
+              const last = [...task.steps].reverse().find(s => s.status === 'pending')
+              if (last) {
+                last.status = 'done'
+                last.text = `爬取完成，获得 ${payload.sample_count} 条有效样本`
               }
-              partial.llm_results = [...partial.llm_results, payload]
-              result.value = { ...partial }
-              if (partial.llm_results.length < 3) {
-                setLastStepPending('等待剩余模型结果...')
+              task.partial.keyword = payload.keyword
+              task.partial.sample_count = payload.sample_count
+              task.partial.algorithm = payload.algorithm
+              task.partial.quality_summary = payload.quality_summary
+              task.partial.samples = payload.samples
+              task.partial.bargains = payload.bargains
+              task.result = { ...task.partial }
+              task.steps.push({ text: '等待大模型分析结果...', status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
+            } else if (evtType === 'llm') {
+              const last = [...task.steps].reverse().find(s => s.status === 'pending')
+              if (last) last.status = 'done'
+              const modelShort = payload.model.replace(/^ep-[^-]+-\d+-/, '').slice(0, 24)
+              task.steps.push({
+                text: payload.error ? `${modelShort}：分析失败（${payload.error}）` : `${modelShort} 估价完成：¥${payload.suggested_price}`,
+                status: payload.error ? 'error' : 'done',
+                id: Date.now() + Math.random(),
+                filteredOut: [],
+                expanded: false,
+              })
+              task.partial.llm_results = [...task.partial.llm_results, payload]
+              task.result = { ...task.partial }
+              if (task.partial.llm_results.length < 3) {
+                task.steps.push({ text: '等待剩余模型结果...', status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
               }
             } else if (evtType === 'done') {
-              resolveLastPending('全部分析完成')
+              const last = [...task.steps].reverse().find(s => s.status === 'pending')
+              if (last) {
+                last.status = 'done'
+                last.text = '全部分析完成'
+              }
+              task.loading = false
+              resolve()
+            } else if (evtType === 'stopped') {
+              task.loading = false
+              task.error = payload.detail || '已停止'
+              task.steps.push({ text: '任务已停止', status: 'error', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
               resolve()
             } else if (evtType === 'error') {
               reject(new Error(payload.detail || 'SSE 错误'))
             }
+
+            if (task.id === currentTaskId.value) syncViewByTask(task)
           }
         }
         resolve()
       }).catch(reject)
     })
   } catch (e) {
-    error.value = e?.message || '请求失败，请检查后端是否启动'
-    if (/401|登录态|请先登录/.test(error.value)) {
-      showLoginModal.value = true
-      isLoggedIn.value = false
+    if (e?.name === 'AbortError') {
+      task.error = '已手动停止'
+    } else {
+      task.error = e?.message || '请求失败，请检查后端是否启动'
+      task.steps.push({ text: task.error, status: 'error', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
+      if (/401|登录态|请先登录/.test(task.error)) {
+        showLoginModal.value = true
+        isLoggedIn.value = false
+      }
     }
   } finally {
-    loading.value = false
+    task.loading = false
+    if (activeController.value === controller) activeController.value = null
+    if (task.id === currentTaskId.value) syncViewByTask(task)
   }
 }
 
@@ -421,7 +539,32 @@ onMounted(() => {
 .search-box {
   display: flex;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
+}
+
+.task-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.task-btn {
+  background: var(--bg2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+.task-btn.stop {
+  border-color: rgba(224,92,92,0.4);
+  color: var(--red);
+}
+
+.task-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .search-input {
@@ -555,6 +698,52 @@ onMounted(() => {
   border-radius: var(--radius);
   border: 1px solid rgba(224,92,92,0.2);
 }
+
+.task-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.task-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  color: var(--text2);
+  border-radius: 999px;
+  padding: 5px 8px 5px 12px;
+  font-size: 12px;
+}
+
+.task-tab-remove {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text2);
+  background: var(--bg3);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.task-tab-remove:hover {
+  color: #fff;
+  background: var(--red);
+}
+
+.task-tab.active {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.task-tab-status.running { color: var(--accent); }
+.task-tab-status.done { color: var(--green); }
+.task-tab-status.failed { color: var(--red); }
 
 /* 结果区 */
 .card {

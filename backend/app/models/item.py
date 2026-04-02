@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, ForeignKey
 from sqlalchemy.sql import func
 from app.models.database import Base
 
@@ -45,6 +45,7 @@ class BargainAlert(Base):
     __tablename__ = "bargain_alerts"
 
     id = Column(Integer, primary_key=True, index=True)
+    valuation_record_id = Column(Integer, ForeignKey("valuation_records.id"), index=True, nullable=True)
     item_id = Column(String(64), index=True)
     title = Column(String(512))
     price = Column(Float)

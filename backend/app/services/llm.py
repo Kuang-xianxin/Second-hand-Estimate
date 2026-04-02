@@ -1,6 +1,7 @@
 import json
 import asyncio
 import logging
+import re
 from typing import Optional, List
 from dataclasses import dataclass
 
@@ -85,8 +86,8 @@ async def call_deepseek(prompt: str) -> dict:
                 json={
                     "model": settings.deepseek_model,
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.3,
-                    "max_tokens": 300,
+                    "temperature": 1.0,
+                    "max_tokens": 8000,
                 },
             )
             resp.raise_for_status()
@@ -287,30 +288,56 @@ async def call_doubao_vision(images: List[str], prompt: str) -> dict:
     return {"error": "豆包Vision 持续限流(429)，请稍后重试"}
 
 
+def _title_alias_match(keyword: str, title: str) -> bool:
+    """关键词与标题的型号后缀别名匹配（如 j150 与 j150w）。"""
+    kw = (keyword or "").lower().replace(" ", "")
+    tt = (title or "").lower().replace(" ", "")
+
+    # 富士 j/z/a/f/s + 数字：允许附加 w/s/f/fd 后缀
+    m = re.search(r'([jzafs]\d{3,4})', kw)
+    if m:
+        core = m.group(1)
+        aliases = {core, core + 'w', core + 's', core + 'f', core + 'fd'}
+        return any(a in tt for a in aliases)
+
+    return False
+
 
 async def check_image_model_match(item_id: str, keyword: str, title: str, images: List[str]) -> dict:
-    """轻量视觉核查：图片内容是否和目标型号吻合，不吻合则排除样本"""
+    """轻量视觉核查：仅在“高置信明显不符”时排除，避免误杀。"""
     if not images:
-        return {"item_id": item_id, "match": True, "reason": "无图片跳过"}  # 无图默认保留
-    prompt = f"""请观察图片，判断这个商品是否是「{keyword}」型号的相机整机。
+        return {"item_id": item_id, "match": True, "reason": "无图片跳过"}
+
+    prompt = f"""请观察图片，判断这个商品是否与目标型号一致。
 目标型号：{keyword}
 商品标题：{title}
 
-只返回JSON：
-{{"is_target_model": true或false, "reason": "一句话"}}
-如果图片显示的是其他型号、配件、或无法判断，返回false。
+请只返回 JSON：
+{{"is_target_model": true或false, "confidence": "high"或"low", "reason": "一句话"}}
+规则：
+- 只有在你能明确看出是其他型号/配件时，才返回 is_target_model=false 且 confidence=high。
+- 图片模糊、信息不足、看不清型号时，返回 is_target_model=true 且 confidence=low（默认保留）。
 只返回JSON，不要其他文字。"""
+
     try:
         data = await call_qwen_vision(images, prompt)
         if isinstance(data, dict) and not data.get("error"):
-            return {
-                "item_id": item_id,
-                "match": bool(data.get("is_target_model", True)),
-                "reason": data.get("reason", "")
-            }
+            is_target = bool(data.get("is_target_model", True))
+            confidence = str(data.get("confidence", "low")).lower()
+            reason = data.get("reason", "")
+
+            # 仅高置信不符才排除，且标题命中别名时优先保留
+            if (not is_target) and confidence == "high":
+                if _title_alias_match(keyword, title):
+                    return {"item_id": item_id, "match": True, "reason": "标题命中型号别名，保留"}
+                if "无法" in reason or "看不清" in reason or "不确定" in reason:
+                    return {"item_id": item_id, "match": True, "reason": reason or "低确定性保留"}
+                return {"item_id": item_id, "match": False, "reason": reason or "图片型号不符"}
+            return {"item_id": item_id, "match": True, "reason": reason or "低置信保留"}
     except Exception:
         pass
-    return {"item_id": item_id, "match": True, "reason": "检查失败默认保留"}  # 失败默认保留
+
+    return {"item_id": item_id, "match": True, "reason": "检查失败默认保留"}
 
 async def analyze_item_images(item_id: str, title: str, images: List[str], price: float = 0.0, base_price: float = 0.0) -> dict:
     """分析单个商品图片成色（单模型，快速），并检查成色差时价格是否合理"""
