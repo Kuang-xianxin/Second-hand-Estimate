@@ -10,6 +10,11 @@ export async function valuate(keyword) {
   return res.data
 }
 
+export async function stopValuateTask(taskId) {
+  const res = await http.post(`/valuate/stop/${encodeURIComponent(taskId)}`)
+  return res.data
+}
+
 export async function getHistory(limit = 20) {
   const res = await http.get('/history', { params: { limit } })
   return res.data

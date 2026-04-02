@@ -2,25 +2,29 @@ import asyncio
 import json
 import logging
 import re
+import uuid
 import webbrowser
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict
 from pathlib import Path
 
 from app.models.database import get_db
 from app.models.item import CrawledItem, ValuationRecord, BargainAlert
 from app.crawler.xianyu import get_crawler
 from app.services.pricing import calculate_price
-from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, analyze_item_images, check_image_model_match, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
+from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, analyze_item_images, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
 from app.services.bargain import detect_bargains, filter_target_items, filter_target_items_with_reasons
 from app.config import settings
 
 router = APIRouter(prefix="/api", tags=["估价"])
 logger = logging.getLogger(__name__)
+
+# 内存中的流式任务控制器：支持并行估价 + 按任务停止
+stream_task_controls: Dict[str, Dict[str, object]] = {}
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 STORAGE_STATE_FILE = BASE_DIR / "xianyu_storage_state.json"
@@ -548,15 +552,66 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
     }
 
 
+def _register_stream_task(task_id: str):
+    stream_task_controls[task_id] = {
+        "stop": asyncio.Event(),
+        "finished": False,
+    }
+
+
+def _is_stream_task_stopped(task_id: str) -> bool:
+    state = stream_task_controls.get(task_id)
+    if not state:
+        return False
+    stop_event = state.get("stop")
+    return bool(isinstance(stop_event, asyncio.Event) and stop_event.is_set())
+
+
+def _mark_stream_task_finished(task_id: str):
+    state = stream_task_controls.get(task_id)
+    if state:
+        state["finished"] = True
+
+
+@router.post("/valuate/stop/{task_id}")
+async def stop_valuate_task(task_id: str):
+    state = stream_task_controls.get(task_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="估价任务不存在")
+    stop_event = state.get("stop")
+    if isinstance(stop_event, asyncio.Event):
+        stop_event.set()
+    return {"ok": True, "task_id": task_id, "message": "已请求停止任务"}
+
+
+@router.get("/valuate/tasks")
+async def get_valuate_tasks():
+    return [
+        {
+            "task_id": task_id,
+            "finished": bool(state.get("finished", False)),
+            "stopped": bool(isinstance(state.get("stop"), asyncio.Event) and state["stop"].is_set()),
+        }
+        for task_id, state in stream_task_controls.items()
+    ]
+
+
 @router.post("/valuate/stream")
-async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
+async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db), task_id: Optional[str] = Query(None)):
     """SSE 流式估价：爬取完立即推送基础数据，大模型结果谁先完成先推送谁。"""
+    task_id = (task_id or str(uuid.uuid4())).strip()
+    _register_stream_task(task_id)
     original_keyword = req.keyword.strip()
     keyword = _canonicalize_keyword(original_keyword)
     if not keyword:
         raise HTTPException(status_code=400, detail="关键词不能为空")
 
     async def event_stream():
+        yield f"event: start\ndata: {json.dumps({'task_id': task_id}, ensure_ascii=False)}\n\n"
+        if _is_stream_task_stopped(task_id):
+            yield f"event: stopped\ndata: {json.dumps({'task_id': task_id, 'detail': '任务已停止'}, ensure_ascii=False)}\n\n"
+            _mark_stream_task_finished(task_id)
+            return
         # ---- 阶段1：爬取 + 算法估价 ----
         crawler = get_crawler()
         compact_keyword = re.sub(r"\s+", "", keyword)
@@ -663,7 +718,15 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
 
         try:
             for round_i in range(2):
+                if _is_stream_task_stopped(task_id):
+                    yield f"event: stopped\ndata: {json.dumps({'task_id': task_id, 'detail': '任务已停止'}, ensure_ascii=False)}\n\n"
+                    _mark_stream_task_finished(task_id)
+                    return
                 for q in query_variants:
+                    if _is_stream_task_stopped(task_id):
+                        yield f"event: stopped\ndata: {json.dumps({'task_id': task_id, 'detail': '任务已停止'}, ensure_ascii=False)}\n\n"
+                        _mark_stream_task_finished(task_id)
+                        return
                     yield f"event: step\ndata: {json.dumps({'text': f'第{round_i+1}轮[{q}]：正在爬取...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
                     batch = await crawler.search(
                         q, max_items=per_query_max_items,
@@ -716,10 +779,12 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                 yield f"event: step\ndata: {json.dumps({'text': f'样本补充完成：最终样本 {len(items)} 条（含规则筛通过的补充项）', 'status': 'done'}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
+            _mark_stream_task_finished(task_id)
             yield f"event: error\ndata: {json.dumps({'detail': repr(e)}, ensure_ascii=False)}\n\n"
             return
 
         if len(items) < 3:
+            _mark_stream_task_finished(task_id)
             yield f"event: error\ndata: {json.dumps({'detail': '有效样本不足，请换关键词重试'}, ensure_ascii=False)}\n\n"
             return
 
@@ -735,22 +800,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             img_items = [i for i in items if i.images]
             yield f"event: step\ndata: {json.dumps({'text': f'图片核查中（{len(img_items)} 个有图样本）...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
             if img_items:
-                # 第一步：轻量型号核查，过滤图片与目标型号明显不符的样本
-                sem_check = asyncio.Semaphore(5)
-                async def _check_match(item):
-                    async with sem_check:
-                        return await check_image_model_match(item.item_id, keyword, item.title, item.images[:1])
-                match_results = await asyncio.gather(*[_check_match(i) for i in img_items], return_exceptions=True)
-                mismatch_ids = set()
-                for r in match_results:
-                    if isinstance(r, dict) and not r.get("match", True):
-                        mismatch_ids.add(r["item_id"])
-                        logger.info(f"图片型号不符排除: {r['item_id']} - {r.get('reason', '')}")  
-                # 排除型号不符的样本
-                items = [i for i in items if i.item_id not in mismatch_ids]
-                yield f"event: step\ndata: {json.dumps({'text': f'型号核查完成：排除 {len(mismatch_ids)} 个不符样本，剩余 {len(items)} 条', 'status': 'done', 'filtered_out': [{"title": it.title, "price": it.price, "reason": next((r.get("reason", "图片型号不符") for r in match_results if isinstance(r, dict) and r.get("item_id") == it.item_id), "图片型号不符")} for it in img_items if it.item_id in mismatch_ids]}, ensure_ascii=False)}\n\n"
-
-                # 第二步：对成色可疑的样本做成色分析（质量分<70或标题含成色差词）
+                # 对成色可疑的样本做成色分析（质量分<70或标题含成色差词）
                 POOR_COND_WORDS = ['磨损', '划痕', '刮花', '碰撞', '摔', '瑕疵', '故障', '维修', '零件机']
                 def _needs_condition_check(item):
                     text = (item.title + " " + (item.description or "")).lower()
@@ -824,6 +874,12 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
         pending = set(tasks.keys())
         llm_results_collected = []
         while pending:
+            if _is_stream_task_stopped(task_id):
+                for p in pending:
+                    p.cancel()
+                yield f"event: stopped\ndata: {json.dumps({'task_id': task_id, 'detail': '任务已停止'}, ensure_ascii=False)}\n\n"
+                _mark_stream_task_finished(task_id)
+                return
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             for t in done:
                 v = t.result()
@@ -840,6 +896,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                 }
                 yield f"event: llm\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
+        _mark_stream_task_finished(task_id)
         yield "event: done\ndata: {}\n\n"
 
         # 存储记录
