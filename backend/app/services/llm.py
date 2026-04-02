@@ -1,7 +1,8 @@
 import json
 import asyncio
 import logging
-from typing import Optional
+import re
+from typing import Optional, List
 from dataclasses import dataclass
 
 import httpx
@@ -122,16 +123,16 @@ async def call_qwen(prompt: str) -> dict:
         return {"error": _map_request_error("Qwen", e)}
 
 
-async def call_qwen_secondary(prompt: str) -> dict:
-    if not settings.qwen_api_key:
-        return {"error": "未配置 Qwen API Key"}
+async def call_kimi(prompt: str) -> dict:
+    if not settings.kimi_api_key:
+        return {"error": "未配置 Kimi API Key"}
     try:
         async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
             resp = await client.post(
-                f"{settings.qwen_base_url.rstrip('/')}/v1/chat/completions",
-                headers={"Authorization": f"Bearer {settings.qwen_api_key}"},
+                f"{settings.kimi_base_url.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.kimi_api_key}"},
                 json={
-                    "model": settings.qwen_model_secondary,
+                    "model": settings.kimi_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.3,
                     "max_tokens": 300,
@@ -139,23 +140,23 @@ async def call_qwen_secondary(prompt: str) -> dict:
             )
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
-            return _parse_llm_json(content, settings.qwen_model_secondary)
+            return _parse_llm_json(content, settings.kimi_model)
     except httpx.HTTPStatusError as e:
-        return {"error": _map_http_error("Qwen-Secondary", e.response.status_code, e.response.text)}
+        return {"error": _map_http_error("Kimi", e.response.status_code, e.response.text)}
     except Exception as e:
-        return {"error": _map_request_error("Qwen-Secondary", e)}
+        return {"error": _map_request_error("Kimi", e)}
 
 
-async def call_openai(prompt: str) -> dict:
-    if not settings.openai_api_key:
-        return {"error": "未配置 OpenAI API Key"}
+async def call_doubao(prompt: str) -> dict:
+    if not settings.doubao_api_key:
+        return {"error": "未配置豆包 API Key"}
     try:
-        async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
+        async with httpx.AsyncClient(timeout=settings.doubao_timeout_seconds) as client:
             resp = await client.post(
-                f"{settings.openai_base_url.rstrip('/')}/v1/chat/completions",
-                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+                f"{settings.doubao_base_url.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.doubao_api_key}"},
                 json={
-                    "model": settings.openai_model,
+                    "model": settings.doubao_model,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.3,
                     "max_tokens": 300,
@@ -163,11 +164,11 @@ async def call_openai(prompt: str) -> dict:
             )
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
-            return _parse_llm_json(content, settings.openai_model)
+            return _parse_llm_json(content, settings.doubao_model)
     except httpx.HTTPStatusError as e:
-        return {"error": _map_http_error("OpenAI", e.response.status_code, e.response.text)}
+        return {"error": _map_http_error("豆包", e.response.status_code, e.response.text)}
     except Exception as e:
-        return {"error": _map_request_error("OpenAI", e)}
+        return {"error": _map_request_error("豆包", e)}
 
 
 def _to_valuation(data: dict, model_name: str) -> LLMValuation:
@@ -205,6 +206,260 @@ def _fallback_by_algorithm(model_name: str, base_price: float) -> LLMValuation:
     )
 
 
+async def call_qwen_vision(images: List[str], prompt: str) -> dict:
+    """调用 Qwen VL 多模态接口分析图片"""
+    if not settings.qwen_api_key:
+        return {"error": "未配置 Qwen API Key"}
+    if not images:
+        return {"error": "无图片"}
+    content = []
+    for img_url in images[:4]:
+        content.append({"type": "image_url", "image_url": {"url": img_url}})
+    content.append({"type": "text", "text": prompt})
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
+                resp = await client.post(
+                    f"{settings.qwen_vision_base_url.rstrip('/')}/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {settings.qwen_api_key}"},
+                    json={
+                        "model": settings.qwen_vision_model,
+                        "messages": [{"role": "user", "content": content}],
+                        "temperature": 0.2,
+                        "max_tokens": 400,
+                    },
+                )
+                if resp.status_code == 429 and attempt == 0:
+                    logger.warning("Qwen Vision 429，等待4秒后重试...")
+                    await asyncio.sleep(4)
+                    continue
+                resp.raise_for_status()
+                text = resp.json()["choices"][0]["message"]["content"]
+                return _parse_llm_json(text, settings.qwen_vision_model)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429 and attempt == 0:
+                logger.warning("Qwen Vision 429，等待4秒后重试...")
+                await asyncio.sleep(4)
+                continue
+            return {"error": _map_http_error("Qwen Vision", e.response.status_code, e.response.text)}
+        except Exception as e:
+            return {"error": _map_request_error("Qwen Vision", e)}
+    return {"error": "Qwen Vision 持续限流(429)，请稍后重试"}
+
+
+async def call_doubao_vision(images: List[str], prompt: str) -> dict:
+    """调用豆包多模态接口分析图片，429时自动重试一次"""
+    if not settings.doubao_api_key:
+        return {"error": "未配置豆包 API Key"}
+    if not images:
+        return {"error": "无图片"}
+    content = []
+    for img_url in images[:4]:
+        content.append({"type": "image_url", "image_url": {"url": img_url}})
+    content.append({"type": "text", "text": prompt})
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=settings.doubao_timeout_seconds) as client:
+                resp = await client.post(
+                    f"{settings.doubao_vision_base_url.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {settings.doubao_api_key}"},
+                    json={
+                        "model": settings.doubao_vision_model,
+                        "messages": [{"role": "user", "content": content}],
+                        "temperature": 0.2,
+                        "max_tokens": 400,
+                    },
+                )
+                if resp.status_code == 429 and attempt == 0:
+                    logger.warning("豆包Vision 429，等待4秒后重试...")
+                    await asyncio.sleep(4)
+                    continue
+                resp.raise_for_status()
+                text = resp.json()["choices"][0]["message"]["content"]
+                return _parse_llm_json(text, settings.doubao_vision_model)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429 and attempt == 0:
+                logger.warning("豆包Vision 429，等待4秒后重试...")
+                await asyncio.sleep(4)
+                continue
+            return {"error": _map_http_error("豆包Vision", e.response.status_code, e.response.text)}
+        except Exception as e:
+            return {"error": _map_request_error("豆包Vision", e)}
+    return {"error": "豆包Vision 持续限流(429)，请稍后重试"}
+
+
+def _title_alias_match(keyword: str, title: str) -> bool:
+    """关键词与标题的型号后缀别名匹配（如 j150 与 j150w）。"""
+    kw = (keyword or "").lower().replace(" ", "")
+    tt = (title or "").lower().replace(" ", "")
+
+    # 富士 j/z/a/f/s + 数字：允许附加 w/s/f/fd 后缀
+    m = re.search(r'([jzafs]\d{3,4})', kw)
+    if m:
+        core = m.group(1)
+        aliases = {core, core + 'w', core + 's', core + 'f', core + 'fd'}
+        return any(a in tt for a in aliases)
+
+    return False
+
+
+async def check_image_model_match(item_id: str, keyword: str, title: str, images: List[str]) -> dict:
+    """轻量视觉核查：仅在“高置信明显不符”时排除，避免误杀。"""
+    if not images:
+        return {"item_id": item_id, "match": True, "reason": "无图片跳过"}
+
+    prompt = f"""请观察图片，判断这个商品是否与目标型号一致。
+目标型号：{keyword}
+商品标题：{title}
+
+请只返回 JSON：
+{{"is_target_model": true或false, "confidence": "high"或"low", "reason": "一句话"}}
+规则：
+- 只有在你能明确看出是其他型号/配件时，才返回 is_target_model=false 且 confidence=high。
+- 图片模糊、信息不足、看不清型号时，返回 is_target_model=true 且 confidence=low（默认保留）。
+只返回JSON，不要其他文字。"""
+
+    try:
+        data = await call_qwen_vision(images, prompt)
+        if isinstance(data, dict) and not data.get("error"):
+            is_target = bool(data.get("is_target_model", True))
+            confidence = str(data.get("confidence", "low")).lower()
+            reason = data.get("reason", "")
+
+            # 仅高置信不符才排除，且标题命中别名时优先保留
+            if (not is_target) and confidence == "high":
+                if _title_alias_match(keyword, title):
+                    return {"item_id": item_id, "match": True, "reason": "标题命中型号别名，保留"}
+                if "无法" in reason or "看不清" in reason or "不确定" in reason:
+                    return {"item_id": item_id, "match": True, "reason": reason or "低确定性保留"}
+                return {"item_id": item_id, "match": False, "reason": reason or "图片型号不符"}
+            return {"item_id": item_id, "match": True, "reason": reason or "低置信保留"}
+    except Exception:
+        pass
+
+    return {"item_id": item_id, "match": True, "reason": "检查失败默认保留"}
+
+async def analyze_item_images(item_id: str, title: str, images: List[str], price: float = 0.0, base_price: float = 0.0) -> dict:
+    """分析单个商品图片成色（单模型，快速），并检查成色差时价格是否合理"""
+    if not images:
+        return {"item_id": item_id, "image_score": None, "image_flags": [], "error": "无图片"}
+    prompt = f"""你是二手相机成色鉴定专家。请仔细观察这些图片，对商品「{title}」进行成色评估。
+
+请返回 JSON：
+{{"condition_score": 0-100的整数（100=全新无痕，80=轻微使用痕迹，60=明显磨损，40=严重磨损）,
+  "is_complete_unit": true或false（是否是整机而非配件/零件）,
+  "visible_defects": ["缺陷描述1", "缺陷描述2"],
+  "brief": "一句话总结"}}
+只返回JSON，不要其他内容。"""
+
+    # 单模型快速分析（Qwen VL）
+    data = await call_qwen_vision(images, prompt)
+    if isinstance(data, Exception) or not isinstance(data, dict) or data.get("error") or not data.get("condition_score"):
+        return {"item_id": item_id, "image_score": None, "image_flags": [], "error": str(data.get("error", "Qwen VL无返回")) if isinstance(data, dict) else "异常"}
+
+    valid = [float(data["condition_score"])]
+    is_complete = data.get("is_complete_unit", True)
+    all_defects = data.get("visible_defects", [])[:3]
+    all_briefs = [data["brief"]] if data.get("brief") else []
+
+    if not valid:
+        return {"item_id": item_id, "image_score": None, "image_flags": [], "error": "模型未返回有效结果"}
+
+    score = round(sum(valid) / len(valid), 1)
+    flags = []
+    if not is_complete:
+        flags.append("图片判断:非整机")
+    seen_defects = set()
+    for d in all_defects:
+        if d not in seen_defects:
+            flags.append(f"图片缺陷:{d}")
+            seen_defects.add(d)
+    if all_briefs:
+        flags.append(f"图片总结:{all_briefs[0]}")
+
+    # 成色很差（<45分）且价格偏高（>400元）时标记降权
+    price_penalty = False
+    # 成色很差且价格虚高：商品价格高于基准价的80%才触发降权（说明卖家没有体现成色折扣）
+    price_high_threshold = base_price * 0.8 if base_price > 0 else float('inf')
+    if score < 45 and price > 0 and price > price_high_threshold:
+        flags.append("图片警告:成色差但价格偏高，已降权")
+        price_penalty = True
+
+    return {
+        "item_id": item_id,
+        "image_score": score,
+        "is_complete_unit": is_complete,
+        "image_flags": flags,
+        "price_penalty": price_penalty,
+        "error": None,
+    }
+
+
+async def classify_camera_items_by_llm(keyword: str, items: List[dict]) -> List[dict]:
+    """使用 DeepSeek 对样本进行品牌/型号/整机/功能状态筛选，返回通过项。"""
+    if not items:
+        return []
+
+    if not settings.deepseek_api_key:
+        # 未配置模型时直接回退到规则过滤结果（由调用方先做）
+        return items
+
+    compact = []
+    for idx, it in enumerate(items, start=1):
+        compact.append({
+            "idx": idx,
+            "title": str(it.get("title", ""))[:120],
+            "description": str(it.get("description", ""))[:160],
+            "price": it.get("price", 0),
+        })
+
+    prompt = f"""你是二手相机市场数据清洗助手。请识别并剔除不符合目标型号的商品，只保留目标型号的整机。
+
+目标关键词：{keyword}
+
+【强制排除规则】（满足任意一条立即排除）：
+- 型号与目标关键词不一致（例如目标是"ixus700"，则"ixus130"、"ixus70"、"700D"、"A700"、"R700"等均需排除）
+- 商品是单独的电池、充电器、数据线、屏幕/液晶屏、镜头盖、USB盖、外壳、背带、贴膜、读卡器、内存卡、滤镜等配件
+- 商品是维修零件、拆机件、说明书
+- 价格低于 200 元且标题不含"整机"/"相机"/"机身"等整机词
+
+【保留规则】：
+- 标题或描述中明确包含目标型号（允许空格变体，如"ixus 700"="ixus700"）
+- 是该型号的整机（相机/机身/套机），功能正常或有轻微外观问题
+- 有疑问时宁可排除，保证精准度
+
+候选列表(JSON)：
+{json.dumps(compact, ensure_ascii=False)}
+
+只返回 JSON：
+{{"keep_indices": [1,2,...], "reason": "一句话"}}
+不要输出任何其他文本。"""
+    try:
+        data = await call_deepseek(prompt)
+        if "error" in data:
+            logger.warning(f"LLM样本筛选失败: {data['error']}")
+            return items
+
+        keep_indices = data.get("keep_indices", [])
+        if not isinstance(keep_indices, list):
+            return items
+
+        keep_set = {int(x) for x in keep_indices if str(x).isdigit()}
+        if not keep_set:
+            # LLM 清零保护：fallback 到原始列表
+            logger.warning("LLM筛选后0条，自动回退到规则筛选结果")
+            return items
+
+        filtered = []
+        for idx, it in enumerate(items, start=1):
+            if idx in keep_set:
+                filtered.append(it)
+        return filtered
+    except Exception as e:
+        logger.warning(f"LLM样本筛选异常: {repr(e)}")
+        return items
+
+
 async def multi_model_valuation(
     keyword: str,
     base_price: float,
@@ -213,18 +468,16 @@ async def multi_model_valuation(
 ) -> list[LLMValuation]:
     """并发调用三个大模型，返回估价结果列表"""
     prompt = _build_prompt(keyword, base_price, prices, sample_count)
-    ds, qw, qw2, oa = await asyncio.gather(
+    ds, qw, db = await asyncio.gather(
         call_deepseek(prompt),
         call_qwen(prompt),
-        call_qwen_secondary(prompt),
-        call_openai(prompt),
+        call_doubao(prompt),
     )
 
     results = [
         _to_valuation(ds, settings.deepseek_model),
         _to_valuation(qw, settings.qwen_model),
-        _to_valuation(qw2, settings.qwen_model_secondary),
-        _to_valuation(oa, settings.openai_model),
+        _to_valuation(db, settings.doubao_model),
     ]
 
     if all(r.error for r in results):
@@ -232,8 +485,7 @@ async def multi_model_valuation(
         return [
             _fallback_by_algorithm(settings.deepseek_model, base_price),
             _fallback_by_algorithm(settings.qwen_model, base_price),
-            _fallback_by_algorithm(settings.qwen_model_secondary, base_price),
-            _fallback_by_algorithm(settings.openai_model, base_price),
+            _fallback_by_algorithm(settings.doubao_model, base_price),
         ]
 
     return results
