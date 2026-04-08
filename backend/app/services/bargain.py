@@ -1,5 +1,5 @@
 from typing import List, Literal
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import re
 
 from app.config import settings
@@ -47,15 +47,63 @@ CCD_BRANDS = {
     "casio": ["casio", "卡西欧", "exilim"],
 }
 
+# XD 卡价格表（富士/奥林巴斯老相机常见配卡）
+XD_CARD_PRICES = {
+    "16mb": 50,
+    "32mb": 60,
+    "64mb": 70,
+    "128mb": 108,
+    "256mb": 120,
+    "512mb": 134,
+    "512mb高速": 139,
+    "1g": 148,
+    "1g高速": 160,
+    "2g": 162,
+    "2g高速": 175,
+}
 
-@dataclass
-class BargainItem:
-    item_id: str
-    title: str
-    price: float
-    estimated_price: float
-    profit_estimate: float
-    url: str
+XD_CARD_SIZE_PATTERNS = [
+    (r"(\d+)\s*g(?:高速)?", lambda m: f"{m.group(1)}g"),
+    (r"(\d+)\s*gb", lambda m: f"{m.group(1)}g"),
+    (r"(\d+)\s*mb(?:高速)?", lambda m: f"{m.group(1)}mb"),
+    (r"(\d{2,4})\s*mb", lambda m: f"{m.group(1)}mb"),
+]
+
+# 检测"相机自备XD卡"的文本模式——说明这是XD卡机型且卖家单独说明要另购
+XD_SELF_PROVIDE_PATTERNS = [
+    r"xd卡自备", r"卡自备", r"不带卡", r"不含卡", r"无卡",
+    r"xd卡买家自备", r"需要自备", r"需自备", r"xd卡另购",
+    r"xd卡加购", r"xd卡另加", r"另购xd卡", r"需加购xd卡",
+    r"xd卡需另买", r"卡需自备", r"xd卡买家",
+]
+
+# 检测"相机捆绑XD卡销售"的文本模式
+XD_BUNDLE_PATTERNS = [
+    r"xd卡", r"富士卡", r"奥林巴斯卡", r"原装卡",
+    r"带\s*\d+\s*[gm]\s*卡", r"带\d+[gm]卡",
+    r"\d+[gm]卡送", r"送\d+[gm]卡", r"卡送",
+    r"带\s*xd卡", r"配有\s*xd",
+]
+
+# 检测XD卡机型标志（机身/描述中提及XD卡说明该机型用XD卡）
+XD_MODEL_SIGNAL_PATTERNS = [
+    # 高度宽松：只要标题/描述中出现过"xd卡"就高度怀疑该机型使用XD卡
+    r"xd卡",
+    # 自备类：卖家会说"自备XD卡"或"XD卡另购"，直接说明是XD卡机型
+    r"需自备xd卡", r"自备\s*xd卡", r"xd卡需另购",
+    r"xd卡买家自备", r"xd卡需自备",
+    # 捆绑类：标题出现XD卡说明是XD卡机型
+    r"富士\s*xd卡", r"富士\s+\d+[gm]\s*卡", r"富士\d+[gm]卡",
+    r"奥林巴斯\s*xd卡", r"奥林巴斯\s+\d+[gm]\s*卡",
+    r"富士finepix", r"fuji\s*finepix", r"finepix",
+    r"olympus\s*mju", r"olympus\s*stylus",
+    r"olympus\s*(fe|sz|sp|tg|xz|ep)",
+    r"富士\s*(jx|z|a|avens?|xp)\d",
+    r"lumix\s*(fh|zs)\d",
+    r"xd卡槽", r"xD卡槽", r"xd-p", r"xD-P",
+    r"储存介质\s*[为:]?\s*xd", r"储存介质\s*[为:]?\s*xD",
+    r"存储介质\s*[为:]?\s*xd",
+]
 
 
 def _infer_category(keyword: str) -> Literal["phone", "ccd", "other"]:
@@ -125,8 +173,6 @@ def _ccd_model_mismatch(keyword: str, title: str) -> bool:
     kw_tokens = _extract_model_tokens(keyword)
     item_tokens = _extract_model_tokens(title)
     if kw_tokens and item_tokens:
-        # 允许前缀匹配：j150 匹配 j150w，j150w 匹配 j150
-        # 只要任意一对 token 互为前缀关系就认为匹配
         def _tokens_overlap(a, b):
             for ta in a:
                 for tb in b:
@@ -182,17 +228,189 @@ def _is_model_mismatch(query_keyword: str, item_title: str, category: Literal["p
     return False
 
 
+# ---------------------------------------------------------------------------
+# XD 卡相关逻辑
+# ---------------------------------------------------------------------------
+
+def detect_xd_card_model_from_items(items: list) -> bool:
+    """
+    爬取完成后，通过分析商品标题/描述判断相机是否使用 XD 卡。
+
+    判断逻辑：扫描前5条商品，只要有一条明确提到"自备xd卡"即认为是XD卡机型。
+    """
+    for item in items[:5]:
+        text = _item_text(item)
+        for pat in XD_MODEL_SIGNAL_PATTERNS:
+            if re.search(pat, text, flags=re.IGNORECASE):
+                return True
+    return False
+
+
+def _get_xd_card_value(size: str) -> float:
+    """根据卡容量返回卡的价格表估值，未知容量返回 0。"""
+    key = size.lower().strip()
+    return XD_CARD_PRICES.get(key, 0.0)
+
+
+def _extract_xd_card_from_text(text: str) -> str:
+    """
+    从文字中提取 XD 卡容量。
+    返回容量字符串如 "256mb"、"1g高速"，找不到返回 ""。
+    """
+    for pat in XD_SELF_PROVIDE_PATTERNS:
+        if re.search(pat, text):
+            return ""
+
+    has_bundle = any(re.search(p, text) for p in XD_BUNDLE_PATTERNS)
+    if not has_bundle:
+        return ""
+
+    for pattern, extractor in XD_CARD_SIZE_PATTERNS:
+        for m in re.finditer(pattern, text, flags=re.IGNORECASE):
+            size = extractor(m)
+            start = max(0, m.start() - 5)
+            end = min(len(text), m.end() + 5)
+            nearby = text[start:end]
+            is_high_speed = "高速" in nearby or "hs" in nearby.lower()
+            key = size if not is_high_speed else f"{size}高速"
+            if key in XD_CARD_PRICES:
+                return key
+            if size in XD_CARD_PRICES:
+                return size
+    return ""
+
+
+def _is_xd_bundle_from_text(item, query_keyword: str) -> tuple[bool, str]:
+    """
+    检测单个商品是否捆绑了 XD 卡。
+    返回 (is_bundle, card_size)
+    """
+    text = _item_text(item)
+    card_size = _extract_xd_card_from_text(text)
+    return bool(card_size), card_size
+
+
+@dataclass
+class XDCardBundleInfo:
+    """单个商品的XD卡捆绑信息"""
+    item_id: str
+    card_size: str           # "256mb", "1g高速" 等
+    card_value: float         # 对应价格表估值
+    price: float             # 原始总价
+    camera_only_price: float # 剔除卡值后的纯相机价格
+
+
+def strip_xd_card_prices(items: list) -> tuple[list, list[XDCardBundleInfo]]:
+    """
+    对所有商品进行XD卡文字检测，返回两组数据：
+
+    1. camera_only_items：所有不含卡/自备卡的纯相机商品（price保持原价不变）
+       这些商品参与算法估价，避免带卡捆绑商品虚高基准价
+    2. bundle_infos：检测到捆绑XD卡的商品详情列表，供后续判断捡漏利润叠加
+
+    注意：此函数仅做文字检测（快速），不调用视觉模型。
+    图片检测由调用方在有视觉模型时单独做，合并到 bundle_infos 中。
+    """
+    bundle_infos: list[XDCardBundleInfo] = []
+    # 含卡商品的 item_id 集合，用于在算法估价时排除这些商品
+    xd_bundle_ids: set = set()
+
+    for item in items:
+        is_bundle, card_size = _is_xd_bundle_from_text(item, "")
+        if is_bundle and card_size:
+            card_val = _get_xd_card_value(card_size)
+            raw_price = float(item.price)
+            xd_bundle_ids.add(item.item_id)
+            bundle_infos.append(XDCardBundleInfo(
+                item_id=item.item_id,
+                card_size=card_size,
+                card_value=card_val,
+                price=raw_price,
+                camera_only_price=max(raw_price - card_val, raw_price * 0.7),
+            ))
+
+    # 构建纯相机商品列表（排除含卡捆绑商品），供算法估价使用
+    camera_only_items = [item for item in items if item.item_id not in xd_bundle_ids]
+
+    return camera_only_items, bundle_infos
+
+
+def merge_xd_bundle_with_vision(
+    text_bundles: list[XDCardBundleInfo],
+    vision_results: dict,
+) -> list[XDCardBundleInfo]:
+    """
+    将视觉检测结果与文字检测结果合并。
+
+    规则：
+    - 文字检测已有结果：保留（文字结果通常更准，因为来自卖家描述）
+    - 文字未检测到但视觉检测���：追加
+    - 两者都有但视觉置信度更高：按 vision_results 覆盖
+    - 视觉置信度为 "low"：忽略视觉结果，保留文字结果
+
+    vision_results: dict，key=item_id，value=dict 含 card_size/card_value/confidence
+    """
+    # 先按 item_id 建立文字检测字典
+    by_id: dict[str, XDCardBundleInfo] = {b.item_id: b for b in text_bundles}
+
+    for item_id, vr in vision_results.items():
+        conf = str(vr.get("confidence", "low")).lower()
+        card_size = vr.get("card_size", "")
+        card_val = _get_xd_card_value(card_size)
+
+        if card_val <= 0:
+            continue
+        # 低置信忽略
+        if conf == "low":
+            continue
+
+        if item_id not in by_id:
+            # 文字没检测到，视觉检测到高/中置信 → 追加
+            by_id[item_id] = XDCardBundleInfo(
+                item_id=item_id,
+                card_size=card_size,
+                card_value=card_val,
+                price=0.0,  # 视觉检测时原始价格由调用方补填
+                camera_only_price=0.0,
+            )
+        else:
+            # 两者都有，且视觉置信 high 时覆盖
+            if conf == "high" and card_val > by_id[item_id].card_value:
+                by_id[item_id] = XDCardBundleInfo(
+                    item_id=item_id,
+                    card_size=card_size,
+                    card_value=card_val,
+                    price=by_id[item_id].price,
+                    camera_only_price=max(by_id[item_id].price - card_val, by_id[item_id].price * 0.7),
+                )
+
+    return list(by_id.values())
+
+
+@dataclass
+class BargainItem:
+    item_id: str
+    title: str
+    price: float
+    estimated_price: float
+    profit_estimate: float
+    url: str
+    xd_card_size: str = ""       # XD 卡容量，如 "256mb"、"1g高速"
+    xd_card_value: float = 0.0   # XD 卡估值（按价格表）
+
+
 def detect_bargains(
     items: list,
     base_price: float,
     query_keyword: str = "",
     threshold: float = None,
+    xd_card_bonus: dict = None,
 ) -> List[BargainItem]:
     """
     捡漏检测：当前在售商品价格比基准估价低 threshold 元以上则标记。
-    threshold 默认读取配置（120元）。
 
-    按查询词自动识别类目（phone/ccd/other），并应用对应风险词和型号一致性过滤。
+    xd_card_bonus：可选 dict，key=item_id，value=(card_size, card_value)
+    表示某些商品通过图片分析识别出了 XD 卡捆绑，返回 (容量文字, 卡估值)。
     """
     if threshold is None:
         threshold = settings.bargain_threshold
@@ -208,15 +426,33 @@ def detect_bargains(
         if _is_model_mismatch(query_keyword, item.title, category):
             continue
 
+        is_bundle, card_size = _is_xd_bundle_from_text(item, query_keyword)
+        card_value = _get_xd_card_value(card_size) if card_size else 0.0
+
+        if xd_card_bonus and item.item_id in xd_card_bonus:
+            bonus_size, bonus_value = xd_card_bonus[item.item_id]
+            if bonus_value > card_value:
+                card_size = bonus_size
+                card_value = bonus_value
+                is_bundle = True
+
         profit = base_price - item.price
-        if profit >= threshold:
+
+        if category == "ccd" and card_value > 0:
+            total_profit = profit + card_value
+        else:
+            total_profit = profit
+
+        if total_profit >= threshold:
             bargains.append(BargainItem(
                 item_id=item.item_id,
                 title=item.title,
                 price=item.price,
                 estimated_price=base_price,
-                profit_estimate=round(profit, 2),
+                profit_estimate=round(total_profit, 2),
                 url=item.url,
+                xd_card_size=card_size,
+                xd_card_value=round(card_value, 2),
             ))
 
     bargains.sort(key=lambda x: x.profit_estimate, reverse=True)

@@ -50,7 +50,9 @@ class BargainAlert(Base):
     title = Column(String(512))
     price = Column(Float)
     estimated_price = Column(Float)    # 估价基准
-    profit_estimate = Column(Float)    # 预估利润
+    profit_estimate = Column(Float)    # 预估利润（含XD卡则叠加）
+    xd_card_size = Column(String(32), nullable=True, default="")   # XD卡容量，如"256mb"、"1g高速"
+    xd_card_value = Column(Float, nullable=True, default=0.0)     # XD卡估值
     url = Column(String(1024))
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime, server_default=func.now())

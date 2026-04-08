@@ -22,21 +22,49 @@ class LLMValuation:
     error: Optional[str] = None
 
 
-def _build_prompt(keyword: str, base_price: float, prices: list, sample_count: int) -> str:
+def _build_prompt(
+    keyword: str,
+    base_price: float,
+    prices: list,
+    sample_count: int,
+    is_xd_card_model: bool = False,
+    xd_card_bundle_count: int = 0,
+) -> str:
     prices_str = ", ".join([f"{p}元" for p in sorted(prices)[:30]])
+
+    xd_context = ""
+    if is_xd_card_model:
+        xd_context = f"""
+【特别重要：XD卡机型背景】
+您查询的相机型号「{keyword}」是使用XD存储卡的老相机。
+- XD卡（富士/奥林巴斯专用小卡，2cm×2cm）目前市场均价约¥50~175元/张
+- 部分卖家会「捆绑销售」：相机总价中可能包含了一张XD卡的价格
+- 部分卖家会「自备卡」：在标题/描述中写"自备XD卡"、"XD卡另购"等，实际商品不含卡
+
+【估价要求】：
+1. 如果样本中看到"自备XD卡"/"XD卡另购"等描述，该价格就是纯相机价格，纳入正常估价
+2. 如果样本标题含"XD卡"/"带卡"/"送卡"且标明了容量（如"带1G卡"）：
+   → 这类商品的总价包含了相机+卡的价格，需要降权处理！
+   → 降权原因：卡的价值不应计入相机估价，且带卡卖家的相机往往成色稍差或着急出手
+   → 处理方式：将带卡商品的价格视为虚高，参考不带卡/自备卡的纯相机样本做估价
+3. 优先参考「自备XD卡」或「不带卡」的纯相机样本，它们更能反映真实市场价格
+
+已知本次样本中带卡捆绑商品约 {xd_card_bundle_count} 件，请重点关注并适当降权处理。
+"""
+
     return f"""你是一位二手商品定价专家。请根据以下市场数据，对「{keyword}」进行估价分析。
 
 市场数据：
 - 参考样本数量：{sample_count} 条
 - 算法基准价：{base_price} 元
 - 市场价格样本（部分）：{prices_str}
-
+{xd_context}
 请返回 JSON 格式，字段如下：
 {{
-  "suggested_price": 建议成交价（数字，元）, 
-  "price_min": 合理区间下限（数字，元）, 
-  "price_max": 合理区间上限（数字，元）, 
-  "reasoning": "你的分析理由（100字以内）", 
+  "suggested_price": 建议成交价（数字，元）,
+  "price_min": 合理区间下限（数字，元）,
+  "price_max": 合理区间上限（数字，元）,
+  "reasoning": "你的分析理由（100字以内）",
   "confidence": "高" 或 "中" 或 "低"
 }}
 
@@ -97,6 +125,37 @@ async def call_deepseek(prompt: str) -> dict:
         return {"error": _map_http_error("DeepSeek", e.response.status_code, e.response.text)}
     except Exception as e:
         return {"error": _map_request_error("DeepSeek", e)}
+
+
+async def call_deepseek_vision(images: List[str], prompt: str) -> dict:
+    """调用 DeepSeek 多模态接口分析图片（含视觉的 deepseek-chat）"""
+    if not settings.deepseek_api_key:
+        return {"error": "未配置 DeepSeek API Key"}
+    if not images:
+        return {"error": "无图片"}
+    content = []
+    for img_url in images[:3]:
+        content.append({"type": "image_url", "image_url": {"url": img_url}})
+    content.append({"type": "text", "text": prompt})
+    try:
+        async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
+            resp = await client.post(
+                f"{settings.deepseek_base_url.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.deepseek_api_key}"},
+                json={
+                    "model": settings.deepseek_vision_model,
+                    "messages": [{"role": "user", "content": content}],
+                    "temperature": 0.3,
+                    "max_tokens": 300,
+                },
+            )
+            resp.raise_for_status()
+            text = resp.json()["choices"][0]["message"]["content"]
+            return _parse_llm_json(text, settings.deepseek_vision_model)
+    except httpx.HTTPStatusError as e:
+        return {"error": _map_http_error("DeepSeek-Vision", e.response.status_code, e.response.text)}
+    except Exception as e:
+        return {"error": _map_request_error("DeepSeek-Vision", e)}
 
 
 async def call_qwen(prompt: str) -> dict:
@@ -339,6 +398,175 @@ async def check_image_model_match(item_id: str, keyword: str, title: str, images
 
     return {"item_id": item_id, "match": True, "reason": "检查失败默认保留"}
 
+def _normalize_xd_size(size: str) -> str:
+    """将模型返回的容量字符串标准化到XD_CARD_PRICES的key格式。"""
+    s = (size or "").lower().strip()
+    # 去掉空格和gb/mb等单位
+    s = re.sub(r"\s+(gb|mb)", r"\1", s)
+    # 处理 "512mb 高速" 之类
+    is_high = "高速" in size or "hs" in s or "high" in s
+    # 提取数字+单位
+    m = re.search(r"(\d+)\s*(gb|mb)", s)
+    if m:
+        num, unit = m.group(1), m.group(2)
+        key = f"{num}{unit}"
+        if is_high:
+            key += "高速"
+        return key
+    # 直接映射常见词
+    for known in ["16mb", "32mb", "64mb", "128mb", "256mb", "512mb", "1g", "2g"]:
+        if known in s:
+            if is_high and known in ["512mb", "1g", "2g"]:
+                return f"{known}高速"
+            return known
+    return ""
+
+
+def _merge_xd_vote_results(results: list) -> dict:
+    """
+    多模型投票融合。
+    results: 各模型返回的 dict 列表，每项含 has_xd_card / card_size / reason / model
+    返回融合后的 dict：
+    - has_xd_card: 任意一个模型high置信说有，且不超过1个模型说无 → True
+    - card_size: 取票数最多的那个，或最高置信的那个
+    """
+    has_votes = {"yes": [], "no": [], "skip": []}
+    size_votes = {}
+
+    for r in results:
+        if not isinstance(r, dict) or r.get("error"):
+            continue
+        has = bool(r.get("has_xd_card", False))
+        size = r.get("card_size", "") or ""
+        conf = str(r.get("confidence", "low")).lower()
+        reason = r.get("reason", "")
+
+        if conf == "low" and not has:
+            has_votes["skip"].append(r)
+        elif has:
+            has_votes["yes"].append(r)
+            size_votes[size] = size_votes.get(size, 0) + (2 if conf == "high" else 1)
+        else:
+            has_votes["no"].append(r)
+
+    # 投票规则：有 > 无（且无的high不超过1个）→ 有
+    high_no_count = sum(1 for r in has_votes["no"] if str(r.get("confidence", "low")).lower() == "high")
+    if len(has_votes["yes"]) >= 1 and high_no_count <= 1:
+        # 选容量：取票数最多者
+        if size_votes:
+            best_size = max(size_votes, key=size_votes.get)
+        else:
+            best_size = ""
+        # 取reason：优先用high置信的理由
+        all_reasons = has_votes["yes"]
+        all_reasons.sort(key=lambda x: 0 if str(x.get("confidence", "")).lower() == "high" else 1)
+        best_reason = all_reasons[0].get("reason", "") if all_reasons else ""
+        return {
+            "has_xd_card": True,
+            "card_size": _normalize_xd_size(best_size),
+            "confidence": "high" if len(has_votes["yes"]) >= 2 else "medium",
+            "reason": best_reason,
+            "vote_detail": {"yes": len(has_votes["yes"]), "no": len(has_votes["no"]), "skip": len(has_votes["skip"])},
+        }
+    return {
+        "has_xd_card": False,
+        "card_size": "",
+        "confidence": "low",
+        "reason": "多模型无明确有卡判断",
+        "vote_detail": {"yes": len(has_votes["yes"]), "no": len(has_votes["no"]), "skip": len(has_votes["skip"])},
+    }
+
+
+XD_CARD_VISION_PROMPT_TEMPLATE = """你是一个专业的二手数码相机配件识别专家。请仔细观察这些图片，判断商品是否捆绑了XD存储卡（常见于富士/奥林巴斯老相机）。
+
+商品标题：{title}
+
+请严格观察以下内容：
+1. 【配件全家福】：相机旁边是否有XD卡（超小型方形卡，约2cm×2cm，白色或银灰色，正面标注xD图标）
+2. 【电池仓/卡槽】：有些XD卡槽设计在电池仓旁边，图片中是否能看到电池仓内或旁边有卡
+3. 【拍照界面】：LCD屏幕上是否显示储存介质为"xD"或"xD-Picture"，而不是"IN"（索尼记忆棒）或"SD"
+4. 【存储数量】：部分相机LCD显示可存储照片数量极大（如999+），说明可能配了大容量XD卡
+
+注意：XD卡非常小（约拇指盖一半），不要和SD卡（长方形）混淆。
+
+请只返回JSON，不要其他文字：
+{{"has_xd_card": true或false,
+  "card_size": "16mb"/"32mb"/"64mb"/"128mb"/"256mb"/"512mb"/"1g"/"2g"/"未知容量"（如不确定填"未知容量"）,
+  "confidence": "high"或"low",
+  "reason": "一句话描述你看到了什么"}}
+
+判断规则：
+- 清楚看到XD卡在相机旁边 → has_xd_card=true，confidence=high
+- 看到电池仓旁边有小卡但不确定 → has_xd_card=true，confidence=low
+- 拍照界面显示xD储存介质 → has_xd_card=true，confidence=high
+- 照片数量显示999+极大 → has_xd_card=true，confidence=medium，卡容量填"未知容量"
+- 只能看到相机没有卡 → has_xd_card=false
+- 图片模糊什么都看不清 → has_xd_card=false，confidence=low"""
+
+
+async def check_xd_card_from_images(item_id: str, title: str, images: List[str]) -> dict:
+    """
+    多模型并行检测商品图片是否捆绑XD卡。
+    Qwen VL + Doubao Vision + DeepSeek Vision 三路并发，取投票结果。
+    """
+    if not images:
+        return {"item_id": item_id, "has_xd_card": False, "card_size": "", "confidence": "low", "reason": "无图片跳过"}
+
+    # 标题已声明自备卡，直接跳过
+    title_lower = (title or "").lower()
+    for pat in [r"xd卡自备", r"卡自备", r"不带卡", r"不含卡", r"无卡"]:
+        if re.search(pat, title_lower):
+            return {"item_id": item_id, "has_xd_card": False, "card_size": "", "confidence": "low", "reason": "标题已声明自备卡"}
+
+    prompt = XD_CARD_VISION_PROMPT_TEMPLATE.format(title=title)
+    imgs = images[:3]
+
+    # 三模型并行（任一失败不影响其他）
+    tasks = []
+    model_names = []
+
+    if settings.qwen_api_key:
+        tasks.append(call_qwen_vision(imgs, prompt))
+        model_names.append("qwen")
+
+    if settings.doubao_api_key:
+        tasks.append(call_doubao_vision(imgs, prompt))
+        model_names.append("doubao")
+
+    if settings.deepseek_api_key:
+        tasks.append(call_deepseek_vision(imgs, prompt))
+        model_names.append("deepseek")
+
+    if not tasks:
+        return {"item_id": item_id, "has_xd_card": False, "card_size": "", "confidence": "low", "reason": "未配置任何视觉模型"}
+
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # 给结果打上模型标签
+    labeled = []
+    for i, r in enumerate(raw_results):
+        if isinstance(r, Exception):
+            labeled.append({"model": model_names[i] if i < len(model_names) else "unknown", "error": str(r)})
+        else:
+            r["model"] = model_names[i] if i < len(model_names) else "unknown"
+            labeled.append(r)
+
+    # 投票融合
+    merged = _merge_xd_vote_results(labeled)
+    final_size = _normalize_xd_size(merged.get("card_size", ""))
+
+    logger.info(f"XD卡多模型检测: item={item_id}, vote={merged.get('vote_detail')}, size={final_size}, reason={merged.get('reason', '')[:50]}")
+
+    return {
+        "item_id": item_id,
+        "has_xd_card": merged.get("has_xd_card", False),
+        "card_size": final_size,
+        "confidence": merged.get("confidence", "low"),
+        "reason": merged.get("reason", ""),
+        "vote_detail": merged.get("vote_detail", {}),
+    }
+
+
 async def analyze_item_images(item_id: str, title: str, images: List[str], price: float = 0.0, base_price: float = 0.0) -> dict:
     """分析单个商品图片成色（单模型，快速），并检查成色差时价格是否合理"""
     if not images:
@@ -465,9 +693,17 @@ async def multi_model_valuation(
     base_price: float,
     prices: list,
     sample_count: int,
+    is_xd_card_model: bool = False,
+    xd_card_bundle_count: int = 0,
 ) -> list[LLMValuation]:
-    """并发调用三个大模型，返回估价结果列表"""
-    prompt = _build_prompt(keyword, base_price, prices, sample_count)
+    """并发调用三个大模型，返回估价结果列表
+
+    is_xd_card_model: 是否为XD卡机型（会自动在prompt中注入降权提示）
+    xd_card_bundle_count: 检测到的带卡捆绑商品数量（prompt中告知模型降权处理）
+    """
+    prompt = _build_prompt(keyword, base_price, prices, sample_count,
+                           is_xd_card_model=is_xd_card_model,
+                           xd_card_bundle_count=xd_card_bundle_count)
     ds, qw, db = await asyncio.gather(
         call_deepseek(prompt),
         call_qwen(prompt),

@@ -16,8 +16,8 @@ from app.models.database import get_db
 from app.models.item import CrawledItem, ValuationRecord, BargainAlert
 from app.crawler.xianyu import get_crawler
 from app.services.pricing import calculate_price
-from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, analyze_item_images, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
-from app.services.bargain import detect_bargains, filter_target_items, filter_target_items_with_reasons
+from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, analyze_item_images, check_xd_card_from_images, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
+from app.services.bargain import detect_bargains, filter_target_items, filter_target_items_with_reasons, detect_xd_card_model_from_items, strip_xd_card_prices, merge_xd_bundle_with_vision
 from app.config import settings
 
 router = APIRouter(prefix="/api", tags=["估价"])
@@ -417,23 +417,69 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
                     item.quality_score = max(20.0, item.quality_score - 20)
                     item.quality_flags.append("图片判断:疑似非整机")
 
-    # 4. 算法估价（功能优先质量分 + 鲁棒估价）
-    prices = [i.price for i in items]
-    quality_scores = [i.quality_score for i in items]
-    pricing = calculate_price(prices, quality_scores=quality_scores)
+    # 5. XD卡机型检测（爬取完成后，通过样本标题/描述中"自备xd卡"/"xd卡另购"等关键词判断）
+    is_xd_model = False
+    xd_card_bonus: dict = {}
+    camera_like_for_xd = bool(re.search(
+        r"(canon|nikon|sony|佳能|索尼|尼康|富士|松下|奥林巴斯|sx\s*\d|rx\s*\d|a\s*\d)",
+        keyword, flags=re.IGNORECASE
+    ))
+    # camera_only_items：纯相机商品（不含XD卡捆绑），用于算法估价
+    # bundle_infos：含卡捆绑商品详情，用于捡漏阶段叠加卡值
+    camera_only_items: list = []
+    bundle_infos: list = []
+    xd_bundle_count = 0
 
-    # 5. 多模型并发分析
+    if camera_like_for_xd:
+        is_xd_model = detect_xd_card_model_from_items(items)
+        if is_xd_model:
+            camera_only_items, bundle_infos = strip_xd_card_prices(items)
+            xd_bundle_count = len(bundle_infos)
+            for bi in bundle_infos:
+                xd_card_bonus[bi.item_id] = (bi.card_size, bi.card_value)
+            logger.info(f"XD卡机型确认：{xd_bundle_count} 件含卡捆绑，{len(camera_only_items)} 件纯相机已纳入算法估价")
+
+            # 图片XD卡检测（并发，轻量，只分析前10个含图未识别样本）
+            if settings.qwen_api_key and items:
+                xd_analysis_items = [i for i in items if i.images and i.item_id not in xd_card_bonus][:10]
+                if xd_analysis_items:
+                    from app.services.bargain import _get_xd_card_value
+                    sem_xd = asyncio.Semaphore(3)
+                    async def _check_xd(item):
+                        async with sem_xd:
+                            await asyncio.sleep(0.2)
+                            return await check_xd_card_from_images(item.item_id, item.title, item.images[:2])
+                    xd_results = await asyncio.gather(*[_check_xd(i) for i in xd_analysis_items], return_exceptions=True)
+                    for r in xd_results:
+                        if isinstance(r, dict) and r.get("has_xd_card") and r.get("card_size"):
+                            item_id = r["item_id"]
+                            card_size = r["card_size"]
+                            card_val = _get_xd_card_value(card_size)
+                            xd_card_bonus[item_id] = (card_size, card_val)
+                            logger.info(f"图片检测到XD卡: {item_id} {card_size} 价值约{card_val}元")
+
+    # 6. 算法估价：XD卡机型只使用纯相机商品（排除含卡捆绑），避免虚高基准价
+    # 无论是否XD卡机型，算法估价都用纯相机商品
+    items_for_algo = camera_only_items if is_xd_model else items
+    prices_for_algo = [i.price for i in items_for_algo]
+    quality_scores_for_algo = [i.quality_score for i in items_for_algo]
+    pricing = calculate_price(prices_for_algo, quality_scores=quality_scores_for_algo)
+
+    # 7. 多模型并发分析（传入XD卡上下文，让模型降权处理带卡捆绑样本）
+    # LLM prompt 始终用所有原始价格，让模型自己判断降权
     llm_results = await multi_model_valuation(
         keyword=keyword,
         base_price=pricing.base_price,
-        prices=pricing.raw_prices,
+        prices=[i.price for i in items],
         sample_count=pricing.sample_count,
+        is_xd_card_model=is_xd_model,
+        xd_card_bundle_count=xd_bundle_count,
     )
 
-    # 6. 捡漏检测
-    bargains = detect_bargains(items, pricing.base_price, query_keyword=keyword)
+    # 8. 捡漏检测（含XD卡文字检测，图片检测结果已合并到 xd_card_bonus）
+    bargains = detect_bargains(items, pricing.base_price, query_keyword=keyword, xd_card_bonus=xd_card_bonus if xd_card_bonus else None)
 
-    # 7. 存储估价记录
+    # 9. 存储估价记录
     record = ValuationRecord(
         keyword=keyword,
         base_price=pricing.base_price,
@@ -485,6 +531,8 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
                 estimated_price=b.estimated_price,
                 profit_estimate=b.profit_estimate,
                 url=b.url,
+                xd_card_size=b.xd_card_size or "",
+                xd_card_value=b.xd_card_value or 0.0,
             ))
         elif exists_alert.valuation_record_id is None:
             exists_alert.valuation_record_id = record.id
@@ -549,9 +597,14 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
                 "estimated_price": b.estimated_price,
                 "profit_estimate": b.profit_estimate,
                 "url": b.url,
+                "xd_card_size": b.xd_card_size,
+                "xd_card_value": b.xd_card_value,
+                "has_xd_bonus": bool(b.xd_card_size and b.xd_card_value > 0),
             }
             for b in bargains
         ],
+        "xd_card_model": is_xd_model,
+        "xd_card_bundle_count": xd_bundle_count,
     }
 
 
@@ -794,10 +847,58 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             yield f"event: error\ndata: {json.dumps({'detail': '有效样本不足，请换关键词重试'}, ensure_ascii=False)}\n\n"
             return
 
-        prices = [i.price for i in items]
-        quality_scores = [i.quality_score for i in items]
-        pricing = calculate_price(prices, quality_scores=quality_scores)
-        bargains = detect_bargains(items, pricing.base_price, query_keyword=keyword)
+        # XD卡检测：爬取完成后，通过样本标题/描述判断机型
+        is_xd_model = False
+        xd_card_bonus: dict = {}
+        # camera_only_items：纯相机商品（不含XD卡捆绑），用于算法估价
+        # bundle_infos：含卡捆绑商品详情，用于捡漏阶段叠加卡值
+        camera_only_items: list = []
+        bundle_infos: list = []
+        xd_bundle_count = 0
+
+        if camera_like:
+            is_xd_model = detect_xd_card_model_from_items(items)
+            if is_xd_model:
+                from app.services.bargain import strip_xd_card_prices, _get_xd_card_value
+                camera_only_items, bundle_infos = strip_xd_card_prices(items)
+                xd_bundle_count = len(bundle_infos)
+                for bi in bundle_infos:
+                    xd_card_bonus[bi.item_id] = (bi.card_size, bi.card_value)
+
+                # XD卡确认提示推送给前端（替代原来的"爬前预判提示"）
+                card_price_list = "\n".join([f"  {k}：约¥{v}" for k, v in {"16mb":"50","32mb":"60","64mb":"70","128mb":"108","256mb":"120","512mb":"134","1g":"148","2g":"162"}.items()])
+                xd_confirm_text = (
+                    f"📌【XD卡提示】您查询的相机为XD卡老机型！\n"
+                    f"  ① 相机+内存卡总利润超过¥120即为捡漏\n"
+                    f"  ② 带卡商品已排除在估价样本外，只用纯相机价格计算基准价\n"
+                    f"  ③ 识别到 {xd_bundle_count} 件捆绑XD卡商品，已做降权处理\n"
+                    f"参考XD卡价格：\n{card_price_list}"
+                )
+                yield f"event: xd_confirmed\ndata: {json.dumps({'text': xd_confirm_text, 'bundle_count': xd_bundle_count}, ensure_ascii=False)}\n\n"
+
+                # 图片XD卡检测（并发，轻量，限制前10个节省开销）
+                if settings.qwen_api_key:
+                    xd_analysis_items = [i for i in items if i.images and i.item_id not in xd_card_bonus][:10]
+                    if xd_analysis_items:
+                        sem_xd = asyncio.Semaphore(3)
+                        async def _check_xd(item):
+                            async with sem_xd:
+                                await asyncio.sleep(0.2)
+                                return await check_xd_card_from_images(item.item_id, item.title, item.images[:2])
+                        xd_results = await asyncio.gather(*[_check_xd(i) for i in xd_analysis_items], return_exceptions=True)
+                        for r in xd_results:
+                            if isinstance(r, dict) and r.get("has_xd_card") and r.get("card_size"):
+                                item_id = r["item_id"]
+                                card_size = r["card_size"]
+                                card_val = _get_xd_card_value(card_size)
+                                xd_card_bonus[item_id] = (card_size, card_val)
+                                logger.info(f"图片检测到XD卡: {item_id} {card_size} 价值约{card_val}元")
+
+        # 算法估价：XD卡机型只用纯相机商品，排除含卡捆绑样本
+        items_for_algo = camera_only_items if is_xd_model else items
+        prices_for_algo = [i.price for i in items_for_algo]
+        quality_scores = [i.quality_score for i in items_for_algo]
+        pricing = calculate_price(prices_for_algo, quality_scores=quality_scores)
 
         # 详情页补图已禁用（耗时过长，使用列表页图片）
 
@@ -838,10 +939,15 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                             item.quality_score = max(10.0, item.quality_score - 15)
                     yield f"event: step\ndata: {json.dumps({'text': f'成色分析完成', 'status': 'done', 'filtered_out': [{'title': it.title, 'price': it.price, 'reason': '、'.join(img_map[it.item_id].get("image_flags", ["成色分析"])) if img_map.get(it.item_id) else '成色分析'} for it in cond_items if img_map.get(it.item_id)]}, ensure_ascii=False)}\n\n"
 
+        # 捡漏检测（xd_card_bonus 已通过文字+图片检测填充完毕）
+        bargains = detect_bargains(items, pricing.base_price, query_keyword=keyword, xd_card_bonus=xd_card_bonus if xd_card_bonus else None)
+
         base_payload = {
             "type": "base",
             "keyword": keyword,
             "sample_count": len(items),
+            "xd_card_model": is_xd_model,
+            "xd_card_bundle_count": xd_bundle_count,
             "algorithm": {
                 "base_price": pricing.base_price,
                 "price_min": pricing.price_min,
@@ -860,12 +966,19 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                          "quality_flags": i.quality_flags, "images": i.images} for i in items],
             "bargains": [{"item_id": b.item_id, "title": b.title, "price": b.price,
                           "estimated_price": b.estimated_price, "profit_estimate": b.profit_estimate,
-                          "url": b.url} for b in bargains],
+                          "url": b.url,
+                          "xd_card_size": b.xd_card_size, "xd_card_value": b.xd_card_value,
+                          "has_xd_bonus": bool(b.xd_card_size and b.xd_card_value > 0)} for b in bargains],
         }
         yield f"event: base\ndata: {json.dumps(base_payload, ensure_ascii=False)}\n\n"
 
         # ---- 阶段2：三模型竞速，谁先完成先推送 ----
-        prompt = _build_prompt_for_stream(keyword, pricing.base_price, pricing.raw_prices, pricing.sample_count)
+        # LLM prompt 始终用原始价格，让模型自己判断降权
+        prompt = _build_prompt_for_stream(
+            keyword, pricing.base_price, [i.price for i in items], pricing.sample_count,
+            is_xd_card_model=is_xd_model,
+            xd_card_bundle_count=xd_bundle_count,
+        )
 
         async def run_model(call_fn, model_name):
             data = await call_fn(prompt)
@@ -938,6 +1051,8 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                         estimated_price=b.estimated_price,
                         profit_estimate=b.profit_estimate,
                         url=b.url,
+                        xd_card_size=b.xd_card_size or "",
+                        xd_card_value=b.xd_card_value or 0.0,
                     ))
                 elif ex_alert.valuation_record_id is None:
                     ex_alert.valuation_record_id = record.id
@@ -1053,6 +1168,8 @@ async def get_bargains(
             "url": a.url,
             "is_read": a.is_read,
             "created_at": a.created_at.isoformat() if a.created_at else None,
+            "xd_card_size": a.xd_card_size or "",
+            "xd_card_value": a.xd_card_value or 0.0,
         }
         for a in alerts
     ]

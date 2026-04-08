@@ -70,12 +70,13 @@
         <template v-for="step in steps" :key="step.id">
           <div
             class="step-item"
-            :class="['step-' + step.status, step.filteredOut?.length ? 'step-expandable' : '']"
+            :class="['step-' + (step.status === 'info' ? 'info' : step.status), step.filteredOut?.length ? 'step-expandable' : '']"
             @click="step.filteredOut?.length && (step.expanded = !step.expanded)"
           >
             <span class="step-icon">
               <span v-if="step.status === 'done'">✓</span>
               <span v-else-if="step.status === 'error'">✗</span>
+              <span v-else-if="step.status === 'info'">💡</span>
               <span v-else class="step-spinner"></span>
             </span>
             <span class="step-text">{{ step.text }}</span>
@@ -221,12 +222,20 @@
           :href="b.url"
           target="_blank"
           class="bargain-item"
+          :class="{ 'bargain-item-xd': b.has_xd_bonus }"
         >
+          <!-- XD卡醒目标签 -->
+          <div v-if="b.has_xd_bonus" class="xd-card-badge">
+            含XD卡 {{ b.xd_card_size ? b.xd_card_size.toUpperCase() : '' }}
+            <span class="xd-card-value">+约¥{{ b.xd_card_value }}卡值</span>
+          </div>
           <div class="bargain-title-text">{{ b.title }}</div>
           <div class="bargain-prices">
             <span class="bargain-actual">¥{{ b.price }}</span>
             <span class="bargain-est">估价 ¥{{ b.estimated_price }}</span>
-            <span class="bargain-profit">+¥{{ b.profit_estimate }} 利润</span>
+            <span class="bargain-profit" :class="{ 'profit-xd': b.has_xd_bonus }">
+              +¥{{ b.profit_estimate }} 利润
+            </span>
           </div>
         </a>
       </div>
@@ -394,6 +403,8 @@ async function doValuate() {
   const task = buildTask(keyword.value.trim())
   tasks.value.unshift(task)
   selectTask(task.id)
+  // 点击“开始估价”后清空输入框，方便连续输入下一次
+  keyword.value = ''
 
   const controller = new AbortController()
   activeController.value = controller
@@ -441,6 +452,16 @@ async function doValuate() {
                   if (payload.filtered_out?.length) last.filteredOut = payload.filtered_out
                 }
               }
+            } else if (evtType === 'xd_confirmed') {
+              task.steps.push({
+                text: '【XD卡提示】' + (payload.text || '').split('\n')[0],
+                status: 'info',
+                id: Date.now() + Math.random(),
+                filteredOut: [],
+                expanded: false,
+                is_xd_hint: true,
+                xd_hint_full: payload.text || '',
+              })
             } else if (evtType === 'base') {
               const last = [...task.steps].reverse().find(s => s.status === 'pending')
               if (last) {
@@ -449,6 +470,8 @@ async function doValuate() {
               }
               task.partial.keyword = payload.keyword
               task.partial.sample_count = payload.sample_count
+              task.partial.xd_card_model = payload.xd_card_model || false
+              task.partial.xd_card_bundle_count = payload.xd_card_bundle_count || 0
               task.partial.algorithm = payload.algorithm
               task.partial.quality_summary = payload.quality_summary
               task.partial.samples = payload.samples
@@ -1246,5 +1269,57 @@ onMounted(() => {
   padding: 2px 8px;
   border-radius: 4px;
   font-weight: 600;
+}
+.bargain-profit.profit-xd {
+  background: rgba(255,136,0,0.18);
+  color: #ff8800;
+}
+.bargain-item.bargain-item-xd {
+  border-color: rgba(255,136,0,0.45);
+  background: rgba(255,136,0,0.04);
+}
+.bargain-item.bargain-item-xd:hover {
+  border-color: #ff8800;
+  background: rgba(255,136,0,0.10);
+}
+.xd-card-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #ff8800, #ff5500);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 4px;
+  margin-bottom: 6px;
+  box-shadow: 0 1px 4px rgba(255,100,0,0.3);
+}
+.xd-card-value {
+  background: rgba(255,255,255,0.25);
+  border-radius: 3px;
+  padding: 0 5px;
+  font-weight: 600;
+}
+
+.step-item.info {
+  background: rgba(255,136,0,0.05);
+  border-color: rgba(255,136,0,0.25);
+}
+.step-item.info .step-icon {
+  background: rgba(255,136,0,0.15);
+  color: #ff8800;
+  border-color: rgba(255,136,0,0.3);
+}
+.step-item.info .step-dot {
+  background: #ff8800;
+}
+.step-item.info .step-text {
+  color: #cc6600;
+}
+
+.step-item.info .step-dot {
+  background: #ff8800;
+  box-shadow: 0 0 0 3px rgba(255,136,0,0.2);
 }
 </style>

@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     doubao_api_key: Optional[str] = None
 
     deepseek_model: str = "deepseek-reasoner"
+    deepseek_vision_model: str = "deepseek-chat"  # 用于图片分析（非推理模型，支持视觉）
     qwen_model: str = "qwen-max"
     qwen_vision_model: str = "qwen-vl-max"
     qwen_vision_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode"

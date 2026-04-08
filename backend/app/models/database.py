@@ -29,3 +29,7 @@ async def init_db():
         columns = {row[1] for row in rows.fetchall()} if rows is not None else set()
         if "valuation_record_id" not in columns:
             await conn.execute(text("ALTER TABLE bargain_alerts ADD COLUMN valuation_record_id INTEGER"))
+        if "xd_card_size" not in columns:
+            await conn.execute(text("ALTER TABLE bargain_alerts ADD COLUMN xd_card_size TEXT DEFAULT ''"))
+        if "xd_card_value" not in columns:
+            await conn.execute(text("ALTER TABLE bargain_alerts ADD COLUMN xd_card_value REAL DEFAULT 0"))
