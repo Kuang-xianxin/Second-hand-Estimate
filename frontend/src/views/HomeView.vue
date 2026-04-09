@@ -200,6 +200,12 @@
               <span>成色：{{ s.condition || '未标注' }}</span>
               <span>质量分：{{ s.quality_score }}</span>
               <span>{{ s.sold ? '已售' : '在售' }}</span>
+              <!-- 内存卡状态标签 -->
+              <span
+                v-if="getSdCardTag(s.quality_flags)"
+                class="sd-card-tag"
+                :class="getSdCardTagClass(s.quality_flags)"
+              >{{ getSdCardTag(s.quality_flags) }}</span>
             </div>
             <div v-if="s.quality_flags && s.quality_flags.some(f => f.startsWith('图片'))" class="sample-img-flags">
               <span v-for="f in s.quality_flags.filter(f => f.startsWith('图片'))"
@@ -345,6 +351,22 @@ function stepDetailKind(step) {
   const t = step?.text || ''
   if (t.includes('成色分析完成')) return 'condition'
   return 'filter'
+}
+
+/** 从 quality_flags 中提取内存卡状态标签文字 */
+function getSdCardTag(flags) {
+  if (!flags) return null
+  const f = flags.find(f => f.startsWith('内存卡状态:'))
+  return f ? f.replace('内存卡状态:', '') : null
+}
+
+/** 内存卡状态标签对应的样式类名 */
+function getSdCardTagClass(flags) {
+  const text = getSdCardTag(flags) || ''
+  if (text.includes('需自备')) return 'sd-tag-self'
+  if (text.includes('捆绑') || text.includes('含卡')) return 'sd-tag-bundle'
+  if (text.includes('加购')) return 'sd-tag-addon'
+  return 'sd-tag-unknown'
 }
 
 async function checkLoginState() {
@@ -1020,6 +1042,40 @@ onMounted(() => {
   background: rgba(255,180,0,0.12);
   color: #c8960a;
   border: 1px solid rgba(255,180,0,0.25);
+}
+
+/* 内存卡状态标签 */
+.sd-card-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+/* 需自备 → 红色警示风格 */
+.sd-tag-self {
+  background: rgba(224,92,92,0.15);
+  color: #e05c5c;
+  border: 1px solid rgba(224,92,92,0.35);
+}
+/* 捆绑含卡 → 绿色信任风格 */
+.sd-tag-bundle {
+  background: rgba(92,184,122,0.15);
+  color: #5cc87a;
+  border: 1px solid rgba(92,184,122,0.35);
+}
+/* 有加购项 → 橙色提示风格 */
+.sd-tag-addon {
+  background: rgba(255,136,0,0.15);
+  color: #ff8800;
+  border: 1px solid rgba(255,136,0,0.35);
+}
+/* 未知 → 灰色中性风格 */
+.sd-tag-unknown {
+  background: rgba(120,130,160,0.15);
+  color: #7882a0;
+  border: 1px solid rgba(120,130,160,0.3);
 }
 
 .sample-main {

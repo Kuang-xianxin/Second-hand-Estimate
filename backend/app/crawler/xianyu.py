@@ -22,6 +22,28 @@ POSITIVE_FUNCTION_KEYWORDS = [
     "功能正常", "一切正常", "无拆无修", "自用", "个人自用", "刚换电池", "可验机", "支持验货", "带发票", "有盒", "配件齐全",
 ]
 
+# 捆绑销售内存卡（套餐/含卡等）
+BUNDLE_SD_KEYWORDS = [
+    "套餐", "带卡", "含卡", "捆绑", "内存卡", "送卡", "附卡", "配卡", "一张卡", "卡+", "卡套装",
+    "含内存卡", "含sd卡", "带内存卡", "带sd卡", "送内存卡", "送sd卡", "自带卡",
+    "卡在机器里", "机器带卡", "连卡", "和卡一起", "卡一起", "读卡器",
+    "套餐一", "套餐二", "套餐价格", "套餐优惠", "套餐价",
+    "官方标配", "标准套餐", "套餐A", "套餐B", "套餐C",
+]
+# 加购/加钱换购选项
+ADDON_PURCHASE_KEYWORDS = [
+    "加购", "加钱", "加价", "换购", "另加", "另付", "多花", "再加", "额外", "另购",
+    "加xx元", "加xxx元", "加价购", "换购价", "换购链接", "加购链接",
+    "点此购买", "点击购买", "需要额外购买", "需另购", "需另外购买",
+]
+# 明确要求自备内存卡/无需内存卡（与上面的"捆绑"不同）
+SELF_PROVIDE_SD_KEYWORDS = [
+    "自备内存卡", "自备卡", "请自备", "需自备", "自备sd", "自备TF", "自备卡",
+    "不含卡", "不带卡", "不送卡", "无内存卡", "无卡", "没有内存卡", "不含内存卡",
+    "无sd卡", "不含sd卡", "不送sd卡", "不带内存卡", "无TF卡",
+    "需自备卡", "需自备内存卡", "请自备内存卡", "需要自备",
+]
+
 # 引流低价词：标题/描述含这些词的商品价格无参考意义，直接过滤
 DECOY_PRICE_KEYWORDS = [
     "勿直拍", "勿拍", "展示价", "展示用", "联系改价", "先联系", "先咨询", "请勿直接拍",
@@ -127,6 +149,22 @@ class XianyuCrawler:
         if positive_hits:
             score += min(20.0, 6.0 * len(positive_hits))
             flags.extend([f"正向描述:{kw}" for kw in positive_hits[:3]])
+
+        # --- 内存卡相关标注（不影响分数，只标记） ---
+        # 优先级：明确要求自备 > 捆绑含卡 > 加购选项 > 未知
+        self_provide_hits = [kw for kw in SELF_PROVIDE_SD_KEYWORDS if kw.lower() in text]
+        bundle_hits = [kw for kw in BUNDLE_SD_KEYWORDS if kw.lower() in text]
+        addon_hits = [kw for kw in ADDON_PURCHASE_KEYWORDS if kw.lower() in text]
+
+        if self_provide_hits:
+            flags.append("内存卡状态:需自备")
+        elif bundle_hits:
+            flags.append("内存卡状态:捆绑含卡")
+        elif addon_hits:
+            flags.append("内存卡状态:有加购项")
+        else:
+            # 既不捆绑、也不要求自备、也无加购 → 未知
+            flags.append("内存卡状态:未知")
 
         score = max(20.0, min(95.0, score))
         return True, round(score, 2), flags
