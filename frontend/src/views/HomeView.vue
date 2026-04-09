@@ -49,7 +49,7 @@
       <p v-if="state.error" class="error-msg">{{ state.error }}</p>
       <div v-if="state.tasks.length" class="task-tabs">
         <button
-          v-for="t in tasks"
+          v-for="t in state.tasks"
           :key="t.id"
           class="task-tab"
           :class="{ active: t.id === state.currentTaskId }"
@@ -105,81 +105,56 @@
 
     <!-- 结果区 -->
     <section v-if="currentTask?.result" class="result-section">
-      <!-- 算法基准卡片 -->
-      <div class="card algo-card">
-        <div class="card-label">算法基准估价</div>
-        <template v-if="currentTask.result.algorithm">
-          <div class="base-price">¥{{ currentTask.result.algorithm.base_price }}</div>
-          <div class="price-range">
-            合理区间：<span class="range-val">¥{{ currentTask.result.algorithm.price_min }} — ¥{{ currentTask.result.algorithm.price_max }}</span>
-          </div>
-          <div class="sample-info">参与计算样本：{{ currentTask.result.sample_count }} 条</div>
-          <div v-if="currentTask.result.algorithm.low_outliers?.length" class="outlier-info low">
-            过低价格（已降权）：{{ currentTask.result.algorithm.low_outliers.map(p => '¥'+p).join('、') }}
-          </div>
-          <div v-if="currentTask.result.algorithm.high_outliers?.length" class="outlier-info high">
-            过高价格（已降权）：{{ currentTask.result.algorithm.high_outliers.map(p => '¥'+p).join('、') }}
-          </div>
-        </template>
-        <template v-else>
-          <div class="loading-placeholder">正在计算中...</div>
-        </template>
-      </div>
-
-      <div v-if="currentTask.result.quality_summary" class="card quality-card">
-        <div class="card-label">功能质量画像</div>
-        <div class="quality-head">
-          <div class="quality-score">{{ currentTask.result.quality_summary.avg_score }}</div>
-          <div class="quality-meta">平均质量分（功能优先）</div>
+      <!-- 多模型最终估价建议 -->
+      <div class="final-valuation-section">
+        <div class="section-title final-title">
+          <span class="final-star">★</span> 最终估价建议 <span class="final-star">★</span>
         </div>
-        <div class="quality-stacked-bar">
-          <span
-            class="seg high"
-            :style="{ width: (currentTask.result.quality_summary.high_quality_count / currentTask.result.sample_count * 100 || 0) + '%' }"
-          />
-          <span
-            class="seg mid"
-            :style="{ width: (currentTask.result.quality_summary.mid_quality_count / currentTask.result.sample_count * 100 || 0) + '%' }"
-          />
-          <span
-            class="seg low"
-            :style="{ width: (currentTask.result.quality_summary.low_quality_count / currentTask.result.sample_count * 100 || 0) + '%' }"
-          />
-        </div>
-        <div class="quality-legend">
-          <span class="lg high">高质量 {{ currentTask.result.quality_summary.high_quality_count }}</span>
-          <span class="lg mid">中质量 {{ currentTask.result.quality_summary.mid_quality_count }}</span>
-          <span class="lg low">低质量 {{ currentTask.result.quality_summary.low_quality_count }}</span>
+        <div class="llm-grid final-llm-grid">
+          <div
+            v-for="m in currentTask.result.llm_results"
+            :key="m.model"
+            class="llm-card final-llm-card"
+            :class="{ 'has-error': m.error }"
+          >
+            <div class="llm-model-name">{{ m.model }}</div>
+            <div v-if="m.error" class="llm-error">{{ m.error }}</div>
+            <template v-else>
+              <div class="llm-price">¥{{ m.suggested_price }}</div>
+              <div class="llm-range">¥{{ m.price_min }} — ¥{{ m.price_max }}</div>
+              <div class="llm-confidence" :class="'conf-'+m.confidence">置信度：{{ m.confidence }}</div>
+              <div class="llm-reasoning">{{ m.reasoning }}</div>
+            </template>
+          </div>
+          <!-- 等待中的模型占位 -->
+          <div
+            v-for="n in (3 - (currentTask.result.llm_results?.length || 0))"
+            :key="'pending-'+n"
+            class="llm-card llm-card-pending"
+          >
+            <div class="llm-model-name">分析中...</div>
+            <div class="llm-pending-dots"><span>.</span><span>.</span><span>.</span></div>
+          </div>
         </div>
       </div>
 
-      <!-- 多模型对比 -->
-      <div class="section-title">大模型分析对比</div>
-      <div class="llm-grid">
-        <div
-          v-for="m in currentTask.result.llm_results"
-          :key="m.model"
-          class="llm-card"
-          :class="{ 'has-error': m.error }"
-        >
-          <div class="llm-model-name">{{ m.model }}</div>
-          <div v-if="m.error" class="llm-error">{{ m.error }}</div>
-          <template v-else>
-            <div class="llm-price">¥{{ m.suggested_price }}</div>
-            <div class="llm-range">¥{{ m.price_min }} — ¥{{ m.price_max }}</div>
-            <div class="llm-confidence" :class="'conf-'+m.confidence">置信度：{{ m.confidence }}</div>
-            <div class="llm-reasoning">{{ m.reasoning }}</div>
-          </template>
+      <!-- 算法基准参考 -->
+      <div class="algo-reference">
+        <div class="algo-ref-header">
+          <span class="algo-ref-icon">📊</span>
+          <span class="algo-ref-label">算法基准参考</span>
+          <span class="algo-ref-hint">仅供参考，不作为最终结果</span>
         </div>
-        <!-- 等待中的模型占位 -->
-        <div
-          v-for="n in (3 - currentTask.result.llm_results.length)"
-          :key="'pending-'+n"
-          class="llm-card llm-card-pending"
-        >
-          <div class="llm-model-name">分析中...</div>
-          <div class="llm-pending-dots"><span>.</span><span>.</span><span>.</span></div>
+        <div class="algo-ref-content" v-if="currentTask.result.algorithm">
+          <div class="algo-ref-price">
+            基准价 <span class="algo-price-val">¥{{ currentTask.result.algorithm.base_price }}</span>
+          </div>
+          <div class="algo-ref-range">
+            合理区间：¥{{ currentTask.result.algorithm.price_min }} — ¥{{ currentTask.result.algorithm.price_max }}
+          </div>
+          <div class="algo-ref-sample">样本 {{ currentTask.result.sample_count }} 条</div>
         </div>
+        <div v-else class="loading-placeholder">正在计算中...</div>
       </div>
 
       <!-- 样本数据 -->
@@ -200,9 +175,9 @@
               <span>成色：{{ s.condition || '未标注' }}</span>
               <span>质量分：{{ s.quality_score }}</span>
               <span>{{ s.sold ? '已售' : '在售' }}</span>
-              <!-- 内存卡状态标签 -->
+              <!-- 内存卡状态标签（仅XD卡机型确认后才显示） -->
               <span
-                v-if="getSdCardTag(s.quality_flags)"
+                v-if="currentTask.xd_confirmed && getSdCardTag(s.quality_flags)"
                 class="sd-card-tag"
                 :class="getSdCardTagClass(s.quality_flags)"
               >{{ getSdCardTag(s.quality_flags) }}</span>
@@ -279,6 +254,7 @@ function buildTask(keywordText) {
     loading: true,
     error: '',
     result: null,
+    xd_confirmed: false,  // 是否已确认是XD卡机型，只有确认后才显示内存卡标签
     steps: reactive([{ text: '正在爬取闲鱼数据...', status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false }]),
     partial: reactive({
       keyword: keywordText,
@@ -479,6 +455,7 @@ async function doValuate() {
                 }
               }
             } else if (evtType === 'xd_confirmed') {
+              task.xd_confirmed = true
               task.steps.push({
                 text: '【XD卡提示】' + (payload.text || '').split('\n')[0],
                 status: 'info',
@@ -911,6 +888,130 @@ onMounted(() => {
   margin-bottom: 16px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
+}
+
+/* 最终估价建议区域 */
+.final-valuation-section {
+  margin-bottom: 24px;
+}
+
+.final-title {
+  text-align: center;
+  border-color: var(--accent);
+  color: var(--accent);
+  font-size: 16px;
+  letter-spacing: 4px;
+}
+
+.final-star {
+  color: var(--accent);
+}
+
+.final-llm-grid {
+  margin-bottom: 0;
+}
+
+.final-llm-card {
+  border: 2px solid var(--accent);
+  background: linear-gradient(180deg, var(--bg3) 0%, var(--bg2) 100%);
+}
+
+.final-llm-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 20px rgba(232, 197, 71, 0.2);
+}
+
+/* 算法基准参考（精简） */
+.algo-reference {
+  background: var(--bg2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  opacity: 0.7;
+}
+
+.algo-ref-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.algo-ref-icon { font-size: 14px; }
+
+.algo-ref-label {
+  color: var(--text2);
+  font-weight: 600;
+}
+
+.algo-ref-hint {
+  color: var(--text2);
+  opacity: 0.6;
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.algo-ref-content {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.algo-ref-price {
+  font-size: 13px;
+  color: var(--text2);
+}
+
+.algo-price-val {
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--font-mono);
+  margin-left: 4px;
+}
+
+.algo-ref-range {
+  font-size: 12px;
+  color: var(--text2);
+  font-family: var(--font-mono);
+}
+
+.algo-ref-sample {
+  font-size: 11px;
+  color: var(--text2);
+  opacity: 0.7;
+}
+
+/* 质量分精简卡片 */
+.quality-mini-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 12px;
+  margin-bottom: 24px;
+}
+
+.quality-mini-label {
+  color: var(--text2);
+}
+
+.quality-mini-score {
+  font-weight: 700;
+  color: var(--green);
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+.quality-mini-bar {
+  color: var(--text2);
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .llm-grid {

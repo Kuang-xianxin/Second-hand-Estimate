@@ -5,13 +5,18 @@
         <span class="brand-icon">估</span>
         <span class="brand-name">估二手</span>
       </div>
-      <div class="nav-links">
-        <router-link to="/" class="nav-link" active-class="active">估价</router-link>
-        <router-link to="/bargains" class="nav-link" active-class="active">
-          捡漏
-          <span v-if="unreadCount > 0" class="badge">{{ unreadCount }}</span>
-        </router-link>
-        <router-link to="/history" class="nav-link" active-class="active">记录</router-link>
+      <div class="nav-actions">
+        <div class="nav-links">
+          <router-link to="/" class="nav-link" active-class="active">估价</router-link>
+          <router-link to="/bargains" class="nav-link" active-class="active">
+            捡漏
+            <span v-if="unreadCount > 0" class="badge">{{ unreadCount }}</span>
+          </router-link>
+          <router-link to="/history" class="nav-link" active-class="active">记录</router-link>
+        </div>
+        <button class="theme-toggle" @click="toggleTheme" :title="isDark ? '切换日间模式' : '切换夜间模式'">
+          <span class="theme-icon">{{ isDark ? '🌙' : '☀️' }}</span>
+        </button>
       </div>
     </nav>
     <main class="main-content">
@@ -25,10 +30,17 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { getBargains } from '@/api/index.js'
 
 const unreadCount = ref(0)
+const isDark = ref(true)
+
+function toggleTheme() {
+  isDark.value = !isDark.value
+  document.body.classList.toggle('light', !isDark.value)
+  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
+}
 
 async function loadUnread() {
   try {
@@ -37,7 +49,14 @@ async function loadUnread() {
   } catch {}
 }
 
-onMounted(loadUnread)
+onMounted(() => {
+  const saved = localStorage.getItem('theme')
+  if (saved === 'light') {
+    isDark.value = false
+    document.body.classList.add('light')
+  }
+  loadUnread()
+})
 </script>
 
 <style scoped>
@@ -89,6 +108,33 @@ onMounted(loadUnread)
 .nav-links {
   display: flex;
   gap: 6px;
+}
+
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.theme-toggle {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 16px;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.theme-toggle:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.theme-toggle:hover .theme-icon {
+  filter: brightness(0);
 }
 
 .nav-link {
