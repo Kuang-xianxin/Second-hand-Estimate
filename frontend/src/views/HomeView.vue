@@ -6,20 +6,20 @@
       <p class="page-sub">输入商品名称，获取市场价格区间与多模型分析</p>
       <div class="search-box">
         <input
-          v-model="keyword"
+          v-model="state.keyword"
           class="search-input"
           placeholder="例如：iPhone 15 Pro 256G"
           @keydown.enter="doValuate"
           :disabled="false"
         />
-        <button class="search-btn" @click="doValuate" :disabled="checkingLogin">
+        <button class="search-btn" @click="doValuate" :disabled="state.checkingLogin">
           <span v-if="!loading">开始估价</span>
           <span v-else class="loading-dots">分析中<span>.</span><span>.</span><span>.</span></span>
         </button>
       </div>
       <div class="task-actions">
-        <button class="task-btn" @click="doValuate" :disabled="checkingLogin">新增并行估价</button>
-        <button class="task-btn stop" @click="stopCurrentTask" :disabled="!loading || !currentTaskId">停止当前估价</button>
+        <button class="task-btn" @click="doValuate" :disabled="state.checkingLogin">新增并行估价</button>
+        <button class="task-btn stop" @click="stopCurrentTask" :disabled="!state.loading || !state.currentTaskId">停止当前估价</button>
       </div>
       <div class="login-tip">
         <div class="login-tip-title">请先完成一次闲鱼登录授权</div>
@@ -27,32 +27,32 @@
           在 `backend` 目录运行 `python save_xianyu_state.py`，登录成功后再回来估价。
         </div>
       </div>
-      <div v-if="showLoginModal" class="login-modal-mask">
+      <div v-if="state.showLoginModal" class="login-modal-mask">
         <div class="login-modal">
           <div class="login-modal-title">需要先登录闲鱼</div>
           <div class="login-modal-text">
             检测到当前无登录态。点击“打开闲鱼登录页”后，在浏览器完成登录，再点“我已登录，重新检测”。
           </div>
           <div class="login-modal-actions">
-            <button class="modal-btn primary" @click="openLoginPage" :disabled="openingLogin">
-              {{ openingLogin ? '打开中...' : '打开闲鱼登录页' }}
+            <button class="modal-btn primary" @click="openLoginPage" :disabled="state.openingLogin">
+              {{ state.openingLogin ? '打开中...' : '打开闲鱼登录页' }}
             </button>
-            <button class="modal-btn ghost" @click="confirmLoginDone" :disabled="checkingLogin">
+            <button class="modal-btn ghost" @click="confirmLoginDone" :disabled="state.checkingLogin">
               我已登录，重新检测
             </button>
-            <button class="modal-btn text" @click="showLoginModal = false">
+            <button class="modal-btn text" @click="state.showLoginModal = false">
               稍后再说
             </button>
           </div>
         </div>
       </div>
-      <p v-if="error" class="error-msg">{{ error }}</p>
-      <div v-if="tasks.length" class="task-tabs">
+      <p v-if="state.error" class="error-msg">{{ state.error }}</p>
+      <div v-if="state.tasks.length" class="task-tabs">
         <button
           v-for="t in tasks"
           :key="t.id"
           class="task-tab"
-          :class="{ active: t.id === currentTaskId }"
+          :class="{ active: t.id === state.currentTaskId }"
           @click="selectTask(t.id)"
         >
           <span class="task-tab-keyword">{{ t.keyword }}</span>
@@ -65,9 +65,9 @@
     </section>
 
     <!-- 进度时间线 -->
-    <section v-if="steps.length" class="steps-section">
+    <section v-if="currentTask?.steps.length" class="steps-section">
       <div class="steps-list">
-        <template v-for="step in steps" :key="step.id">
+        <template v-for="step in currentTask?.steps" :key="step.id">
           <div
             class="step-item"
             :class="['step-' + (step.status === 'info' ? 'info' : step.status), step.filteredOut?.length ? 'step-expandable' : '']"
@@ -104,21 +104,21 @@
     </section>
 
     <!-- 结果区 -->
-    <section v-if="result" class="result-section">
+    <section v-if="currentTask?.result" class="result-section">
       <!-- 算法基准卡片 -->
       <div class="card algo-card">
         <div class="card-label">算法基准估价</div>
-        <template v-if="result.algorithm">
-          <div class="base-price">¥{{ result.algorithm.base_price }}</div>
+        <template v-if="currentTask.result.algorithm">
+          <div class="base-price">¥{{ currentTask.result.algorithm.base_price }}</div>
           <div class="price-range">
-            合理区间：<span class="range-val">¥{{ result.algorithm.price_min }} — ¥{{ result.algorithm.price_max }}</span>
+            合理区间：<span class="range-val">¥{{ currentTask.result.algorithm.price_min }} — ¥{{ currentTask.result.algorithm.price_max }}</span>
           </div>
-          <div class="sample-info">参与计算样本：{{ result.sample_count }} 条</div>
-          <div v-if="result.algorithm.low_outliers?.length" class="outlier-info low">
-            过低价格（已降权）：{{ result.algorithm.low_outliers.map(p => '¥'+p).join('、') }}
+          <div class="sample-info">参与计算样本：{{ currentTask.result.sample_count }} 条</div>
+          <div v-if="currentTask.result.algorithm.low_outliers?.length" class="outlier-info low">
+            过低价格（已降权）：{{ currentTask.result.algorithm.low_outliers.map(p => '¥'+p).join('、') }}
           </div>
-          <div v-if="result.algorithm.high_outliers?.length" class="outlier-info high">
-            过高价格（已降权）：{{ result.algorithm.high_outliers.map(p => '¥'+p).join('、') }}
+          <div v-if="currentTask.result.algorithm.high_outliers?.length" class="outlier-info high">
+            过高价格（已降权）：{{ currentTask.result.algorithm.high_outliers.map(p => '¥'+p).join('、') }}
           </div>
         </template>
         <template v-else>
@@ -126,30 +126,30 @@
         </template>
       </div>
 
-      <div v-if="result.quality_summary" class="card quality-card">
+      <div v-if="currentTask.result.quality_summary" class="card quality-card">
         <div class="card-label">功能质量画像</div>
         <div class="quality-head">
-          <div class="quality-score">{{ result.quality_summary.avg_score }}</div>
+          <div class="quality-score">{{ currentTask.result.quality_summary.avg_score }}</div>
           <div class="quality-meta">平均质量分（功能优先）</div>
         </div>
         <div class="quality-stacked-bar">
           <span
             class="seg high"
-            :style="{ width: (result.quality_summary.high_quality_count / result.sample_count * 100 || 0) + '%' }"
+            :style="{ width: (currentTask.result.quality_summary.high_quality_count / currentTask.result.sample_count * 100 || 0) + '%' }"
           />
           <span
             class="seg mid"
-            :style="{ width: (result.quality_summary.mid_quality_count / result.sample_count * 100 || 0) + '%' }"
+            :style="{ width: (currentTask.result.quality_summary.mid_quality_count / currentTask.result.sample_count * 100 || 0) + '%' }"
           />
           <span
             class="seg low"
-            :style="{ width: (result.quality_summary.low_quality_count / result.sample_count * 100 || 0) + '%' }"
+            :style="{ width: (currentTask.result.quality_summary.low_quality_count / currentTask.result.sample_count * 100 || 0) + '%' }"
           />
         </div>
         <div class="quality-legend">
-          <span class="lg high">高质量 {{ result.quality_summary.high_quality_count }}</span>
-          <span class="lg mid">中质量 {{ result.quality_summary.mid_quality_count }}</span>
-          <span class="lg low">低质量 {{ result.quality_summary.low_quality_count }}</span>
+          <span class="lg high">高质量 {{ currentTask.result.quality_summary.high_quality_count }}</span>
+          <span class="lg mid">中质量 {{ currentTask.result.quality_summary.mid_quality_count }}</span>
+          <span class="lg low">低质量 {{ currentTask.result.quality_summary.low_quality_count }}</span>
         </div>
       </div>
 
@@ -157,7 +157,7 @@
       <div class="section-title">大模型分析对比</div>
       <div class="llm-grid">
         <div
-          v-for="m in result.llm_results"
+          v-for="m in currentTask.result.llm_results"
           :key="m.model"
           class="llm-card"
           :class="{ 'has-error': m.error }"
@@ -173,7 +173,7 @@
         </div>
         <!-- 等待中的模型占位 -->
         <div
-          v-for="n in (3 - result.llm_results.length)"
+          v-for="n in (3 - currentTask.result.llm_results.length)"
           :key="'pending-'+n"
           class="llm-card llm-card-pending"
         >
@@ -184,9 +184,9 @@
 
       <!-- 样本数据 -->
       <div class="section-title">样本数据（参与估价）</div>
-      <div v-if="result.samples?.length" class="sample-list">
+      <div v-if="currentTask.result.samples?.length" class="sample-list">
         <a
-          v-for="s in result.samples"
+          v-for="s in currentTask.result.samples"
           :key="s.item_id"
           :href="s.url"
           target="_blank"
@@ -212,12 +212,12 @@
       <div v-else class="sample-empty">暂无样本数据</div>
 
       <!-- 捡漏提醒 -->
-      <div v-if="result.bargains.length" class="section-title bargain-title">
-        捡漏机会 <span class="bargain-count">{{ result.bargains.length }}</span>
+      <div v-if="state.result.bargains.length" class="section-title bargain-title">
+        捡漏机会 <span class="bargain-count">{{ state.result.bargains.length }}</span>
       </div>
-      <div v-if="result.bargains.length" class="bargain-list">
+      <div v-if="state.result.bargains.length" class="bargain-list">
         <a
-          v-for="b in result.bargains"
+          v-for="b in state.result.bargains"
           :key="b.item_id"
           :href="b.url"
           target="_blank"
@@ -244,90 +244,94 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, reactive, computed } from 'vue'
 defineOptions({ name: 'HomeView' })
 import { getLoginState, openXianyuLogin, stopValuateTask } from '@/api/index.js'
 
-const keyword = ref('')
-const loading = ref(false)
-const error = ref('')
-const result = ref(null)
-const steps = ref([])  // 当前选中任务的进度
-const currentTaskId = ref('')
-const activeController = ref(null)
-const tasks = ref([])
+const state = reactive({
+  keyword: '',
+  loading: false,
+  error: '',
+  result: null,
+  steps: [],  // 当前选中任务的进度
+  currentTaskId: '',
+  activeController: null,
+  tasks: [],
+  isLoggedIn: false,
+  checkingLogin: false,
+  showLoginModal: false,
+  openingLogin: false,
+})
+
+// 当前选中任务（computed，实时关联 tasks 中的任务）
+const currentTask = computed(() => state.tasks.find(t => t.id === state.currentTaskId))
 
 function buildTask(keywordText) {
-  return {
+  return reactive({
     id: `task-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
     keyword: keywordText,
     loading: true,
     error: '',
     result: null,
-    steps: [{ text: '正在爬取闲鱼数据...', status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false }],
-    partial: {
+    steps: reactive([{ text: '正在爬取闲鱼数据...', status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false }]),
+    partial: reactive({
       keyword: keywordText,
       sample_count: 0,
       algorithm: null,
       quality_summary: null,
-      llm_results: [],
-      samples: [],
-      bargains: [],
-    },
-  }
+      llm_results: reactive([]),
+      samples: reactive([]),
+      bargains: reactive([]),
+    }),
+  })
 }
 
 function syncViewByTask(task) {
   if (!task) return
-  loading.value = !!task.loading
-  error.value = task.error || ''
-  result.value = task.result
-  steps.value = task.steps
+  state.loading = !!task.loading
+  state.error = task.error || ''
+  state.result = task.result
+  // 不再复制 steps，直接让模板通过 state.tasks 访问，保持响应式
 }
 
 function selectTask(taskId) {
-  const task = tasks.value.find(t => t.id === taskId)
+  const task = state.tasks.find(t => t.id === taskId)
   if (!task) return
-  currentTaskId.value = taskId
+  state.currentTaskId = taskId
   syncViewByTask(task)
 }
 
 async function removeTask(taskId) {
-  const idx = tasks.value.findIndex(t => t.id === taskId)
+  const idx = state.tasks.findIndex(t => t.id === taskId)
   if (idx < 0) return
-  const target = tasks.value[idx]
+  const target = state.tasks[idx]
 
   if (target.loading) {
     try {
       await stopValuateTask(target.id)
     } catch {}
-    if (currentTaskId.value === target.id && activeController.value) {
-      activeController.value.abort()
-      activeController.value = null
+    if (state.currentTaskId === target.id && state.activeController) {
+      state.activeController.abort()
+      state.activeController = null
     }
   }
 
-  tasks.value.splice(idx, 1)
+  state.tasks.splice(idx, 1)
 
-  if (currentTaskId.value === taskId) {
-    const nextTask = tasks.value[0]
+  if (state.currentTaskId === taskId) {
+    const nextTask = state.tasks[0]
     if (nextTask) {
-      currentTaskId.value = nextTask.id
+      state.currentTaskId = nextTask.id
       syncViewByTask(nextTask)
     } else {
-      currentTaskId.value = ''
-      loading.value = false
-      error.value = ''
-      result.value = null
-      steps.value = []
+      state.currentTaskId = ''
+      state.loading = false
+      state.error = ''
+      state.result = null
+      state.steps = []
     }
   }
 }
-
-const isLoggedIn = ref(false)
-const checkingLogin = ref(false)
-const showLoginModal = ref(false)
-const openingLogin = ref(false)
 
 function parseErrorText(e) {
   const detail = e?.response?.data?.detail
@@ -344,46 +348,46 @@ function stepDetailKind(step) {
 }
 
 async function checkLoginState() {
-  checkingLogin.value = true
+  state.checkingLogin = true
   try {
-    const state = await getLoginState()
-    isLoggedIn.value = !!state?.logged_in
-    if (!isLoggedIn.value) showLoginModal.value = true
+    const resp = await getLoginState()
+    state.isLoggedIn = !!resp?.logged_in
+    if (!state.isLoggedIn) state.showLoginModal = true
   } catch {
-    isLoggedIn.value = false
+    state.isLoggedIn = false
   } finally {
-    checkingLogin.value = false
+    state.checkingLogin = false
   }
 }
 
 async function openLoginPage() {
-  openingLogin.value = true
+  state.openingLogin = true
   try {
     await openXianyuLogin()
   } catch (e) {
-    error.value = parseErrorText(e)
+    state.error = parseErrorText(e)
   } finally {
-    openingLogin.value = false
+    state.openingLogin = false
   }
 }
 
 async function confirmLoginDone() {
   await checkLoginState()
-  if (isLoggedIn.value) showLoginModal.value = false
+  if (state.isLoggedIn) state.showLoginModal = false
 }
 
 async function stopCurrentTask() {
-  if (!currentTaskId.value) return
-  const task = tasks.value.find(t => t.id === currentTaskId.value)
+  if (!state.currentTaskId) return
+  const task = state.tasks.find(t => t.id === state.currentTaskId)
   if (!task || !task.loading) return
 
   try {
     await stopValuateTask(task.id)
   } catch {}
 
-  if (activeController.value) {
-    activeController.value.abort()
-    activeController.value = null
+  if (state.activeController) {
+    state.activeController.abort()
+    state.activeController = null
   }
 
   task.loading = false
@@ -393,21 +397,21 @@ async function stopCurrentTask() {
 }
 
 async function doValuate() {
-  if (!keyword.value.trim()) return
-  if (checkingLogin.value) return
-  if (!isLoggedIn.value) {
-    showLoginModal.value = true
+  if (!state.keyword.trim()) return
+  if (state.checkingLogin) return
+  if (!state.isLoggedIn) {
+    state.showLoginModal = true
     return
   }
 
-  const task = buildTask(keyword.value.trim())
-  tasks.value.unshift(task)
+  const task = buildTask(state.keyword.trim())
+  state.tasks.unshift(task)
   selectTask(task.id)
   // 点击“开始估价”后清空输入框，方便连续输入下一次
-  keyword.value = ''
+  state.keyword = ''
 
   const controller = new AbortController()
-  activeController.value = controller
+  state.activeController = controller
 
   try {
     await new Promise((resolve, reject) => {
@@ -511,7 +515,7 @@ async function doValuate() {
               reject(new Error(payload.detail || 'SSE 错误'))
             }
 
-            if (task.id === currentTaskId.value) syncViewByTask(task)
+            if (task.id === state.currentTaskId) syncViewByTask(task)
           }
         }
         resolve()
@@ -524,14 +528,14 @@ async function doValuate() {
       task.error = e?.message || '请求失败，请检查后端是否启动'
       task.steps.push({ text: task.error, status: 'error', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
       if (/401|登录态|请先登录/.test(task.error)) {
-        showLoginModal.value = true
-        isLoggedIn.value = false
+        state.showLoginModal = true
+        state.isLoggedIn = false
       }
     }
   } finally {
     task.loading = false
-    if (activeController.value === controller) activeController.value = null
-    if (task.id === currentTaskId.value) syncViewByTask(task)
+    if (state.activeController === controller) state.activeController = null
+    if (task.id === state.currentTaskId) syncViewByTask(task)
   }
 }
 
