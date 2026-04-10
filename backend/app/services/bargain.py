@@ -216,6 +216,17 @@ def filter_target_items_with_reasons(items: list, query_keyword: str):
                 "reason": "型号不符",
             })
             continue
+        # 配件关键词过滤：电池、充电器、镜头盖、USB盖、胶条等配件直接排除
+        if category == "ccd":
+            title_lower = item.title.lower()
+            accessory_hit = next((kw for kw in CCD_ACCESSORY_KEYWORDS if kw.lower() in title_lower), None)
+            if accessory_hit:
+                filtered_out.append({
+                    "title": item.title,
+                    "price": item.price,
+                    "reason": f"配件（{accessory_hit}）非整机",
+                })
+                continue
         kept.append(item)
     return kept, filtered_out
 

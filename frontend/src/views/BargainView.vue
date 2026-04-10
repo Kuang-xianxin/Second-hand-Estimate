@@ -40,32 +40,86 @@
 </template>
 
 <script setup>
+/**
+ * BargainView.vue - 捡漏提醒页面
+ * 
+ * 功能：
+ * - 展示系统发现的性价比高的商品
+ * - 支持筛选"只看未读"
+ * - 点击商品跳转闲鱼页面
+ * - 点击自动标记为已读
+ * 
+ * 核心技术：
+ * - Vue 3 Composition API
+ * - ref 创建响应式变量
+ * - 计算属性（computed）用于筛选
+ */
+
 import { ref, onMounted } from 'vue'
+
+// 导入 API 函数
 import { getBargains, markBargainRead } from '@/api/index.js'
 
+// ============ 响应式变量 ============
+
+/** alerts - 捡漏提醒列表 */
 const alerts = ref([])
+
+/** loading - 是否正在加载数据 */
 const loading = ref(true)
+
+/** unreadOnly - 是否只显示未读 */
 const unreadOnly = ref(false)
 
+// ============ 功能函数 ============
+
+/**
+ * load - 加载捡漏提醒列表
+ * 
+ * 根据 unreadOnly 筛选条件获取数据
+ */
 async function load() {
   loading.value = true
   try {
     alerts.value = await getBargains(unreadOnly.value)
   } catch {}
-  finally { loading.value = false }
+  finally {
+    loading.value = false
+  }
 }
 
+/**
+ * onMounted - 组件挂载后自动加载数据
+ */
 onMounted(load)
 
+/**
+ * handleClick - 处理点击事件
+ * 
+ * 功能：
+ * - 跳转到闲鱼商品页面
+ * - 如果未读，自动标记为已读
+ * 
+ * @param {Object} a - 捡漏提醒对象
+ */
 async function handleClick(a) {
+  // 检查是否未读
   if (!a.is_read) {
     try {
+      // 调用 API 标记为已读
       await markBargainRead(a.id)
+      // 更新本地状态（避免重新请求）
       a.is_read = true
     } catch {}
   }
 }
 
+/**
+ * formatTime - 格式化时间戳
+ * 
+ * @param {string} iso - ISO 格式的时间字符串
+ * @returns {string} 格式化后的时间字符串
+ */
 function formatTime(iso) {
   if (!iso) return ''
   const d = new Date(iso)

@@ -225,16 +225,36 @@
 </template>
 
 <script setup>
+/**
+ * HomeView.vue - 估价主页的逻辑代码
+ * 
+ * 本部分负责：
+ * - 状态管理（多个估价任务并行处理）
+ * - SSE 流式数据处理
+ * - 登录状态检测
+ */
+
+// 从 vue 导入响应式 API
 import { onMounted, reactive, computed } from 'vue'
+
+// 定义组件名称（用于调试和 keep-alive）
 defineOptions({ name: 'HomeView' })
+
+// 导入 API 函数
 import { getLoginState, openXianyuLogin, stopValuateTask } from '@/api/index.js'
 
+/**
+ * state - 应用核心状态
+ * 
+ * 使用 reactive() 创建响应式对象，所有属性自动具备响应式
+ * 无需 .value 访问，适合复杂状态结构
+ */
 const state = reactive({
   keyword: '',
   loading: false,
   error: '',
   result: null,
-  steps: [],  // 当前选中任务的进度
+  steps: [],
   currentTaskId: '',
   activeController: null,
   tasks: [],
@@ -244,9 +264,14 @@ const state = reactive({
   openingLogin: false,
 })
 
-// 当前选中任务（computed，实时关联 tasks 中的任务）
+/**
+ * currentTask - 当前选中任务的计算属性
+ * 
+ * computed() 创建计算属性，当 tasks 或 currentTaskId 变化时自动更新
+ */
 const currentTask = computed(() => state.tasks.find(t => t.id === state.currentTaskId))
 
+/** 创建新任务对象，生成唯一ID，初始化任务状态和步骤列表 */
 function buildTask(keywordText) {
   return reactive({
     id: `task-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
@@ -254,7 +279,7 @@ function buildTask(keywordText) {
     loading: true,
     error: '',
     result: null,
-    xd_confirmed: false,  // 是否已确认是XD卡机型，只有确认后才显示内存卡标签
+    xd_confirmed: false,  // 是否已确认XD卡机型（索尼相机特有功能）
     steps: reactive([{ text: '正在爬取闲鱼数据...', status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false }]),
     partial: reactive({
       keyword: keywordText,
@@ -268,14 +293,15 @@ function buildTask(keywordText) {
   })
 }
 
+/** 同步视图与任务状态，当选中不同任务时更新视图显示 */
 function syncViewByTask(task) {
   if (!task) return
   state.loading = !!task.loading
   state.error = task.error || ''
   state.result = task.result
-  // 不再复制 steps，直接让模板通过 state.tasks 访问，保持响应式
 }
 
+/** 切换当前选中的任务 */
 function selectTask(taskId) {
   const task = state.tasks.find(t => t.id === taskId)
   if (!task) return
@@ -283,6 +309,7 @@ function selectTask(taskId) {
   syncViewByTask(task)
 }
 
+/** 删除任务，如果任务正在运行先停止，然后从列表移除 */
 async function removeTask(taskId) {
   const idx = state.tasks.findIndex(t => t.id === taskId)
   if (idx < 0) return
@@ -315,6 +342,7 @@ async function removeTask(taskId) {
   }
 }
 
+/** 解析错误信息，从各种格式中提取友好的错误文本 */
 function parseErrorText(e) {
   const detail = e?.response?.data?.detail
   if (typeof detail === 'string') return detail
@@ -322,7 +350,7 @@ function parseErrorText(e) {
   return e?.message || '请求失败，请检查后端是否启动'
 }
 
-/** 时间线里带展开列表的步骤：成色分析是「记录」而非「筛除」 */
+/** 判断步骤详情类型，用于区分"成色分析"和"筛除" */
 function stepDetailKind(step) {
   const t = step?.text || ''
   if (t.includes('成色分析完成')) return 'condition'
@@ -336,7 +364,7 @@ function getSdCardTag(flags) {
   return f ? f.replace('内存卡状态:', '') : null
 }
 
-/** 内存卡状态标签对应的样式类名 */
+/** 获取内存卡标签的CSS类名，根据内存卡状态返回不同样式 */
 function getSdCardTagClass(flags) {
   const text = getSdCardTag(flags) || ''
   if (text.includes('需自备')) return 'sd-tag-self'
@@ -345,6 +373,7 @@ function getSdCardTagClass(flags) {
   return 'sd-tag-unknown'
 }
 
+/** 检查登录状态，调用后端 API 获取当前登录状态，如果未登录则显示登录弹窗 */
 async function checkLoginState() {
   state.checkingLogin = true
   try {
@@ -358,6 +387,7 @@ async function checkLoginState() {
   }
 }
 
+/** 打开闲鱼登录页面，调用后端打开浏览器进行闲鱼登录 */
 async function openLoginPage() {
   state.openingLogin = true
   try {
@@ -369,11 +399,13 @@ async function openLoginPage() {
   }
 }
 
+/** 确认登录完成，用户在外部完成登录后调用，重新检测登录状态 */
 async function confirmLoginDone() {
   await checkLoginState()
   if (state.isLoggedIn) state.showLoginModal = false
 }
 
+/** 停止当前估价任务，通知后端停止任务并中断前端网络请求 */
 async function stopCurrentTask() {
   if (!state.currentTaskId) return
   const task = state.tasks.find(t => t.id === state.currentTaskId)
@@ -394,6 +426,18 @@ async function stopCurrentTask() {
   syncViewByTask(task)
 }
 
+/** 执行商品估价
+ * 
+ * 这是最重要的函数，使用 SSE（Server-Sent Events）实现：
+ * - 实时获取估价进度
+ * - 分步展示爬取、筛选、分析过程
+ * - 支持多模型并行分析
+ * 
+ * SSE 通信流程：
+ * 1. 发送 POST 请求到 /api/valuate/stream
+ * 2. 后端通过 SSE 推送各种事件
+ * 3. 前端解析事件并实时更新 UI
+ */
 async function doValuate() {
   if (!state.keyword.trim()) return
   if (state.checkingLogin) return
@@ -441,8 +485,12 @@ async function doValuate() {
             let payload
             try { payload = JSON.parse(dataMatch[1]) } catch { continue }
 
+            // ========== 处理不同类型的 SSE 事件 ==========
+
+            // start: 任务开始，获取正式任务ID
             if (evtType === 'start') {
               task.id = payload.task_id || task.id
+            // step: 进度步骤更新
             } else if (evtType === 'step') {
               if (payload.status === 'pending') {
                 task.steps.push({ text: payload.text, status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
@@ -454,6 +502,7 @@ async function doValuate() {
                   if (payload.filtered_out?.length) last.filteredOut = payload.filtered_out
                 }
               }
+            // xd_confirmed: 检测到XD卡机型（索尼相机特有）
             } else if (evtType === 'xd_confirmed') {
               task.xd_confirmed = true
               task.steps.push({
@@ -465,6 +514,7 @@ async function doValuate() {
                 is_xd_hint: true,
                 xd_hint_full: payload.text || '',
               })
+            // base: 基础数据返回（爬取完成）
             } else if (evtType === 'base') {
               const last = [...task.steps].reverse().find(s => s.status === 'pending')
               if (last) {
@@ -481,6 +531,7 @@ async function doValuate() {
               task.partial.bargains = payload.bargains
               task.result = { ...task.partial }
               task.steps.push({ text: '等待大模型分析结果...', status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
+            // llm: 大模型分析结果
             } else if (evtType === 'llm') {
               const last = [...task.steps].reverse().find(s => s.status === 'pending')
               if (last) last.status = 'done'
@@ -497,6 +548,7 @@ async function doValuate() {
               if (task.partial.llm_results.length < 3) {
                 task.steps.push({ text: '等待剩余模型结果...', status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
               }
+            // done: 全部完成
             } else if (evtType === 'done') {
               const last = [...task.steps].reverse().find(s => s.status === 'pending')
               if (last) {
@@ -505,11 +557,13 @@ async function doValuate() {
               }
               task.loading = false
               resolve()
+            // stopped: 任务被停止
             } else if (evtType === 'stopped') {
               task.loading = false
               task.error = payload.detail || '已停止'
               task.steps.push({ text: '任务已停止', status: 'error', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
               resolve()
+            // error: 发生错误
             } else if (evtType === 'error') {
               reject(new Error(payload.detail || 'SSE 错误'))
             }

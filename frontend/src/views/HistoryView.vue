@@ -78,15 +78,52 @@
 </template>
 
 <script setup>
+/**
+ * HistoryView.vue - 估价历史页面
+ * 
+ * 功能：
+ * - 展示用户之前所有的估价记录
+ * - 点击可展开查看每条记录的详细信息
+ * - 包括：大模型建议价、价格分布、捡漏商品等
+ * 
+ * 核心技术：
+ * - Vue 3 Composition API
+ * - ref 创建响应式变量
+ * - 点击事件触发详情加载
+ */
+
 import { ref, onMounted } from 'vue'
+
+// 导入 API 函数
 import { getHistory, getHistoryDetail } from '@/api/index.js'
 
+// ============ 响应式变量 ============
+
+/**
+ * records - 历史记录列表
+ * ref() 用于基本类型，创建响应式变量
+ */
 const records = ref([])
+
+/** loading - 是否正在加载数据 */
 const loading = ref(true)
+
+/** selected - 当前选中的记录（用于展开详情） */
 const selected = ref(null)
+
+/** detail - 选中记录的详细信息 */
 const detail = ref(null)
+
+/** detailLoading - 详情是否正在加载 */
 const detailLoading = ref(false)
 
+// ============ 生命周期钩子 ============
+
+/**
+ * onMounted - 组件挂载后执行
+ * 
+ * 自动加载历史记录列表
+ */
 onMounted(async () => {
   try {
     records.value = await getHistory(50)
@@ -94,24 +131,56 @@ onMounted(async () => {
   finally { loading.value = false }
 })
 
+// ============ 功能函数 ============
+
+/**
+ * toggleDetail - 切换记录的展开/收起状态
+ * 
+ * 工作流程：
+ * 1. 如果点击的是已选中的记录，收起详情
+ * 2. 否则选中该记录，并异步加载详情
+ * 
+ * @param {Object} r - 记录对象
+ */
 async function toggleDetail(r) {
+  // 如果点击的是已选中的记录，收起详情
   if (selected.value?.id === r.id) {
     selected.value = null
     detail.value = null
     return
   }
+  
+  // 选中记录并清空旧详情
   selected.value = r
   detail.value = null
   detailLoading.value = true
+  
   try {
+    // 异步加载详情
     detail.value = await getHistoryDetail(r.id)
   } catch {}
-  finally { detailLoading.value = false }
+  finally {
+    detailLoading.value = false
+  }
 }
 
+/**
+ * formatTime - 格式化时间戳
+ * 
+ * 将 ISO 格式的时间字符串转换为友好的显示格式
+ * 例如：2024-03-15 14:30
+ * 
+ * @param {string} iso - ISO 格式的时间字符串
+ * @returns {string} 格式化后的时间字符串
+ */
 function formatTime(iso) {
   if (!iso) return ''
   const d = new Date(iso)
+  // getFullYear: 获取年份
+  // getMonth: 获取月份（0-11，需要+1）
+  // getDate: 获取日期
+  // getHours/getMinutes: 获取时分
+  // padStart(2, '0'): 不足两位前面补0
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
 }
 </script>

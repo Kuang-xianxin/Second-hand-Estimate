@@ -321,13 +321,13 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
         # LLM 过严保护：若规则筛很多但 LLM 仅留极少，回退到规则筛里的高相关整机（价格阈值）
         min_keep = 10 if camera_like else 6
         if len(items) < min_keep and len(rule_filtered_items) >= min_keep:
-            fallback_items = [i for i in rule_filtered_items if i.price >= (300 if camera_like else 100)]
+            fallback_items = [i for i in rule_filtered_items if i.price >= (500 if camera_like else 100)]
             if len(fallback_items) > len(items):
                 items = fallback_items
 
         # 分桶补样：相机场景尽量凑到 20~30，按成色/价格段轮询补齐
         if camera_like:
-            fallback_pool = [i for i in rule_filtered_items if i.price >= 300]
+            fallback_pool = [i for i in rule_filtered_items if i.price >= 500]
             target_for_camera = min(24, len(fallback_pool))
             items = _bucket_fill_items(items, fallback_pool, target_count=target_for_camera)
 
@@ -824,7 +824,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                     items = fb
 
             if camera_like:
-                pool = [i for i in rule_filtered if i.price >= 300]
+                pool = [i for i in rule_filtered if i.price >= 500]
                 items = _bucket_fill_items(items, pool, target_count=min(24, len(pool)))
                 floor = min(20, len(pool))
                 if len(items) < floor:

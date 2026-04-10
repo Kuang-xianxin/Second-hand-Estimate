@@ -1,57 +1,134 @@
+/**
+ * style.css - 全局样式文件
+ * 
+ * 本文件负责：
+ * - 定义 CSS 变量（颜色、字体、圆角等）
+ * - 配置深色/浅色主题
+ * - 设置全局基础样式（重置默认样式）
+ * 
+ * CSS 变量使用说明：
+ * - 使用 var(--变量名) 引用
+ * - 方便主题切换和样式复用
+ * - 在 JavaScript 中可通过 document.documentElement.style 访问
+ */
+
+/* ==================== 深色主题（默认） ==================== */
+
+/* :root 选择器匹配文档根元素(html)，定义全局 CSS 变量 */
 :root {
-  --bg: #0e0e10;
-  --bg2: #16161a;
-  --bg3: #1e1e24;
-  --border: #2a2a35;
-  --accent: #e8c547;
-  --accent2: #f0a500;
-  --text: #e8e6e0;
-  --text2: #9a9890;
-  --red: #e05c5c;
-  --green: #5cb87a;
-  --blue: #5c9be0;
-  --purple: #a07de0;
-  --radius: 10px;
-  --font-serif: 'Noto Serif SC', serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  /* 背景色 - 由浅到深的三层背景 */
+  --bg: #0e0e10;      /* 主背景：接近纯黑的深灰 */
+  --bg2: #16161a;     /* 次级背景：卡片、导航栏 */
+  --bg3: #1e1e24;     /* 三级背景：输入框、按钮等 */
+  
+  /* 边框色 */
+  --border: #2a2a35;  /* 微妙分割线 */
+  
+  /* 强调色 - 金黄色 */
+  --accent: #e8c547;   /* 主强调色 */
+  --accent2: #f0a500;   /* 辅助强调色（稍深） */
+  
+  /* 文本颜色 */
+  --text: #e8e6e0;     /* 主要文本：温暖的白色 */
+  --text2: #9a9890;    /* 次要文本：灰色 */
+  
+  /* 语义颜色 */
+  --red: #e05c5c;      /* 红色：用于错误、删除、捡漏价格 */
+  --green: #5cb87a;    /* 绿色：用于成功、利润 */
+  --blue: #5c9be0;     /* 蓝色：用于信息 */
+  --purple: #a07de0;   /* 紫色：用于特殊标记 */
+  
+  /* 圆角 */
+  --radius: 10px;     /* 统一圆角值 */
+  
+  /* 字体 */
+  --font-serif: 'Noto Serif SC', serif;   /* 衬线字体：正文 */
+  --font-mono: 'JetBrains Mono', monospace; /* 等宽字体：数字、代码 */
 }
 
-/* 日间模式 */
+/* ==================== 浅色主题 ==================== */
+
+/* body.light 类用于切换到浅色模式 */
+/* 覆盖上面的 CSS 变量值 */
 body.light {
-  --bg: #f5f5f7;
-  --bg2: #ffffff;
-  --bg3: #eaeaea;
-  --border: #d0d0d8;
-  --text: #1a1a1e;
-  --text2: #6a6a72;
+  --bg: #f5f5f7;      /* 主背景：浅灰白 */
+  --bg2: #ffffff;     /* 次级背景：白色卡片 */
+  --bg3: #eaeaea;     /* 三级背景：输入框等 */
+  --border: #d0d0d8;  /* 边框：浅灰 */
+  --text: #1a1a1e;     /* 主要文本：深灰黑 */
+  --text2: #6a6a72;    /* 次要文本：中灰 */
+  /* accent, red, green 等保持不变 */
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+/* ==================== 基础重置样式 ==================== */
 
-html { font-size: 16px; }
+/* 通配符选择器 *：选中所有元素 */
+* { 
+  /* box-sizing: 盒模型计算方式
+     border-box: width/height 包含 padding 和 border */
+  box-sizing: border-box; 
+  
+  /* 重置外边距 */
+  margin: 0;
+  
+  /* 重置内边距 */
+  padding: 0; 
+}
 
+/* html 元素基础样式 */
+html { 
+  font-size: 16px;  /* 基础字体大小，其他地方用 rem 单位 */
+}
+
+/* body 元素样式 */
 body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-serif);
-  min-height: 100vh;
-  -webkit-font-smoothing: antialiased;
+  background: var(--bg);   /* 使用 CSS 变量 */
+  color: var(--text);      /* 使用 CSS 变量 */
+  font-family: var(--font-serif); /* 使用 CSS 变量 */
+  min-height: 100vh;       /* 最小高度：100% 视口高度 */
+  
+  /* 字体渲染优化 */
+  -webkit-font-smoothing: antialiased;  /* Mac Chrome/Safari */
+  -moz-osx-font-smoothing: grayscale;   /* Mac Firefox */
 }
 
-a { color: inherit; text-decoration: none; }
+/* 链接样式 */
+a { 
+  color: inherit;           /* 继承父元素颜色 */
+  text-decoration: none;    /* 移除下划线 */
+}
 
+/* 按钮样式 */
 button {
-  cursor: pointer;
+  cursor: pointer;          /* 鼠标悬停显示手型 */
   font-family: var(--font-serif);
-  border: none;
-  outline: none;
+  border: none;             /* 移除默认边框 */
+  outline: none;            /* 移除默认轮廓 */
 }
 
+/* 输入框和文本域样式 */
 input, textarea {
   font-family: var(--font-serif);
-  outline: none;
+  outline: none;            /* 移除聚焦时的轮廓 */
 }
 
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--bg2); }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+/* ==================== 滚动条样式 ==================== */
+
+/* Webkit 内核浏览器的滚动条样式（Chrome、Safari、Edge） */
+
+/* 滚动条整体宽度/高度 */
+::-webkit-scrollbar { 
+  width: 6px; 
+  height: 6px; 
+}
+
+/* 滚动条轨道（背景） */
+::-webkit-scrollbar-track { 
+  background: var(--bg2); 
+}
+
+/* 滚动条滑块（可拖动部分） */
+::-webkit-scrollbar-thumb { 
+  background: var(--border); 
+  border-radius: 3px;       /* 圆角 */
+}
