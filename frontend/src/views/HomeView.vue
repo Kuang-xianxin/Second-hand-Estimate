@@ -250,17 +250,29 @@ import { getLoginState, openXianyuLogin, stopValuateTask } from '@/api/index.js'
  * 无需 .value 访问，适合复杂状态结构
  */
 const state = reactive({
+  /** keyword - 用户输入的搜索关键词（商品名称） */
   keyword: '',
+  /** loading - 是否正在执行估价任务 */
   loading: false,
+  /** error - 错误信息文本（显示给用户的错误提示） */
   error: '',
+  /** result - 当前估价结果（包含样本、大模型建议价、捡漏等） */
   result: null,
+  /** steps - 估价进度步骤列表（实时展示爬取、分析过程） */
   steps: [],
+  /** currentTaskId - 当前选中的任务ID（用于切换不同任务视图） */
   currentTaskId: '',
+  /** activeController - 当前进行中的 AbortController（用于取消 SSE 请求） */
   activeController: null,
+  /** tasks - 所有估价任务列表（支持并行多个任务） */
   tasks: [],
+  /** isLoggedIn - 是否已登录闲鱼 */
   isLoggedIn: false,
+  /** checkingLogin - 是否正在检查登录状态（防止重复请求） */
   checkingLogin: false,
+  /** showLoginModal - 是否显示登录弹窗（未登录时引导用户登录） */
   showLoginModal: false,
+  /** openingLogin - 是否正在打开登录页面（防止重复点击） */
   openingLogin: false,
 })
 
@@ -268,71 +280,141 @@ const state = reactive({
  * currentTask - 当前选中任务的计算属性
  * 
  * computed() 创建计算属性，当 tasks 或 currentTaskId 变化时自动更新
+ * 响应式依赖：state.tasks、state.currentTaskId
  */
 const currentTask = computed(() => state.tasks.find(t => t.id === state.currentTaskId))
 
-/** 创建新任务对象，生成唯一ID，初始化任务状态和步骤列表 */
+/**
+ * buildTask - 创建新任务对象
+ * 
+ * 功能：
+ * - 生成唯一任务ID（使用时间戳+随机数）
+ * - 初始化任务状态和步骤列表
+ * - 创建 partial 数据结构用于接收实时数据
+ * 
+ * @param {string} keywordText - 商品关键词
+ * @returns {Object} 任务对象
+ */
 function buildTask(keywordText) {
   return reactive({
+    /** id - 任务唯一标识符 */
     id: `task-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    /** keyword - 该任务的搜索关键词 */
     keyword: keywordText,
+    /** loading - 任务是否仍在运行中 */
     loading: true,
+    /** error - 任务错误信息（如有） */
     error: '',
+    /** result - 任务最终结果（完整数据） */
     result: null,
-    xd_confirmed: false,  // 是否已确认XD卡机型（索尼相机特有功能）
-    steps: reactive([{ text: '正在爬取闲鱼数据...', status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false }]),
+    /** xd_confirmed - 是否已确认XD卡机型（索尼相机特有功能） */
+    xd_confirmed: false,
+    /** steps - 进度步骤列表（实时更新，展示爬取→筛选→分析流程） */
+    steps: reactive([{ 
+      text: '正在爬取闲鱼数据...', 
+      status: 'pending', 
+      id: Date.now() + Math.random(), 
+      filteredOut: [], 
+      expanded: false 
+    }]),
+    /** partial - 中间数据容器（边接收边组装，避免数据丢失） */
     partial: reactive({
+      /** keyword - 商品关键词 */
       keyword: keywordText,
+      /** sample_count - 样本数量 */
       sample_count: 0,
+      /** algorithm - 算法计算结果 */
       algorithm: null,
+      /** quality_summary - 质量评分汇总 */
       quality_summary: null,
+      /** llm_results - 大模型分析结果列表 */
       llm_results: reactive([]),
+      /** samples - 样本商品列表 */
       samples: reactive([]),
+      /** bargains - 捡漏商品列表 */
       bargains: reactive([]),
     }),
   })
 }
 
-/** 同步视图与任务状态，当选中不同任务时更新视图显示 */
+/**
+ * syncViewByTask - 同步视图与任务状态
+ * 
+ * 当用户切换到不同任务时，更新视图显示对应任务的数据
+ * 包括：加载状态、错误信息、结果数据
+ * 
+ * @param {Object} task - 任务对象
+ */
 function syncViewByTask(task) {
   if (!task) return
+  /** loading - 是否显示加载状态 */
   state.loading = !!task.loading
+  /** error - 显示任务的错误信息 */
   state.error = task.error || ''
+  /** result - 显示任务的估价结果 */
   state.result = task.result
 }
 
-/** 切换当前选中的任务 */
+/**
+ * selectTask - 切换当前选中的任务
+ * 
+ * 功能：
+ * - 将指定任务设为当前活动任务
+ * - 同步更新视图显示该任务的数据
+ * 
+ * @param {string} taskId - 要选中的任务ID
+ */
 function selectTask(taskId) {
   const task = state.tasks.find(t => t.id === taskId)
   if (!task) return
+  /** currentTaskId - 更新当前任务ID */
   state.currentTaskId = taskId
+  /** 同步视图显示该任务数据 */
   syncViewByTask(task)
 }
 
-/** 删除任务，如果任务正在运行先停止，然后从列表移除 */
+/**
+ * removeTask - 删除指定任务
+ * 
+ * 工作流程：
+ * 1. 如果任务正在运行，先通知后端停止
+ * 2. 中断前端的 SSE 网络请求（使用 AbortController）
+ * 3. 从任务列表中移除该任务
+ * 4. 如果删除的是当前任务，自动切换到下一个或清空视图
+ * 
+ * @param {string} taskId - 要删除的任务ID
+ */
 async function removeTask(taskId) {
+  /** idx - 在任务列表中的索引位置 */
   const idx = state.tasks.findIndex(t => t.id === taskId)
   if (idx < 0) return
   const target = state.tasks[idx]
 
+  /** 如果任务仍在运行，需要先停止它 */
   if (target.loading) {
     try {
+      /** 通知后端停止任务 */
       await stopValuateTask(target.id)
     } catch {}
+    /** 如果是当前活动任务，中断 SSE 请求 */
     if (state.currentTaskId === target.id && state.activeController) {
       state.activeController.abort()
       state.activeController = null
     }
   }
 
+  /** 从任务列表中移除该任务 */
   state.tasks.splice(idx, 1)
 
+  /** 如果删除的是当前任务，需要切换视图 */
   if (state.currentTaskId === taskId) {
     const nextTask = state.tasks[0]
     if (nextTask) {
+      /** 切换到下一个任务 */
       state.currentTaskId = nextTask.id
       syncViewByTask(nextTask)
     } else {
+      /** 没有更多任务，重置视图状态 */
       state.currentTaskId = ''
       state.loading = false
       state.error = ''
@@ -342,43 +424,105 @@ async function removeTask(taskId) {
   }
 }
 
-/** 解析错误信息，从各种格式中提取友好的错误文本 */
+/**
+ * parseErrorText - 解析错误信息
+ * 
+ * 从各种格式的错误对象中提取友好的错误文本
+ * 支持从 axios 响应错误、超链接错误对象中提取
+ * 
+ * @param {Object} e - 错误对象（可能是 Error/AxiosError）
+ * @returns {string} 解析后的错误文本
+ */
 function parseErrorText(e) {
+  /** detail - 尝试从 axios 响应中提取 detail 字段 */
   const detail = e?.response?.data?.detail
+  /** 如果 detail 是字符串，直接返回 */
   if (typeof detail === 'string') return detail
+  /** 如果 detail 是对象，尝试取 nested detail */
   if (detail?.detail) return detail.detail
+  /** 否则返回默认错误信息 */
   return e?.message || '请求失败，请检查后端是否启动'
 }
 
-/** 判断步骤详情类型，用于区分"成色分析"和"筛除" */
+/**
+ * stepDetailKind - 判断步骤详情类型
+ * 
+ * 用于区分"成色分析记录"和"普通筛除记录"
+ * 成色分析是质量评估筛除，标注为不同样式
+ * 
+ * @param {Object} step - 步骤对象
+ * @returns {string} 'condition' 或 'filter'
+ */
 function stepDetailKind(step) {
   const t = step?.text || ''
+  /** 如果步骤文本包含'成色分析完成'，则为条件类型 */
   if (t.includes('成色分析完成')) return 'condition'
+  /** 否则为普通筛除类型 */
   return 'filter'
 }
 
-/** 从 quality_flags 中提取内存卡状态标签文字 */
+/**
+ * getSdCardTag - 从质量标志中提取内存卡状态标签
+ * 
+ * 索尼相机商品会有内存卡状态标注，如"需自备"、"含卡"等
+ * 这个函数从 quality_flags 数组中提取相关标签
+ * 
+ * @param {Array} flags - 商品质量标志数组
+ * @returns {string|null} 内存卡状态标签，或 null
+ */
 function getSdCardTag(flags) {
   if (!flags) return null
+  /** 查找以'内存卡状态:'开头的标志 */
   const f = flags.find(f => f.startsWith('内存卡状态:'))
+  /** 去掉前缀后返回 */
   return f ? f.replace('内存卡状态:', '') : null
 }
 
-/** 获取内存卡标签的CSS类名，根据内存卡状态返回不同样式 */
+/**
+ * getSdCardTagClass - 获取内存卡标签的CSS类名
+ * 
+ * 根据内存卡状态返回不同的样式类，用于区分：
+ * - 需自备：红色警示风格（用户需额外购买）
+ * - 捆绑含卡：绿色信任风格（包含卡，划算）
+ * - 有加购项：橙色提示风格
+ * - 未知状态：灰色中性风格
+ * 
+ * @param {Array} flags - 商品质量标志数组
+ * @returns {string} CSS 类名
+ */
 function getSdCardTagClass(flags) {
   const text = getSdCardTag(flags) || ''
+  /** 需自备 → 红色警示风格 */
   if (text.includes('需自备')) return 'sd-tag-self'
+  /** 捆绑含卡 → 绿色信任风格 */
   if (text.includes('捆绑') || text.includes('含卡')) return 'sd-tag-bundle'
+  /** 有加购项 → 橙色提示风格 */
   if (text.includes('加购')) return 'sd-tag-addon'
+  /** 未知状态 → 灰色中性风格 */
   return 'sd-tag-unknown'
 }
 
-/** 检查登录状态，调用后端 API 获取当前登录状态，如果未登录则显示登录弹窗 */
+/**
+ * checkLoginState - 检查闲鱼登录状态
+ * 
+ * 功能：
+ * - 调用后端 API 获取当前登录状态
+ * - 如果未登录则显示登录引导弹窗
+ * 
+ * 工作流程：
+ * 1. 设置 checkingLogin=true，防止重复请求
+ * 2. 调用 getLoginState API
+ * 3. 根据响应更新 isLoggedIn 状态
+ * 4. 如果未登录，显示登录弹窗引导用户
+ * 5. 请求完成后重置 checkingLogin=false
+ */
 async function checkLoginState() {
   state.checkingLogin = true
   try {
     const resp = await getLoginState()
+    /** isLoggedIn - 是否已登录闲鱼 */
     state.isLoggedIn = !!resp?.logged_in
+    /** 如果未登录，显示登录引导弹窗 */
     if (!state.isLoggedIn) state.showLoginModal = true
   } catch {
     state.isLoggedIn = false
@@ -387,46 +531,92 @@ async function checkLoginState() {
   }
 }
 
-/** 打开闲鱼登录页面，调用后端打开浏览器进行闲鱼登录 */
+/**
+ * openLoginPage - 打开闲鱼登录页面
+ * 
+ * 功能：
+ * - 调用后端 API 打开系统默认浏览器
+ * - 导航到闲鱼登录页面进行扫码登录
+ * 
+ * 工作流程：
+ * 1. 设置 openingLogin=true，显示'打开中...'状态
+ * 2. 调用 openXianyuLogin API
+ * 3. 如果发生错误，更新 error 状态显示给用户
+ * 4. 请求完成后重置 openingLogin=false
+ */
 async function openLoginPage() {
   state.openingLogin = true
   try {
+    /** 打开浏览器并导航到闲鱼登录页 */
     await openXianyuLogin()
   } catch (e) {
+    /** 解析并显示错误信息 */
     state.error = parseErrorText(e)
   } finally {
     state.openingLogin = false
   }
 }
 
-/** 确认登录完成，用户在外部完成登录后调用，重新检测登录状态 */
+/**
+ * confirmLoginDone - 确认登录完成
+ * 
+ * 用户在外部（浏览器）完成闲鱼登录后调用
+ * 重新检测登录状态，如果已登录则关闭登录弹窗
+ */
 async function confirmLoginDone() {
+  /** 重新检查登录状态 */
   await checkLoginState()
+  /** 如果已登录，关闭登录弹窗 */
   if (state.isLoggedIn) state.showLoginModal = false
 }
 
-/** 停止当前估价任务，通知后端停止任务并中断前端网络请求 */
+/**
+ * stopCurrentTask - 停止当前正在运行的估价任务
+ * 
+ * 功能：
+ * - 通知后端停止当前任务
+ * - 中断前端的 SSE 网络请求
+ * - 更新任务状态为'已停止'
+ * 
+ * 工作流程：
+ * 1. 获取当前任务
+ * 2. 通知后端停止任务
+ * 3. 中断 SSE 请求
+ * 4. 更新任务状态和添加停止步骤
+ */
 async function stopCurrentTask() {
+  /** 没有当前任务，直接返回 */
   if (!state.currentTaskId) return
   const task = state.tasks.find(t => t.id === state.currentTaskId)
   if (!task || !task.loading) return
 
   try {
+    /** 通知后端停止指定任务 */
     await stopValuateTask(task.id)
   } catch {}
 
+  /** 如果有活跃的 SSE 请求，中断它 */
   if (state.activeController) {
     state.activeController.abort()
     state.activeController = null
   }
 
+  /** 更新任务状态为已停止 */
   task.loading = false
   task.error = '已手动停止'
-  task.steps.push({ text: '已停止当前估价任务', status: 'error', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
+  task.steps.push({ 
+    text: '已停止当前估价任务', 
+    status: 'error', 
+    id: Date.now() + Math.random(), 
+    filteredOut: [], 
+    expanded: false 
+  })
+  /** 同步视图 */
   syncViewByTask(task)
 }
 
-/** 执行商品估价
+/**
+ * doValuate - 执行商品估价（核心函数）
  * 
  * 这是最重要的函数，使用 SSE（Server-Sent Events）实现：
  * - 实时获取估价进度
@@ -446,13 +636,18 @@ async function doValuate() {
     return
   }
 
+  // 创建新任务
   const task = buildTask(state.keyword.trim())
+  // 将新任务添加到列表头部
   state.tasks.unshift(task)
+  // 选中新任务
   selectTask(task.id)
   // 点击“开始估价”后清空输入框，方便连续输入下一次
   state.keyword = ''
 
+  // 创建 AbortController 用于取消请求
   const controller = new AbortController()
+  // 保存当前活跃的控制器
   state.activeController = controller
 
   try {
@@ -592,6 +787,12 @@ async function doValuate() {
   }
 }
 
+/**
+ * onMounted - 组件挂载后自动执行
+ * 
+ * 组件首次渲染到 DOM 后调用
+ * 这里用于检查登录状态
+ */
 onMounted(() => {
   checkLoginState()
 })

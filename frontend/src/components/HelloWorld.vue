@@ -1,9 +1,25 @@
 <script setup>
+/**
+ * HelloWorld.vue - 示例/欢迎组件
+ * 
+ * 这是 Vite + Vue 项目的默认示例组件
+ * 展示基本的组件结构、响应式状态和事件处理
+ */
+
+// 从 vue 导入 ref 用于创建响应式变量
 import { ref } from 'vue'
+
+// 导入静态资源（图片）
 import viteLogo from '../assets/vite.svg'
 import heroImg from '../assets/hero.png'
 import vueLogo from '../assets/vue.svg'
 
+/**
+ * count - 计数器数值
+ * 
+ * ref() 创建响应式变量，用于基本类型（number、string 等）
+ * 访问时需要使用 .value，模板中自动解包无需 .value
+ */
 const count = ref(0)
 </script>
 
