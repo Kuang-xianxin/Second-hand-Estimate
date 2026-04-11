@@ -817,26 +817,6 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             items = llm_kept
             yield f"event: step\ndata: {json.dumps({'text': f'LLM精筛完成：保留 {len(items)} 条有效样本', 'status': 'done', 'filtered_out': llm_filtered_out}, ensure_ascii=False)}\n\n"
 
-            min_keep = 10 if camera_like else 6
-            if len(items) < min_keep and len(rule_filtered) >= min_keep:
-                fb = [i for i in rule_filtered if i.price >= (300 if camera_like else 100)]
-                if len(fb) > len(items):
-                    items = fb
-
-            if camera_like:
-                pool = [i for i in rule_filtered if i.price >= 300]
-                items = _bucket_fill_items(items, pool, target_count=min(24, len(pool)))
-                floor = min(20, len(pool))
-                if len(items) < floor:
-                    used = {x.item_id for x in items}
-                    for it in pool:
-                        if it.item_id not in used:
-                            items.append(it)
-                            used.add(it.item_id)
-                            if len(items) >= floor:
-                                break
-                yield f"event: step\ndata: {json.dumps({'text': f'样本补充完成：最终样本 {len(items)} 条（含规则筛通过的补充项）', 'status': 'done'}, ensure_ascii=False)}\n\n"
-
         except Exception as e:
             _mark_stream_task_finished(task_id)
             yield f"event: error\ndata: {json.dumps({'detail': repr(e)}, ensure_ascii=False)}\n\n"
