@@ -1,3 +1,35 @@
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { getBargains } from './api'
+
+const unreadCount = ref(0)
+const isDark = ref(true)
+
+function toggleTheme() {
+  isDark.value = !isDark.value
+  document.body.classList.toggle('light', !isDark.value)
+  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
+}
+
+async function loadUnread() {
+  try {
+    const data = await getBargains(true)
+    unreadCount.value = data.length
+  } catch {
+    // ignore
+  }
+}
+
+onMounted(() => {
+  const saved = localStorage.getItem('theme')
+  if (saved === 'light') {
+    isDark.value = false
+    document.body.classList.add('light')
+  }
+  loadUnread()
+})
+</script>
+
 <template>
   <div class="app-shell">
     <nav class="navbar">
@@ -28,36 +60,6 @@
     </main>
   </div>
 </template>
-
-<script setup>
-import { ref, onMounted, computed } from 'vue'
-import { getBargains } from '@/api/index.js'
-
-const unreadCount = ref(0)
-const isDark = ref(true)
-
-function toggleTheme() {
-  isDark.value = !isDark.value
-  document.body.classList.toggle('light', !isDark.value)
-  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
-}
-
-async function loadUnread() {
-  try {
-    const data = await getBargains(true)
-    unreadCount.value = data.length
-  } catch {}
-}
-
-onMounted(() => {
-  const saved = localStorage.getItem('theme')
-  if (saved === 'light') {
-    isDark.value = false
-    document.body.classList.add('light')
-  }
-  loadUnread()
-})
-</script>
 
 <style scoped>
 .app-shell {
@@ -126,6 +128,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
 }
 
 .theme-toggle:hover {
@@ -144,6 +147,7 @@ onMounted(() => {
   color: var(--text2);
   transition: all 0.2s;
   position: relative;
+  text-decoration: none;
 }
 
 .nav-link:hover { color: var(--text); background: var(--bg3); }

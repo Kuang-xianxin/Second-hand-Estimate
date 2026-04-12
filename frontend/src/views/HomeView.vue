@@ -1,289 +1,69 @@
-<template>
-  <div class="home">
-    <!-- 搜索区 -->
-    <section class="search-section">
-      <h1 class="page-title">二手商品智能估价</h1>
-      <p class="page-sub">输入商品名称，获取市场价格区间与多模型分析</p>
-      <div class="search-box">
-        <input
-          v-model="state.keyword"
-          class="search-input"
-          placeholder="例如：iPhone 15 Pro 256G"
-          @keydown.enter="doValuate"
-          :disabled="false"
-        />
-        <button class="search-btn" @click="doValuate" :disabled="state.checkingLogin">
-          <span v-if="!loading">开始估价</span>
-          <span v-else class="loading-dots">分析中<span>.</span><span>.</span><span>.</span></span>
-        </button>
-      </div>
-      <div class="task-actions">
-        <button class="task-btn" @click="doValuate" :disabled="state.checkingLogin">新增并行估价</button>
-        <button class="task-btn stop" @click="stopCurrentTask" :disabled="!state.loading || !state.currentTaskId">停止当前估价</button>
-      </div>
-      <div class="login-tip">
-        <div class="login-tip-title">请先完成一次闲鱼登录授权</div>
-        <div class="login-tip-text">
-          在 `backend` 目录运行 `python save_xianyu_state.py`，登录成功后再回来估价。
-        </div>
-      </div>
-      <div v-if="state.showLoginModal" class="login-modal-mask">
-        <div class="login-modal">
-          <div class="login-modal-title">需要先登录闲鱼</div>
-          <div class="login-modal-text">
-            检测到当前无登录态。点击“打开闲鱼登录页”后，在浏览器完成登录，再点“我已登录，重新检测”。
-          </div>
-          <div class="login-modal-actions">
-            <button class="modal-btn primary" @click="openLoginPage" :disabled="state.openingLogin">
-              {{ state.openingLogin ? '打开中...' : '打开闲鱼登录页' }}
-            </button>
-            <button class="modal-btn ghost" @click="confirmLoginDone" :disabled="state.checkingLogin">
-              我已登录，重新检测
-            </button>
-            <button class="modal-btn text" @click="state.showLoginModal = false">
-              稍后再说
-            </button>
-          </div>
-        </div>
-      </div>
-      <p v-if="state.error" class="error-msg">{{ state.error }}</p>
-      <div v-if="state.tasks.length" class="task-tabs">
-        <button
-          v-for="t in state.tasks"
-          :key="t.id"
-          class="task-tab"
-          :class="{ active: t.id === state.currentTaskId }"
-          @click="selectTask(t.id)"
-        >
-          <span class="task-tab-keyword">{{ t.keyword }}</span>
-          <span class="task-tab-status" :class="t.loading ? 'running' : (t.error ? 'failed' : 'done')">
-            {{ t.loading ? '进行中' : (t.error ? '失败' : '完成') }}
-          </span>
-          <span class="task-tab-remove" title="删除该任务" @click.stop="removeTask(t.id)">×</span>
-        </button>
-      </div>
-    </section>
-
-    <!-- 进度时间线 -->
-    <section v-if="currentTask?.steps.length" class="steps-section">
-      <div class="steps-list">
-        <template v-for="step in currentTask?.steps" :key="step.id">
-          <div
-            class="step-item"
-            :class="['step-' + (step.status === 'info' ? 'info' : step.status), step.filteredOut?.length ? 'step-expandable' : '']"
-            @click="step.filteredOut?.length && (step.expanded = !step.expanded)"
-          >
-            <span class="step-icon">
-              <span v-if="step.status === 'done'">✓</span>
-              <span v-else-if="step.status === 'error'">✗</span>
-              <span v-else-if="step.status === 'info'">💡</span>
-              <span v-else class="step-spinner"></span>
-            </span>
-            <span class="step-text">{{ step.text }}</span>
-            <span v-if="step.filteredOut?.length" class="step-expand-hint">
-              <template v-if="stepDetailKind(step) === 'condition'">
-                {{ step.expanded ? '▲' : '▼' }} {{ step.filteredOut.length }} 条成色分析记录
-              </template>
-              <template v-else>
-                {{ step.expanded ? '▲' : '▼' }} {{ step.filteredOut.length }} 条被筛除
-              </template>
-            </span>
-          </div>
-          <div v-if="step.expanded && step.filteredOut?.length" class="filtered-out-block">
-            <div class="filtered-out-title">
-              {{ stepDetailKind(step) === 'condition' ? '成色分析详情' : '被筛除详情' }}
-            </div>
-            <div v-for="(item, idx) in step.filteredOut" :key="idx" class="filtered-out-item">
-              <span class="fo-reason">{{ item.reason }}</span>
-              <span class="fo-title">{{ item.title }}</span>
-              <span class="fo-price">¥{{ item.price }}</span>
-            </div>
-          </div>
-        </template>
-      </div>
-    </section>
-
-    <!-- 结果区 -->
-    <section v-if="currentTask?.result" class="result-section">
-      <!-- 多模型最终估价建议 -->
-      <div class="final-valuation-section">
-        <div class="section-title final-title">
-          <span class="final-star">★</span> 最终估价建议 <span class="final-star">★</span>
-        </div>
-        <div class="llm-grid final-llm-grid">
-          <div
-            v-for="m in currentTask.result.llm_results"
-            :key="m.model"
-            class="llm-card final-llm-card"
-            :class="{ 'has-error': m.error }"
-          >
-            <div class="llm-model-name">{{ m.model }}</div>
-            <div v-if="m.error" class="llm-error">{{ m.error }}</div>
-            <template v-else>
-              <div class="llm-price">¥{{ m.suggested_price }}</div>
-              <div class="llm-range">¥{{ m.price_min }} — ¥{{ m.price_max }}</div>
-              <div class="llm-confidence" :class="'conf-'+m.confidence">置信度：{{ m.confidence }}</div>
-              <div class="llm-reasoning">{{ m.reasoning }}</div>
-            </template>
-          </div>
-          <!-- 等待中的模型占位 -->
-          <div
-            v-for="n in (3 - (currentTask.result.llm_results?.length || 0))"
-            :key="'pending-'+n"
-            class="llm-card llm-card-pending"
-          >
-            <div class="llm-model-name">分析中...</div>
-            <div class="llm-pending-dots"><span>.</span><span>.</span><span>.</span></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 算法基准参考 -->
-      <div class="algo-reference">
-        <div class="algo-ref-header">
-          <span class="algo-ref-icon">📊</span>
-          <span class="algo-ref-label">算法基准参考</span>
-          <span class="algo-ref-hint">仅供参考，不作为最终结果</span>
-        </div>
-        <div class="algo-ref-content" v-if="currentTask.result.algorithm">
-          <div class="algo-ref-price">
-            基准价 <span class="algo-price-val">¥{{ currentTask.result.algorithm.base_price }}</span>
-          </div>
-          <div class="algo-ref-range">
-            合理区间：¥{{ currentTask.result.algorithm.price_min }} — ¥{{ currentTask.result.algorithm.price_max }}
-          </div>
-          <div class="algo-ref-sample">样本 {{ currentTask.result.sample_count }} 条</div>
-        </div>
-        <div v-else class="loading-placeholder">正在计算中...</div>
-      </div>
-
-      <!-- 样本数据 -->
-      <div class="section-title">样本数据（参与估价）</div>
-      <div v-if="currentTask.result.samples?.length" class="sample-list">
-        <a
-          v-for="s in currentTask.result.samples"
-          :key="s.item_id"
-          :href="s.url"
-          target="_blank"
-          class="sample-item"
-        >
-          <img v-if="s.images && s.images.length" :src="s.images[0]" class="sample-thumb" loading="lazy" />
-          <div v-else class="sample-thumb-placeholder">无图</div>
-          <div class="sample-main">
-            <div class="sample-title">{{ s.title }}</div>
-            <div class="sample-meta">
-              <span>成色：{{ s.condition || '未标注' }}</span>
-              <span>质量分：{{ s.quality_score }}</span>
-              <span>{{ s.sold ? '已售' : '在售' }}</span>
-              <!-- 内存卡状态标签（仅XD卡机型确认后才显示） -->
-              <span
-                v-if="currentTask.xd_confirmed && getSdCardTag(s.quality_flags)"
-                class="sd-card-tag"
-                :class="getSdCardTagClass(s.quality_flags)"
-              >{{ getSdCardTag(s.quality_flags) }}</span>
-            </div>
-            <div v-if="s.quality_flags && s.quality_flags.some(f => f.startsWith('图片'))" class="sample-img-flags">
-              <span v-for="f in s.quality_flags.filter(f => f.startsWith('图片'))"
-                    :key="f" class="img-flag-tag">{{ f }}</span>
-            </div>
-          </div>
-          <div class="sample-price">¥{{ s.price }}</div>
-        </a>
-      </div>
-      <div v-else class="sample-empty">暂无样本数据</div>
-
-      <!-- 捡漏提醒 -->
-      <div v-if="state.result.bargains.length" class="section-title bargain-title">
-        捡漏机会 <span class="bargain-count">{{ state.result.bargains.length }}</span>
-      </div>
-      <div v-if="state.result.bargains.length" class="bargain-list">
-        <a
-          v-for="b in state.result.bargains"
-          :key="b.item_id"
-          :href="b.url"
-          target="_blank"
-          class="bargain-item"
-          :class="{ 'bargain-item-xd': b.has_xd_bonus }"
-        >
-          <!-- XD卡醒目标签 -->
-          <div v-if="b.has_xd_bonus" class="xd-card-badge">
-            含XD卡 {{ b.xd_card_size ? b.xd_card_size.toUpperCase() : '' }}
-            <span class="xd-card-value">+约¥{{ b.xd_card_value }}卡值</span>
-          </div>
-          <div class="bargain-title-text">{{ b.title }}</div>
-          <div class="bargain-prices">
-            <span class="bargain-actual">¥{{ b.price }}</span>
-            <span class="bargain-est">估价 ¥{{ b.estimated_price }}</span>
-            <span class="bargain-profit" :class="{ 'profit-xd': b.has_xd_bonus }">
-              +¥{{ b.profit_estimate }} 利润
-            </span>
-          </div>
-        </a>
-      </div>
-    </section>
-  </div>
-</template>
-
-<script setup>
+<script setup lang="ts">
 import { onMounted, reactive, computed } from 'vue'
+import { getLoginState, openXianyuLogin, stopValuateTask } from '../api'
+import type { ValuationTask, ValuationStep, ValuationResult, LlmResult, SampleItem, BargainItem, AlgorithmResult, QualitySummary } from '../types'
+
 defineOptions({ name: 'HomeView' })
-import { getLoginState, openXianyuLogin, stopValuateTask } from '@/api/index.js'
 
 const state = reactive({
   keyword: '',
   loading: false,
   error: '',
-  result: null,
-  steps: [],  // 当前选中任务的进度
+  result: null as ValuationResult | null,
+  steps: [] as ValuationStep[],
   currentTaskId: '',
-  activeController: null,
-  tasks: [],
+  activeController: null as AbortController | null,
+  tasks: [] as ValuationTask[],
   isLoggedIn: false,
   checkingLogin: false,
   showLoginModal: false,
   openingLogin: false,
 })
 
-// 当前选中任务（computed，实时关联 tasks 中的任务）
-const currentTask = computed(() => state.tasks.find(t => t.id === state.currentTaskId))
+const currentTask: any = computed(() => state.tasks.find(t => t.id === state.currentTaskId))
 
-function buildTask(keywordText) {
+function buildTask(keywordText: string): ValuationTask {
   return reactive({
     id: `task-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
     keyword: keywordText,
     loading: true,
     error: '',
     result: null,
-    xd_confirmed: false,  // 是否已确认是XD卡机型，只有确认后才显示内存卡标签
-    steps: reactive([{ text: '正在爬取闲鱼数据...', status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false }]),
+    xd_confirmed: false,
+    steps: reactive([{
+      id: Date.now() + Math.random(),
+      text: '正在爬取闲鱼数据...',
+      status: 'pending',
+      filteredOut: [],
+      expanded: false,
+    }]),
     partial: reactive({
       keyword: keywordText,
       sample_count: 0,
       algorithm: null,
       quality_summary: null,
-      llm_results: reactive([]),
-      samples: reactive([]),
-      bargains: reactive([]),
+      llm_results: reactive<LlmResult[]>([]),
+      samples: reactive<SampleItem[]>([]),
+      bargains: reactive<BargainItem[]>([]),
     }),
-  })
+  }) as ValuationTask
 }
 
-function syncViewByTask(task) {
+function syncViewByTask(task: ValuationTask) {
   if (!task) return
   state.loading = !!task.loading
   state.error = task.error || ''
   state.result = task.result
-  // 不再复制 steps，直接让模板通过 state.tasks 访问，保持响应式
 }
 
-function selectTask(taskId) {
+function selectTask(taskId: string) {
   const task = state.tasks.find(t => t.id === taskId)
   if (!task) return
   state.currentTaskId = taskId
   syncViewByTask(task)
 }
 
-async function removeTask(taskId) {
+async function removeTask(taskId: string) {
   const idx = state.tasks.findIndex(t => t.id === taskId)
   if (idx < 0) return
   const target = state.tasks[idx]
@@ -291,7 +71,9 @@ async function removeTask(taskId) {
   if (target.loading) {
     try {
       await stopValuateTask(target.id)
-    } catch {}
+    } catch {
+      // ignore
+    }
     if (state.currentTaskId === target.id && state.activeController) {
       state.activeController.abort()
       state.activeController = null
@@ -315,29 +97,27 @@ async function removeTask(taskId) {
   }
 }
 
-function parseErrorText(e) {
-  const detail = e?.response?.data?.detail
+function parseErrorText(e: unknown): string {
+  const err = e as Record<string, unknown> | undefined
+  const resp = err?.response as Record<string, unknown> | undefined
+  const data = resp?.data as Record<string, unknown> | undefined
+  const detail = data?.detail
   if (typeof detail === 'string') return detail
-  if (detail?.detail) return detail.detail
-  return e?.message || '请求失败，请检查后端是否启动'
+  return ((e as Error)?.message) || '请求失败，请检查后端是否启动'
 }
 
-/** 时间线里带展开列表的步骤：成色分析是「记录」而非「筛除」 */
-function stepDetailKind(step) {
+function stepDetailKind(step: ValuationStep): 'condition' | 'filter' {
   const t = step?.text || ''
-  if (t.includes('成色分析完成')) return 'condition'
-  return 'filter'
+  return t.includes('成色分析完成') ? 'condition' : 'filter'
 }
 
-/** 从 quality_flags 中提取内存卡状态标签文字 */
-function getSdCardTag(flags) {
+function getSdCardTag(flags: string[] | undefined): string | null {
   if (!flags) return null
   const f = flags.find(f => f.startsWith('内存卡状态:'))
   return f ? f.replace('内存卡状态:', '') : null
 }
 
-/** 内存卡状态标签对应的样式类名 */
-function getSdCardTagClass(flags) {
+function getSdCardTagClass(flags: string[] | undefined): string {
   const text = getSdCardTag(flags) || ''
   if (text.includes('需自备')) return 'sd-tag-self'
   if (text.includes('捆绑') || text.includes('含卡')) return 'sd-tag-bundle'
@@ -381,7 +161,9 @@ async function stopCurrentTask() {
 
   try {
     await stopValuateTask(task.id)
-  } catch {}
+  } catch {
+    // ignore
+  }
 
   if (state.activeController) {
     state.activeController.abort()
@@ -390,7 +172,13 @@ async function stopCurrentTask() {
 
   task.loading = false
   task.error = '已手动停止'
-  task.steps.push({ text: '已停止当前估价任务', status: 'error', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
+  task.steps.push({
+    id: Date.now() + Math.random(),
+    text: '已停止当前估价任务',
+    status: 'error',
+    filteredOut: [],
+    expanded: false,
+  })
   syncViewByTask(task)
 }
 
@@ -405,14 +193,13 @@ async function doValuate() {
   const task = buildTask(state.keyword.trim())
   state.tasks.unshift(task)
   selectTask(task.id)
-  // 点击“开始估价”后清空输入框，方便连续输入下一次
   state.keyword = ''
 
   const controller = new AbortController()
   state.activeController = controller
 
   try {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       fetch(`/api/valuate/stream?task_id=${encodeURIComponent(task.id)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -424,7 +211,7 @@ async function doValuate() {
           reject(new Error(txt))
           return
         }
-        const reader = resp.body.getReader()
+        const reader = resp.body!.getReader()
         const decoder = new TextDecoder()
         let buf = ''
         while (true) {
@@ -438,32 +225,40 @@ async function doValuate() {
             const dataMatch = part.match(/^data: (.+)/ms)
             if (!eventMatch || !dataMatch) continue
             const evtType = eventMatch[1]
-            let payload
+            let payload: Record<string, unknown>
             try { payload = JSON.parse(dataMatch[1]) } catch { continue }
 
             if (evtType === 'start') {
-              task.id = payload.task_id || task.id
+              task.id = (payload.task_id as string) || task.id
             } else if (evtType === 'step') {
               if (payload.status === 'pending') {
-                task.steps.push({ text: payload.text, status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
+                task.steps.push({
+                  id: Date.now() + Math.random(),
+                  text: payload.text as string,
+                  status: 'pending',
+                  filteredOut: [],
+                  expanded: false,
+                })
               } else {
                 const last = [...task.steps].reverse().find(s => s.status === 'pending')
                 if (last) {
                   last.status = 'done'
-                  if (payload.text) last.text = payload.text
-                  if (payload.filtered_out?.length) last.filteredOut = payload.filtered_out
+                  if (payload.text) last.text = payload.text as string
+                  if ((payload.filtered_out as Array<unknown>)?.length) {
+                    last.filteredOut = payload.filtered_out as ValuationStep['filteredOut']
+                  }
                 }
               }
             } else if (evtType === 'xd_confirmed') {
               task.xd_confirmed = true
               task.steps.push({
-                text: '【XD卡提示】' + (payload.text || '').split('\n')[0],
-                status: 'info',
                 id: Date.now() + Math.random(),
+                text: '【XD卡提示】' + ((payload.text as string) || '').split('\n')[0],
+                status: 'info',
                 filteredOut: [],
                 expanded: false,
                 is_xd_hint: true,
-                xd_hint_full: payload.text || '',
+                xd_hint_full: payload.text as string | undefined,
               })
             } else if (evtType === 'base') {
               const last = [...task.steps].reverse().find(s => s.status === 'pending')
@@ -471,31 +266,46 @@ async function doValuate() {
                 last.status = 'done'
                 last.text = `爬取完成，获得 ${payload.sample_count} 条有效样本`
               }
-              task.partial.keyword = payload.keyword
-              task.partial.sample_count = payload.sample_count
-              task.partial.xd_card_model = payload.xd_card_model || false
-              task.partial.xd_card_bundle_count = payload.xd_card_bundle_count || 0
-              task.partial.algorithm = payload.algorithm
-              task.partial.quality_summary = payload.quality_summary
-              task.partial.samples = payload.samples
-              task.partial.bargains = payload.bargains
+              task.partial.keyword = payload.keyword as string
+              task.partial.sample_count = payload.sample_count as number
+              task.partial.xd_card_model = payload.xd_card_model as boolean | undefined
+              task.partial.xd_card_bundle_count = payload.xd_card_bundle_count as number | undefined
+              task.partial.algorithm = payload.algorithm as AlgorithmResult | null
+              task.partial.quality_summary = payload.quality_summary as QualitySummary | null
+              task.partial.samples = payload.samples as SampleItem[]
+              task.partial.bargains = payload.bargains as BargainItem[]
               task.result = { ...task.partial }
-              task.steps.push({ text: '等待大模型分析结果...', status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
-            } else if (evtType === 'llm') {
-              const last = [...task.steps].reverse().find(s => s.status === 'pending')
-              if (last) last.status = 'done'
-              const modelShort = payload.model.replace(/^ep-[^-]+-\d+-/, '').slice(0, 24)
               task.steps.push({
-                text: payload.error ? `${modelShort}：分析失败（${payload.error}）` : `${modelShort} 估价完成：¥${payload.suggested_price}`,
-                status: payload.error ? 'error' : 'done',
                 id: Date.now() + Math.random(),
+                text: '等待大模型分析结果...',
+                status: 'pending',
                 filteredOut: [],
                 expanded: false,
               })
-              task.partial.llm_results = [...task.partial.llm_results, payload]
+            } else if (evtType === 'llm') {
+              const last = [...task.steps].reverse().find(s => s.status === 'pending')
+              if (last) last.status = 'done'
+              const modelShort = ((payload.model as string) || '').replace(/^ep-[^-]+-\d+-/, '').slice(0, 24)
+              task.steps.push({
+                id: Date.now() + Math.random(),
+                text: payload.error
+                  ? `${modelShort}：分析失败（${payload.error}）`
+                  : `${modelShort} 估价完成：¥${payload.suggested_price}`,
+                status: (payload.error ? 'error' : 'done') as ValuationStep['status'],
+                filteredOut: [],
+                expanded: false,
+              })
+              const llmPayload = payload as unknown as LlmResult
+              task.partial.llm_results = [...task.partial.llm_results, llmPayload]
               task.result = { ...task.partial }
               if (task.partial.llm_results.length < 3) {
-                task.steps.push({ text: '等待剩余模型结果...', status: 'pending', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
+                task.steps.push({
+                  id: Date.now() + Math.random(),
+                  text: '等待剩余模型结果...',
+                  status: 'pending',
+                  filteredOut: [],
+                  expanded: false,
+                })
               }
             } else if (evtType === 'done') {
               const last = [...task.steps].reverse().find(s => s.status === 'pending')
@@ -507,11 +317,17 @@ async function doValuate() {
               resolve()
             } else if (evtType === 'stopped') {
               task.loading = false
-              task.error = payload.detail || '已停止'
-              task.steps.push({ text: '任务已停止', status: 'error', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
+              task.error = (payload.detail as string) || '已停止'
+              task.steps.push({
+                id: Date.now() + Math.random(),
+                text: '任务已停止',
+                status: 'error',
+                filteredOut: [],
+                expanded: false,
+              })
               resolve()
             } else if (evtType === 'error') {
-              reject(new Error(payload.detail || 'SSE 错误'))
+              reject(new Error((payload.detail as string) || 'SSE 错误'))
             }
 
             if (task.id === state.currentTaskId) syncViewByTask(task)
@@ -521,11 +337,18 @@ async function doValuate() {
       }).catch(reject)
     })
   } catch (e) {
-    if (e?.name === 'AbortError') {
+    const err = e as Error
+    if (err.name === 'AbortError') {
       task.error = '已手动停止'
     } else {
-      task.error = e?.message || '请求失败，请检查后端是否启动'
-      task.steps.push({ text: task.error, status: 'error', id: Date.now() + Math.random(), filteredOut: [], expanded: false })
+      task.error = err?.message || '请求失败，请检查后端是否启动'
+      task.steps.push({
+        id: Date.now() + Math.random(),
+        text: task.error,
+        status: 'error',
+        filteredOut: [],
+        expanded: false,
+      })
       if (/401|登录态|请先登录/.test(task.error)) {
         state.showLoginModal = true
         state.isLoggedIn = false
@@ -543,10 +366,192 @@ onMounted(() => {
 })
 </script>
 
-<style scoped>
-.home { max-width: 900px; margin: 0 auto; }
+<template>
+  <div class="home">
+    <section class="search-section">
+      <h1 class="page-title">二手商品智能估价</h1>
+      <p class="page-sub">输入商品名称，获取市场价格区间与多模型分析</p>
+      <div class="search-box">
+        <input v-model="state.keyword" class="search-input" placeholder="例如：iPhone 15 Pro 256G"
+          @keydown.enter="doValuate" />
+        <button class="search-btn" @click="doValuate" :disabled="state.checkingLogin">
+          <span v-if="!state.loading">开始估价</span>
+          <span v-else class="loading-dots">分析中<span>.</span><span>.</span><span>.</span></span>
+        </button>
+      </div>
+      <div class="task-actions">
+        <button class="task-btn" @click="doValuate" :disabled="state.checkingLogin">新增并行估价</button>
+        <button class="task-btn stop" @click="stopCurrentTask"
+          :disabled="!state.loading || !state.currentTaskId">停止当前估价</button>
+      </div>
+      <div class="login-tip">
+        <div class="login-tip-title">请先完成一次闲鱼登录授权</div>
+        <div class="login-tip-text">在 `backend` 目录运行 `python save_xianyu_state.py`，登录成功后再回来估价。</div>
+      </div>
+      <div v-if="state.showLoginModal" class="login-modal-mask">
+        <div class="login-modal">
+          <div class="login-modal-title">需要先登录闲鱼</div>
+          <div class="login-modal-text">检测到当前无登录态。点击"打开闲鱼登录页"后，在浏览器完成登录，再点"我已登录，重新检测"。</div>
+          <div class="login-modal-actions">
+            <button class="modal-btn primary" @click="openLoginPage" :disabled="state.openingLogin">
+              {{ state.openingLogin ? '打开中...' : '打开��鱼登录页' }}
+            </button>
+            <button class="modal-btn ghost" @click="confirmLoginDone" :disabled="state.checkingLogin">我已登录，重新检测</button>
+            <button class="modal-btn text" @click="state.showLoginModal = false">稍后再说</button>
+          </div>
+        </div>
+      </div>
+      <p v-if="state.error" class="error-msg">{{ state.error }}</p>
+      <div v-if="state.tasks.length" class="task-tabs">
+        <button v-for="t in state.tasks" :key="t.id" class="task-tab" :class="{ active: t.id === state.currentTaskId }"
+          @click="selectTask(t.id)">
+          <span class="task-tab-keyword">{{ t.keyword }}</span>
+          <span class="task-tab-status" :class="t.loading ? 'running' : (t.error ? 'failed' : 'done')">
+            {{ t.loading ? '进行中' : (t.error ? '失败' : '完成') }}
+          </span>
+          <span class="task-tab-remove" title="删除该任务" @click.stop="removeTask(t.id)">×</span>
+        </button>
+      </div>
+    </section>
 
-.search-section { margin-bottom: 48px; }
+    <section v-if="currentTask?.steps.length" class="steps-section">
+      <div class="steps-list">
+        <template v-for="step in currentTask.steps" :key="step.id">
+          <div class="step-item"
+            :class="['step-' + (step.status === 'info' ? 'info' : step.status), step.filteredOut?.length ? 'step-expandable' : '']"
+            @click="step.filteredOut?.length && (step.expanded = !step.expanded)">
+            <span class="step-icon">
+              <span v-if="step.status === 'done'">✓</span>
+              <span v-else-if="step.status === 'error'">✗</span>
+              <span v-else-if="step.status === 'info'">💡</span>
+              <span v-else class="step-spinner"></span>
+            </span>
+            <span class="step-text">{{ step.text }}</span>
+            <span v-if="step.filteredOut?.length" class="step-expand-hint">
+              <template v-if="stepDetailKind(step) === 'condition'">
+                {{ step.expanded ? '▲' : '▼' }} {{ step.filteredOut.length }} 条成色分析记录
+              </template>
+              <template v-else>
+                {{ step.expanded ? '▲' : '▼' }} {{ step.filteredOut.length }} 条被筛除
+              </template>
+            </span>
+          </div>
+          <div v-if="step.expanded && step.filteredOut?.length" class="filtered-out-block">
+            <div class="filtered-out-title">
+              {{ stepDetailKind(step) === 'condition' ? '成色分析详情' : '被筛除详情' }}
+            </div>
+            <div v-for="(item, idx) in step.filteredOut" :key="idx" class="filtered-out-item">
+              <span class="fo-reason">{{ item.reason }}</span>
+              <span class="fo-title">{{ item.title }}</span>
+              <span class="fo-price">¥{{ item.price }}</span>
+            </div>
+          </div>
+        </template>
+      </div>
+    </section>
+
+    <section v-if="currentTask?.result" class="result-section">
+      <div class="final-valuation-section">
+        <div class="section-title final-title">
+          <span class="final-star">★</span> 最终估价建议 <span class="final-star">★</span>
+        </div>
+        <div class="llm-grid final-llm-grid">
+          <div v-for="m in currentTask.result.llm_results" :key="m.model" class="llm-card final-llm-card"
+            :class="{ 'has-error': !!m.error }">
+            <div class="llm-model-name">{{ m.model }}</div>
+            <div v-if="m.error" class="llm-error">{{ m.error }}</div>
+            <template v-else>
+              <div class="llm-price">¥{{ m.suggested_price }}</div>
+              <div class="llm-range">¥{{ m.price_min }} — ¥{{ m.price_max }}</div>
+              <div class="llm-confidence" :class="'conf-' + m.confidence">置信度：{{ m.confidence }}</div>
+              <div class="llm-reasoning">{{ m.reasoning }}</div>
+            </template>
+          </div>
+          <div v-for="n in (3 - (currentTask.result.llm_results?.length || 0))" :key="'pending-' + n"
+            class="llm-card llm-card-pending">
+            <div class="llm-model-name">分析中...</div>
+            <div class="llm-pending-dots"><span>.</span><span>.</span><span>.</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="algo-reference">
+        <div class="algo-ref-header">
+          <span class="algo-ref-icon">📊</span>
+          <span class="algo-ref-label">算法基准参考</span>
+          <span class="algo-ref-hint">仅供参考，不作为最终结果</span>
+        </div>
+        <div class="algo-ref-content" v-if="currentTask.result.algorithm">
+          <div class="algo-ref-price">
+            基准价 <span class="algo-price-val">¥{{ currentTask.result.algorithm.base_price }}</span>
+          </div>
+          <div class="algo-ref-range">
+            合理区间：¥{{ currentTask.result.algorithm.price_min }} — ¥{{ currentTask.result.algorithm.price_max }}
+          </div>
+          <div class="algo-ref-sample">样本 {{ currentTask.result.sample_count }} 条</div>
+        </div>
+        <div v-else class="loading-placeholder">正在计算中...</div>
+      </div>
+
+      <div class="section-title">样本数据（参与估价）</div>
+      <div v-if="currentTask.result.samples?.length" class="sample-list">
+        <a v-for="s in currentTask.result.samples" :key="s.item_id" :href="s.url" target="_blank" class="sample-item">
+          <img v-if="s.images && s.images.length" :src="s.images[0]" class="sample-thumb" loading="lazy" />
+          <div v-else class="sample-thumb-placeholder">无图</div>
+          <div class="sample-main">
+            <div class="sample-title">{{ s.title }}</div>
+            <div class="sample-meta">
+              <span>成色：{{ s.condition || '未标注' }}</span>
+              <span>质量分：{{ s.quality_score }}</span>
+              <span>{{ s.sold ? '已售' : '在售' }}</span>
+              <span v-if="currentTask.xd_confirmed && getSdCardTag(s.quality_flags)" class="sd-card-tag"
+                :class="getSdCardTagClass(s.quality_flags)">{{ getSdCardTag(s.quality_flags) }}</span>
+            </div>
+            <div v-if="s.quality_flags && s.quality_flags.some((f: string) => f.startsWith('图片'))"
+              class="sample-img-flags">
+              <span v-for="f in s.quality_flags.filter((f: string) => f.startsWith('图片'))" :key="f"
+                class="img-flag-tag">{{
+                f }}</span>
+            </div>
+          </div>
+          <div class="sample-price">¥{{ s.price }}</div>
+        </a>
+      </div>
+      <div v-else class="sample-empty">暂无样本数据</div>
+
+      <div v-if="state.result?.bargains.length" class="section-title bargain-title">
+        捡漏机会 <span class="bargain-count">{{ state.result.bargains.length }}</span>
+      </div>
+      <div v-if="state.result?.bargains.length" class="bargain-list">
+        <a v-for="b in state.result.bargains" :key="b.item_id" :href="b.url" target="_blank" class="bargain-item"
+          :class="{ 'bargain-item-xd': b.has_xd_bonus }">
+          <div v-if="b.has_xd_bonus" class="xd-card-badge">
+            含XD卡 {{ b.xd_card_size ? b.xd_card_size.toUpperCase() : '' }}
+            <span class="xd-card-value">+约¥{{ b.xd_card_value }}卡值</span>
+          </div>
+          <div class="bargain-title-text">{{ b.title }}</div>
+          <div class="bargain-prices">
+            <span class="bargain-actual">¥{{ b.price }}</span>
+            <span class="bargain-est">估价 ¥{{ b.estimated_price }}</span>
+            <span class="bargain-profit" :class="{ 'profit-xd': b.has_xd_bonus }">
+              +¥{{ b.profit_estimate }} 利润
+            </span>
+          </div>
+        </a>
+      </div>
+    </section>
+  </div>
+</template>
+
+<style scoped>
+.home {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.search-section {
+  margin-bottom: 48px;
+}
 
 .page-title {
   font-size: 32px;
@@ -581,10 +586,11 @@ onMounted(() => {
   border-radius: 8px;
   padding: 8px 14px;
   font-size: 13px;
+  cursor: pointer;
 }
 
 .task-btn.stop {
-  border-color: rgba(224,92,92,0.4);
+  border-color: rgba(224, 92, 92, 0.4);
   color: var(--red);
 }
 
@@ -603,8 +609,14 @@ onMounted(() => {
   color: var(--text);
   transition: border-color 0.2s;
 }
-.search-input:focus { border-color: var(--accent); }
-.search-input:disabled { opacity: 0.5; }
+
+.search-input:focus {
+  border-color: var(--accent);
+}
+
+.search-input:disabled {
+  opacity: 0.5;
+}
 
 .search-btn {
   background: var(--accent);
@@ -615,16 +627,44 @@ onMounted(() => {
   border-radius: var(--radius);
   transition: opacity 0.2s, transform 0.1s;
   white-space: nowrap;
+  border: none;
+  cursor: pointer;
 }
-.search-btn:hover:not(:disabled) { opacity: 0.85; transform: translateY(-1px); }
-.search-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.search-btn:hover:not(:disabled) {
+  opacity: 0.85;
+  transform: translateY(-1px);
+}
+
+.search-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 .loading-dots span {
   animation: blink 1.2s infinite;
 }
-.loading-dots span:nth-child(2) { animation-delay: 0.2s; }
-.loading-dots span:nth-child(3) { animation-delay: 0.4s; }
-@keyframes blink { 0%,80%,100% { opacity:0 } 40% { opacity:1 } }
+
+.loading-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.loading-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes blink {
+
+  0%,
+  80%,
+  100% {
+    opacity: 0
+  }
+
+  40% {
+    opacity: 1
+  }
+}
 
 .login-tip {
   margin-bottom: 14px;
@@ -692,11 +732,13 @@ onMounted(() => {
   padding: 8px 12px;
   font-size: 13px;
   font-weight: 600;
+  cursor: pointer;
 }
 
 .modal-btn.primary {
   background: var(--accent);
   color: #18140a;
+  border: none;
 }
 
 .modal-btn.ghost {
@@ -708,6 +750,7 @@ onMounted(() => {
 .modal-btn.text {
   background: transparent;
   color: var(--text2);
+  border: none;
 }
 
 .modal-btn:disabled {
@@ -720,9 +763,9 @@ onMounted(() => {
   font-size: 13px;
   margin-top: 10px;
   padding: 10px 14px;
-  background: rgba(224,92,92,0.1);
+  background: rgba(224, 92, 92, 0.1);
   border-radius: var(--radius);
-  border: 1px solid rgba(224,92,92,0.2);
+  border: 1px solid rgba(224, 92, 92, 0.2);
 }
 
 .task-tabs {
@@ -742,6 +785,7 @@ onMounted(() => {
   border-radius: 999px;
   padding: 5px 8px 5px 12px;
   font-size: 12px;
+  cursor: pointer;
 }
 
 .task-tab-remove {
@@ -767,118 +811,17 @@ onMounted(() => {
   color: var(--text);
 }
 
-.task-tab-status.running { color: var(--accent); }
-.task-tab-status.done { color: var(--green); }
-.task-tab-status.failed { color: var(--red); }
-
-/* 结果区 */
-.card {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 24px 28px;
-  margin-bottom: 28px;
-}
-
-.card-label {
-  font-size: 12px;
-  color: var(--text2);
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  margin-bottom: 10px;
-}
-
-.base-price {
-  font-size: 48px;
-  font-weight: 700;
+.task-tab-status.running {
   color: var(--accent);
-  font-family: var(--font-mono);
-  line-height: 1;
-  margin-bottom: 10px;
 }
 
-.price-range {
-  font-size: 14px;
-  color: var(--text2);
-  margin-bottom: 6px;
-}
-
-.range-val { color: var(--text); font-family: var(--font-mono); }
-
-.sample-info {
-  font-size: 12px;
-  color: var(--text2);
-  font-family: var(--font-mono);
-}
-
-.outlier-info {
-  font-size: 12px;
-  margin-top: 8px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-family: var(--font-mono);
-}
-.outlier-info.low { background: rgba(92,184,122,0.08); color: var(--green); }
-.outlier-info.high { background: rgba(224,92,92,0.08); color: var(--red); }
-
-.quality-card {
-  margin-top: -10px;
-}
-
-.quality-head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.quality-score {
-  font-size: 30px;
-  font-weight: 700;
+.task-tab-status.done {
   color: var(--green);
-  font-family: var(--font-mono);
 }
 
-.quality-meta {
-  font-size: 12px;
-  color: var(--text2);
+.task-tab-status.failed {
+  color: var(--red);
 }
-
-.quality-stacked-bar {
-  height: 10px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  display: flex;
-}
-
-.seg {
-  height: 100%;
-  display: inline-block;
-}
-
-.seg.high { background: linear-gradient(90deg, #2da66f, #51c087); }
-.seg.mid { background: linear-gradient(90deg, #caa83d, #e0c35e); }
-.seg.low { background: linear-gradient(90deg, #b74a4a, #d66767); }
-
-.quality-legend {
-  margin-top: 10px;
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  font-family: var(--font-mono);
-}
-
-.lg {
-  padding: 2px 8px;
-  border-radius: 999px;
-}
-
-.lg.high { background: rgba(92,184,122,0.15); color: var(--green); }
-.lg.mid { background: rgba(232,197,71,0.15); color: var(--accent); }
-.lg.low { background: rgba(224,92,92,0.15); color: var(--red); }
 
 .section-title {
   font-size: 13px;
@@ -890,7 +833,6 @@ onMounted(() => {
   border-bottom: 1px solid var(--border);
 }
 
-/* 最终估价建议区域 */
 .final-valuation-section {
   margin-bottom: 24px;
 }
@@ -921,7 +863,6 @@ onMounted(() => {
   box-shadow: 0 0 20px rgba(232, 197, 71, 0.2);
 }
 
-/* 算法基准参考（精简） */
 .algo-reference {
   background: var(--bg2);
   border: 1px dashed var(--border);
@@ -939,7 +880,9 @@ onMounted(() => {
   font-size: 12px;
 }
 
-.algo-ref-icon { font-size: 14px; }
+.algo-ref-icon {
+  font-size: 14px;
+}
 
 .algo-ref-label {
   color: var(--text2);
@@ -984,36 +927,6 @@ onMounted(() => {
   opacity: 0.7;
 }
 
-/* 质量分精简卡片 */
-.quality-mini-card {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 8px 16px;
-  font-size: 12px;
-  margin-bottom: 24px;
-}
-
-.quality-mini-label {
-  color: var(--text2);
-}
-
-.quality-mini-score {
-  font-weight: 700;
-  color: var(--green);
-  font-family: var(--font-mono);
-  font-size: 14px;
-}
-
-.quality-mini-bar {
-  color: var(--text2);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
 .llm-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1022,7 +935,9 @@ onMounted(() => {
 }
 
 @media (max-width: 700px) {
-  .llm-grid { grid-template-columns: 1fr; }
+  .llm-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .llm-card {
@@ -1032,8 +947,14 @@ onMounted(() => {
   padding: 20px;
   transition: border-color 0.2s;
 }
-.llm-card:hover { border-color: var(--accent); }
-.llm-card.has-error { border-color: rgba(224,92,92,0.3); }
+
+.llm-card:hover {
+  border-color: var(--accent);
+}
+
+.llm-card.has-error {
+  border-color: rgba(224, 92, 92, 0.3);
+}
 
 .llm-model-name {
   font-size: 11px;
@@ -1066,9 +987,21 @@ onMounted(() => {
   margin-bottom: 10px;
   font-family: var(--font-mono);
 }
-.conf-高 { background: rgba(92,184,122,0.15); color: var(--green); }
-.conf-中 { background: rgba(232,197,71,0.15); color: var(--accent); }
-.conf-低 { background: rgba(224,92,92,0.15); color: var(--red); }
+
+.conf-高 {
+  background: rgba(92, 184, 122, 0.15);
+  color: var(--green);
+}
+
+.conf-中 {
+  background: rgba(232, 197, 71, 0.15);
+  color: var(--accent);
+}
+
+.conf-低 {
+  background: rgba(224, 92, 92, 0.15);
+  color: var(--red);
+}
 
 .llm-reasoning {
   font-size: 12px;
@@ -1099,10 +1032,12 @@ onMounted(() => {
   align-items: center;
   gap: 14px;
   transition: border-color 0.2s, background 0.2s;
+  text-decoration: none;
 }
+
 .sample-item:hover {
   border-color: var(--accent);
-  background: rgba(232,197,71,0.05);
+  background: rgba(232, 197, 71, 0.05);
 }
 
 .sample-thumb {
@@ -1140,12 +1075,11 @@ onMounted(() => {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: rgba(255,180,0,0.12);
+  background: rgba(255, 180, 0, 0.12);
   color: #c8960a;
-  border: 1px solid rgba(255,180,0,0.25);
+  border: 1px solid rgba(255, 180, 0, 0.25);
 }
 
-/* 内存卡状态标签 */
 .sd-card-tag {
   font-size: 11px;
   padding: 2px 8px;
@@ -1154,29 +1088,29 @@ onMounted(() => {
   white-space: nowrap;
   flex-shrink: 0;
 }
-/* 需自备 → 红色警示风格 */
+
 .sd-tag-self {
-  background: rgba(224,92,92,0.15);
+  background: rgba(224, 92, 92, 0.15);
   color: #e05c5c;
-  border: 1px solid rgba(224,92,92,0.35);
+  border: 1px solid rgba(224, 92, 92, 0.35);
 }
-/* 捆绑含卡 → 绿色信任风格 */
+
 .sd-tag-bundle {
-  background: rgba(92,184,122,0.15);
+  background: rgba(92, 184, 122, 0.15);
   color: #5cc87a;
-  border: 1px solid rgba(92,184,122,0.35);
+  border: 1px solid rgba(92, 184, 122, 0.35);
 }
-/* 有加购项 → 橙色提示风格 */
+
 .sd-tag-addon {
-  background: rgba(255,136,0,0.15);
+  background: rgba(255, 136, 0, 0.15);
   color: #ff8800;
-  border: 1px solid rgba(255,136,0,0.35);
+  border: 1px solid rgba(255, 136, 0, 0.35);
 }
-/* 未知 → 灰色中性风格 */
+
 .sd-tag-unknown {
-  background: rgba(120,130,160,0.15);
+  background: rgba(120, 130, 160, 0.15);
   color: #7882a0;
-  border: 1px solid rgba(120,130,160,0.3);
+  border: 1px solid rgba(120, 130, 160, 0.3);
 }
 
 .sample-main {
@@ -1223,8 +1157,15 @@ onMounted(() => {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 0.3; }
+
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+
+  50% {
+    opacity: 0.3;
+  }
 }
 
 .llm-pending-dots {
@@ -1237,12 +1178,13 @@ onMounted(() => {
 .llm-pending-dots span {
   animation: blink 1.2s step-start infinite;
 }
-.llm-pending-dots span:nth-child(2) { animation-delay: 0.2s; }
-.llm-pending-dots span:nth-child(3) { animation-delay: 0.4s; }
 
-@keyframes blink {
-  0%, 80%, 100% { opacity: 0; }
-  40% { opacity: 1; }
+.llm-pending-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.llm-pending-dots span:nth-child(3) {
+  animation-delay: 0.4s;
 }
 
 .loading-placeholder {
@@ -1281,7 +1223,10 @@ onMounted(() => {
   padding: 2px 4px;
   margin: 0 -4px;
 }
-.step-expandable:hover { background: var(--bg3); }
+
+.step-expandable:hover {
+  background: var(--bg3);
+}
 
 .step-expand-hint {
   margin-left: auto;
@@ -1318,7 +1263,7 @@ onMounted(() => {
 .fo-reason {
   color: var(--red);
   font-size: 11px;
-  background: rgba(224,92,92,0.12);
+  background: rgba(224, 92, 92, 0.12);
   padding: 1px 5px;
   border-radius: 3px;
   white-space: nowrap;
@@ -1338,13 +1283,6 @@ onMounted(() => {
   font-size: 12px;
   white-space: nowrap;
 }
-
-.fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
-
-.step-done { color: var(--green); }
-.step-pending { color: var(--text2); }
-.step-error { color: var(--red); }
 
 .step-icon {
   width: 18px;
@@ -1367,14 +1305,18 @@ onMounted(() => {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-.step-text { flex: 1; }
+.step-text {
+  flex: 1;
+}
 
 .bargain-title {
   color: var(--red);
-  border-color: rgba(224,92,92,0.3);
+  border-color: rgba(224, 92, 92, 0.3);
 }
 
 .bargain-count {
@@ -1386,11 +1328,15 @@ onMounted(() => {
   font-family: var(--font-mono);
 }
 
-.bargain-list { display: flex; flex-direction: column; gap: 10px; }
+.bargain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 
 .bargain-item {
   background: var(--bg2);
-  border: 1px solid rgba(224,92,92,0.25);
+  border: 1px solid rgba(224, 92, 92, 0.25);
   border-radius: var(--radius);
   padding: 14px 18px;
   display: flex;
@@ -1398,10 +1344,12 @@ onMounted(() => {
   align-items: center;
   gap: 16px;
   transition: border-color 0.2s, background 0.2s;
+  text-decoration: none;
 }
+
 .bargain-item:hover {
   border-color: var(--red);
-  background: rgba(224,92,92,0.06);
+  background: rgba(224, 92, 92, 0.06);
 }
 
 .bargain-title-text {
@@ -1422,27 +1370,39 @@ onMounted(() => {
   font-size: 13px;
 }
 
-.bargain-actual { color: var(--red); font-weight: 700; font-size: 16px; }
-.bargain-est { color: var(--text2); }
+.bargain-actual {
+  color: var(--red);
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.bargain-est {
+  color: var(--text2);
+}
+
 .bargain-profit {
-  background: rgba(92,184,122,0.15);
+  background: rgba(92, 184, 122, 0.15);
   color: var(--green);
   padding: 2px 8px;
   border-radius: 4px;
   font-weight: 600;
 }
+
 .bargain-profit.profit-xd {
-  background: rgba(255,136,0,0.18);
+  background: rgba(255, 136, 0, 0.18);
   color: #ff8800;
 }
+
 .bargain-item.bargain-item-xd {
-  border-color: rgba(255,136,0,0.45);
-  background: rgba(255,136,0,0.04);
+  border-color: rgba(255, 136, 0, 0.45);
+  background: rgba(255, 136, 0, 0.04);
 }
+
 .bargain-item.bargain-item-xd:hover {
   border-color: #ff8800;
-  background: rgba(255,136,0,0.10);
+  background: rgba(255, 136, 0, 0.10);
 }
+
 .xd-card-badge {
   display: inline-flex;
   align-items: center;
@@ -1454,33 +1414,37 @@ onMounted(() => {
   padding: 3px 10px;
   border-radius: 4px;
   margin-bottom: 6px;
-  box-shadow: 0 1px 4px rgba(255,100,0,0.3);
+  box-shadow: 0 1px 4px rgba(255, 100, 0, 0.3);
 }
+
 .xd-card-value {
-  background: rgba(255,255,255,0.25);
+  background: rgba(255, 255, 255, 0.25);
   border-radius: 3px;
   padding: 0 5px;
   font-weight: 600;
 }
 
 .step-item.info {
-  background: rgba(255,136,0,0.05);
-  border-color: rgba(255,136,0,0.25);
+  background: rgba(255, 136, 0, 0.05);
+  border-color: rgba(255, 136, 0, 0.25);
 }
+
 .step-item.info .step-icon {
-  background: rgba(255,136,0,0.15);
+  background: rgba(255, 136, 0, 0.15);
   color: #ff8800;
-  border-color: rgba(255,136,0,0.3);
+  border-color: rgba(255, 136, 0, 0.3);
 }
+
 .step-item.info .step-dot {
   background: #ff8800;
 }
+
 .step-item.info .step-text {
   color: #cc6600;
 }
 
 .step-item.info .step-dot {
   background: #ff8800;
-  box-shadow: 0 0 0 3px rgba(255,136,0,0.2);
+  box-shadow: 0 0 0 3px rgba(255, 136, 0, 0.2);
 }
 </style>

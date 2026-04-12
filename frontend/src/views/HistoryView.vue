@@ -1,3 +1,47 @@
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { getHistory, getHistoryDetail } from '@/api'
+import type { HistoryRecord, HistoryDetail } from '@/types'
+
+const records = ref<HistoryRecord[]>([])
+const loading = ref(true)
+const selected = ref<HistoryRecord | null>(null)
+const detail = ref<HistoryDetail | null>(null)
+const detailLoading = ref(false)
+
+onMounted(async () => {
+  try {
+    records.value = await getHistory(50)
+  } catch {
+    // ignore
+  }
+  finally { loading.value = false }
+})
+
+async function toggleDetail(r: HistoryRecord) {
+  if (selected.value?.id === r.id) {
+    selected.value = null
+    detail.value = null
+    return
+  }
+  selected.value = r
+  detail.value = null
+  detailLoading.value = true
+  try {
+    detail.value = await getHistoryDetail(r.id)
+  } catch {
+    // ignore
+  }
+  finally { detailLoading.value = false }
+}
+
+function formatTime(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+}
+</script>
+
 <template>
   <div class="history-view">
     <h2 class="page-title">估价历史</h2>
@@ -76,45 +120,6 @@
     </div>
   </div>
 </template>
-
-<script setup>
-import { ref, onMounted } from 'vue'
-import { getHistory, getHistoryDetail } from '@/api/index.js'
-
-const records = ref([])
-const loading = ref(true)
-const selected = ref(null)
-const detail = ref(null)
-const detailLoading = ref(false)
-
-onMounted(async () => {
-  try {
-    records.value = await getHistory(50)
-  } catch {}
-  finally { loading.value = false }
-})
-
-async function toggleDetail(r) {
-  if (selected.value?.id === r.id) {
-    selected.value = null
-    detail.value = null
-    return
-  }
-  selected.value = r
-  detail.value = null
-  detailLoading.value = true
-  try {
-    detail.value = await getHistoryDetail(r.id)
-  } catch {}
-  finally { detailLoading.value = false }
-}
-
-function formatTime(iso) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
-}
-</script>
 
 <style scoped>
 .history-view { max-width: 800px; margin: 0 auto; }

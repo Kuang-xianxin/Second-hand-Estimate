@@ -1,3 +1,42 @@
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { getBargains, markBargainRead } from '@/api'
+import type { BargainAlert } from '@/types'
+
+const alerts = ref<BargainAlert[]>([])
+const loading = ref(true)
+const unreadOnly = ref(false)
+
+async function load() {
+  loading.value = true
+  try {
+    alerts.value = await getBargains(unreadOnly.value)
+  } catch {
+    // ignore
+  }
+  finally { loading.value = false }
+}
+
+onMounted(load)
+
+async function handleClick(a: BargainAlert) {
+  if (!a.is_read) {
+    try {
+      await markBargainRead(a.id)
+      a.is_read = true
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function formatTime(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+}
+</script>
+
 <template>
   <div class="bargain-view">
     <div class="bargain-header">
@@ -38,40 +77,6 @@
     </div>
   </div>
 </template>
-
-<script setup>
-import { ref, onMounted } from 'vue'
-import { getBargains, markBargainRead } from '@/api/index.js'
-
-const alerts = ref([])
-const loading = ref(true)
-const unreadOnly = ref(false)
-
-async function load() {
-  loading.value = true
-  try {
-    alerts.value = await getBargains(unreadOnly.value)
-  } catch {}
-  finally { loading.value = false }
-}
-
-onMounted(load)
-
-async function handleClick(a) {
-  if (!a.is_read) {
-    try {
-      await markBargainRead(a.id)
-      a.is_read = true
-    } catch {}
-  }
-}
-
-function formatTime(iso) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
-}
-</script>
 
 <style scoped>
 .bargain-view { max-width: 800px; margin: 0 auto; }
@@ -120,6 +125,7 @@ function formatTime(iso) {
   gap: 16px;
   transition: border-color 0.2s, background 0.2s;
   cursor: pointer;
+  text-decoration: none;
 }
 .alert-card:hover { border-color: var(--red); background: rgba(224,92,92,0.05); }
 .alert-card.unread { border-color: rgba(224,92,92,0.4); }
