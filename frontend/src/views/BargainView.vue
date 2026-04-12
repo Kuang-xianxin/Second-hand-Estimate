@@ -3,10 +3,14 @@ import { ref, onMounted } from 'vue'
 import { getBargains, markBargainRead } from '@/api'
 import type { BargainAlert } from '@/types'
 
+// 捡漏提醒列表数据
 const alerts = ref<BargainAlert[]>([])
+// 是否正在加载数据
 const loading = ref(true)
+// 是否只看未读消息（过滤开关）
 const unreadOnly = ref(false)
 
+// 从后端加载捡漏提醒列表（支持按已读状态过滤）
 async function load() {
   loading.value = true
   try {
@@ -17,8 +21,10 @@ async function load() {
   finally { loading.value = false }
 }
 
+// 组件挂载时自动加载一次数据
 onMounted(load)
 
+// 点击提醒卡片时标记为已读（点击外部链接前先更新状态）
 async function handleClick(a: BargainAlert) {
   if (!a.is_read) {
     try {
@@ -30,6 +36,7 @@ async function handleClick(a: BargainAlert) {
   }
 }
 
+// 将 ISO 时间字符串格式化为 "YYYY-MM-DD HH:mm"
 function formatTime(iso: string): string {
   if (!iso) return ''
   const d = new Date(iso)

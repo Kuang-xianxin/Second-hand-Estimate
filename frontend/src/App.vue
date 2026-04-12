@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { getBargains } from './api'
+import { getBargains } from '@/api'
 
+// 未读捡漏提醒数量（显示在导航栏徽标上）
 const unreadCount = ref(0)
+// 主题状态：true=深色模式，false=浅色模式
 const isDark = ref(true)
 
+// 切换深色/浅色主题，更新 body class 并保存偏好到 localStorage
 function toggleTheme() {
   isDark.value = !isDark.value
   document.body.classList.toggle('light', !isDark.value)
   localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
 }
 
+// 从后端加载未读捡漏提醒数量，用于导航栏 Badge 显示
 async function loadUnread() {
   try {
     const data = await getBargains(true)
@@ -20,6 +24,7 @@ async function loadUnread() {
   }
 }
 
+// 组件挂载时：恢复保存的主题偏好，并加载未读数量
 onMounted(() => {
   const saved = localStorage.getItem('theme')
   if (saved === 'light') {
@@ -150,8 +155,15 @@ onMounted(() => {
   text-decoration: none;
 }
 
-.nav-link:hover { color: var(--text); background: var(--bg3); }
-.nav-link.active { color: var(--accent); background: rgba(232,197,71,0.1); }
+.nav-link:hover {
+  color: var(--text);
+  background: var(--bg3);
+}
+
+.nav-link.active {
+  color: var(--accent);
+  background: rgba(232, 197, 71, 0.1);
+}
 
 .badge {
   position: absolute;

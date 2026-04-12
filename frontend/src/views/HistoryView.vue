@@ -3,12 +3,18 @@ import { ref, onMounted } from 'vue'
 import { getHistory, getHistoryDetail } from '@/api'
 import type { HistoryRecord, HistoryDetail } from '@/types'
 
+// 估价历史记录列表（列表页展示）
 const records = ref<HistoryRecord[]>([])
+// 是否正在加载历史列表
 const loading = ref(true)
+// 当前选中的记录（用于展开详情）
 const selected = ref<HistoryRecord | null>(null)
+// 当前选中记录的详细数据（展开后加载）
 const detail = ref<HistoryDetail | null>(null)
+// 详情是否正在加载中
 const detailLoading = ref(false)
 
+// 组件挂载时获取最近50条估价历史记录
 onMounted(async () => {
   try {
     records.value = await getHistory(50)
@@ -18,6 +24,8 @@ onMounted(async () => {
   finally { loading.value = false }
 })
 
+// 切换记录的展开/收起状态
+// 若再次点击同一记录则收起详情；若点击新记录则加载其详细数据
 async function toggleDetail(r: HistoryRecord) {
   if (selected.value?.id === r.id) {
     selected.value = null
@@ -35,6 +43,7 @@ async function toggleDetail(r: HistoryRecord) {
   finally { detailLoading.value = false }
 }
 
+// 将 ISO 时间字符串格式化为 "YYYY-MM-DD HH:mm"
 function formatTime(iso: string): string {
   if (!iso) return ''
   const d = new Date(iso)

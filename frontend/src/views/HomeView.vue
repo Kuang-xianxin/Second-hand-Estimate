@@ -1,54 +1,68 @@
 <script setup lang="ts">
 import { onMounted, reactive, computed } from 'vue'
-import { getLoginState, openXianyuLogin, stopValuateTask } from '../api'
+import { getLoginState, openXianyuLogin, stopValuateTask } from '@/api'
 import type { ValuationTask, ValuationStep, ValuationResult, LlmResult, SampleItem, BargainItem, AlgorithmResult, QualitySummary } from '../types'
 
 defineOptions({ name: 'HomeView' })
 
+// 全局视图状态：管理当前选中任务、全局加载状态、全局错误信息等
+// 用于在多任务并行时统一控制视图展示
+// - currentTaskId: 当前选中任务的 ID（对应 ValuationTask.id）
+// - tasks: 所有估价任务列表（按创建时间倒序）
+// - isLoggedIn: 闲鱼登录态（由 checkLoginState 定时检测）
+// - showLoginModal: 是否显示登录引导弹窗
 const state = reactive({
-  keyword: '',
-  loading: false,
-  error: '',
-  result: null as ValuationResult | null,
-  steps: [] as ValuationStep[],
-  currentTaskId: '',
-  activeController: null as AbortController | null,
-  tasks: [] as ValuationTask[],
-  isLoggedIn: false,
-  checkingLogin: false,
-  showLoginModal: false,
-  openingLogin: false,
+  keyword: '',                         // 搜索框输入的关键词
+  loading: false,                      // 是否有任务正在执行（控制按钮状态）
+  error: '',                           // 当前错误信息（展示错误提示）
+  result: null as ValuationResult | null,   // 当前选中任务的完整结果（含算法基准 + 多模型估价）
+  steps: [] as ValuationStep[],            // 当前选中任务的步骤列表（用于流程展示）
+  currentTaskId: '',                  // 当前选中任务的 ID（用于高亮 tab 和刷新视图）
+  activeController: null as AbortController | null,  // 当前 fetch 请求的 AbortController（用于手动中断）
+  tasks: [] as ValuationTask[],       // 所有估价任务列表（按创建时间倒序）
+  isLoggedIn: false,                  // 闲鱼是否已登录
+  checkingLogin: false,               // 是否正在检测登录态（防止重复检测）
+  showLoginModal: false,             // 是否显示登录引导弹窗
+  openingLogin: false,                // 是否正在打开登录页面（控制按钮 loading）
 })
 
+// 计算属性：根据 currentTaskId 从 tasks 中取出对应任务对象
+// 用法同 task，但支持响应式追踪 currentTaskId 变化
+// 引用处: <section v-if="currentTask?.steps.length"> 等模板区域
 const currentTask: any = computed(() => state.tasks.find(t => t.id === state.currentTaskId))
 
+// 创建新的估价任务对象，初始化各字段并预设"正在爬取闲鱼数据..."步骤
+// 返回 reactive 对象，支持直接在模板中响应式访问
+// 引用处: doValuate() 中创建新任务
 function buildTask(keywordText: string): ValuationTask {
   return reactive({
-    id: `task-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-    keyword: keywordText,
-    loading: true,
-    error: '',
-    result: null,
-    xd_confirmed: false,
+    id: `task-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,  // 生成唯一任务 ID
+    keyword: keywordText,  // 搜索关键词（复制自入参）
+    loading: true,          // 任务初始为加载中状态
+    error: '',              // 初始无错误
+    result: null,           // 完整结果待 SSE 完成后填充
+    xd_confirmed: false,    // 初始未确认 XD 卡信息
     steps: reactive([{
-      id: Date.now() + Math.random(),
-      text: '正在爬取闲鱼数据...',
-      status: 'pending',
-      filteredOut: [],
-      expanded: false,
+      id: Date.now() + Math.random(),  // 步骤唯一 ID
+      text: '正在爬取闲鱼数据...',       // 初始步骤描述
+      status: 'pending',               // pending=进行中，done=完成，error=失败，info=提示
+      filteredOut: [],                 // 被筛除的商品列表
+      expanded: false,                 // 是否展开详情
     }]),
     partial: reactive({
-      keyword: keywordText,
-      sample_count: 0,
-      algorithm: null,
-      quality_summary: null,
-      llm_results: reactive<LlmResult[]>([]),
-      samples: reactive<SampleItem[]>([]),
-      bargains: reactive<BargainItem[]>([]),
+      keyword: keywordText,  // 搜索关键词
+      sample_count: 0,                            // 有效样本数量
+      algorithm: null,                             // ValuationResult.algorithm，算法基准价结果
+      quality_summary: null,                       // ValuationResult.quality_summary，质量汇总
+      llm_results: reactive<LlmResult[]>([]),     // ValuationResult.llm_results，多个大模型估价结果
+      samples: reactive<SampleItem[]>([]),         // ValuationResult.samples，参与估价的有效样本
+      bargains: reactive<BargainItem[]>([]),      // ValuationResult.bargains，捡漏机会列表
     }),
   }) as ValuationTask
 }
 
+// 将指定任务的关键状态同步到全局 state，用于多任务切换时刷新视图
+// 引用处: selectTask()、removeTask()、stopCurrentTask()、doValuate() 中
 function syncViewByTask(task: ValuationTask) {
   if (!task) return
   state.loading = !!task.loading
@@ -56,17 +70,22 @@ function syncViewByTask(task: ValuationTask) {
   state.result = task.result
 }
 
+// 切换当前选中任务，高亮对应 tab 并刷新视图状态
+// 引用处: doValuate() 中发起新任务后自动选中
 function selectTask(taskId: string) {
-  const task = state.tasks.find(t => t.id === taskId)
+  const task = state.tasks.find(t => t.id === taskId)  // 根据 ID 找到对应任务
   if (!task) return
   state.currentTaskId = taskId
   syncViewByTask(task)
 }
 
+// 删除指定任务；若任务正在进行则先调用 stopValuateTask 并 abort 请求
+// 若删除的是当前选中任务，则自动切换到下一个任务或清空视图
+// 引用处: 模板中 task-tab-remove 按钮点击事件
 async function removeTask(taskId: string) {
-  const idx = state.tasks.findIndex(t => t.id === taskId)
+  const idx = state.tasks.findIndex(t => t.id === taskId)  // 找到任务在列表中的索引
   if (idx < 0) return
-  const target = state.tasks[idx]
+  const target = state.tasks[idx]  // 待删除的任务对象
 
   if (target.loading) {
     try {
@@ -75,19 +94,20 @@ async function removeTask(taskId: string) {
       // ignore
     }
     if (state.currentTaskId === target.id && state.activeController) {
-      state.activeController.abort()
+      state.activeController.abort()  // 中断正在进行中的请求
       state.activeController = null
     }
   }
 
-  state.tasks.splice(idx, 1)
+  state.tasks.splice(idx, 1)  // 从任务列表中移除
 
   if (state.currentTaskId === taskId) {
-    const nextTask = state.tasks[0]
+    const nextTask = state.tasks[0]  // 切换到下一个任务（若有）
     if (nextTask) {
       state.currentTaskId = nextTask.id
       syncViewByTask(nextTask)
     } else {
+      // 无剩余任务，清空视图状态
       state.currentTaskId = ''
       state.loading = false
       state.error = ''
@@ -97,26 +117,42 @@ async function removeTask(taskId: string) {
   }
 }
 
+// 从 axios/fetch 错误对象中提取人类可读的错误信息
+// 兼容 Pydantic 验证错误（resp.data.detail）、HTTP 错误和网络错误
+// 引用处: openLoginPage()、doValuate() catch 块
 function parseErrorText(e: unknown): string {
-  const err = e as Record<string, unknown> | undefined
-  const resp = err?.response as Record<string, unknown> | undefined
-  const data = resp?.data as Record<string, unknown> | undefined
-  const detail = data?.detail
+  const err = e as Record<string, unknown> | undefined   // 将错误对象转为字典
+  const resp = err?.response as Record<string, unknown> | undefined  // axios 封装的响应对象
+  const data = resp?.data as Record<string, unknown> | undefined     // 响应体中的 data 字段
+  const detail = data?.detail                                // Pydantic 验证错误的 detail 字段
   if (typeof detail === 'string') return detail
   return ((e as Error)?.message) || '请求失败，请检查后端是否启动'
 }
 
+// 根据步骤文本判断展开详情的内容类型
+// '成色分析完成' 开头 → 'condition'（展示成色分析记录）
+// 其他 → 'filter'（展示被筛除商品）
+// 引用处: 模板中 stepDetailKind(step) 的判断分支
 function stepDetailKind(step: ValuationStep): 'condition' | 'filter' {
-  const t = step?.text || ''
+  const t = step?.text || ''  // 提取步骤文本内容
   return t.includes('成色分析完成') ? 'condition' : 'filter'
 }
 
+// 从 quality_flags 数组中提取 XD 卡状态文本
+// 格式示例: "内存卡状态: 需自备"、"内存卡状态: 捆绑" 等
+// 引用处: 模板中 getSdCardTag(s.quality_flags) 用于 SD 卡标签展示
 function getSdCardTag(flags: string[] | undefined): string | null {
   if (!flags) return null
-  const f = flags.find(f => f.startsWith('内存卡状态:'))
+  const f = flags.find(f => f.startsWith('内存卡状态:'))  // 找到 XD 卡状态标记
   return f ? f.replace('内存卡状态:', '') : null
 }
 
+// 根据 XD 卡状态返回对应 CSS 类名，控制标签颜色
+// '需自备' → sd-tag-self（红色）
+// '捆绑'/'含卡' → sd-tag-bundle（绿色）
+// '加购' → sd-tag-addon（橙色）
+// 其他 → sd-tag-unknown（灰色）
+// 引用处: 模板中 class="sd-card-tag" :class="getSdCardTagClass(...)"
 function getSdCardTagClass(flags: string[] | undefined): string {
   const text = getSdCardTag(flags) || ''
   if (text.includes('需自备')) return 'sd-tag-self'
@@ -125,6 +161,9 @@ function getSdCardTagClass(flags: string[] | undefined): string {
   return 'sd-tag-unknown'
 }
 
+// 检测当前闲鱼登录态；若未登录则弹出引导窗口
+// 在 onMounted 时自动调用一次；也可在用户操作后手动调用刷新
+// 引用处: onMounted()、confirmLoginDone()
 async function checkLoginState() {
   state.checkingLogin = true
   try {
@@ -138,6 +177,8 @@ async function checkLoginState() {
   }
 }
 
+// 调用后端接口打开闲鱼登录页面（通过 webbrowser 打开）
+// 引用处: 登录弹窗中"打开闲鱼登录页"按钮点击事件
 async function openLoginPage() {
   state.openingLogin = true
   try {
@@ -149,11 +190,16 @@ async function openLoginPage() {
   }
 }
 
+// 用户确认完成登录后，重新检测登录态并关闭弹窗
+// 引用处: 登录弹窗中"我已登录，重新检测"按钮点击事件
 async function confirmLoginDone() {
   await checkLoginState()
   if (state.isLoggedIn) state.showLoginModal = false
 }
 
+// 停止当前正在进行的估价任务
+// 调用 stopValuateTask API + AbortController abort 双保险停止请求
+// 引用处: 模板中"停止当前估价"按钮点击事件
 async function stopCurrentTask() {
   if (!state.currentTaskId) return
   const task = state.tasks.find(t => t.id === state.currentTaskId)
@@ -182,6 +228,10 @@ async function stopCurrentTask() {
   syncViewByTask(task)
 }
 
+// 发起一次完整的估价请求（SSE 流式接口）
+// 流程: buildTask → POST /api/valuate/stream → 解析 SSE 事件 → 更新 task.steps/partial/result
+// SSE 事件类型: start | step | xd_confirmed | base | llm | done | stopped | error
+// 引用处: 搜索框回车、搜索按钮点击、"新增并行估价"按钮点击事件
 async function doValuate() {
   if (!state.keyword.trim()) return
   if (state.checkingLogin) return
@@ -190,12 +240,12 @@ async function doValuate() {
     return
   }
 
-  const task = buildTask(state.keyword.trim())
-  state.tasks.unshift(task)
-  selectTask(task.id)
-  state.keyword = ''
+  const task = buildTask(state.keyword.trim())  // 创建新任务对象
+  state.tasks.unshift(task)                     // 新任务插入列表头部
+  selectTask(task.id)                            // 自动选中新创建的任务
+  state.keyword = ''                             // 清空搜索框
 
-  const controller = new AbortController()
+  const controller = new AbortController()      // 用于手动中断 fetch 请求
   state.activeController = controller
 
   try {
@@ -211,27 +261,30 @@ async function doValuate() {
           reject(new Error(txt))
           return
         }
-        const reader = resp.body!.getReader()
-        const decoder = new TextDecoder()
-        let buf = ''
+        const reader = resp.body!.getReader()  // SSE 响应流读取器
+        const decoder = new TextDecoder()        // 将二进制数据解码为文本
+        let buf = ''                             // 缓存不完整的 SSE 行
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
           buf += decoder.decode(value, { stream: true })
-          const parts = buf.split('\n\n')
+          const parts = buf.split('\n\n')        // SSE 事件以双换行分隔
           buf = parts.pop() ?? ''
           for (const part of parts) {
-            const eventMatch = part.match(/^event: (\w+)/m)
-            const dataMatch = part.match(/^data: (.+)/ms)
+            const eventMatch = part.match(/^event: (\w+)/m)   // 解析事件类型
+            const dataMatch = part.match(/^data: (.+)/ms)     // 解析事件数据
             if (!eventMatch || !dataMatch) continue
-            const evtType = eventMatch[1]
+            const evtType = eventMatch[1]   // 事件类型字符串（如 'step'、'llm'）
             let payload: Record<string, unknown>
             try { payload = JSON.parse(dataMatch[1]) } catch { continue }
 
             if (evtType === 'start') {
+              // 服务端返回任务真实 ID（用于关联后端任务状态）
               task.id = (payload.task_id as string) || task.id
             } else if (evtType === 'step') {
+              // 爬取过程中推送进度步骤
               if (payload.status === 'pending') {
+                // 新增一条待完成的步骤
                 task.steps.push({
                   id: Date.now() + Math.random(),
                   text: payload.text as string,
@@ -240,6 +293,7 @@ async function doValuate() {
                   expanded: false,
                 })
               } else {
+                // 找到最近一条 pending 步骤，标记为完成并填入结果
                 const last = [...task.steps].reverse().find(s => s.status === 'pending')
                 if (last) {
                   last.status = 'done'
@@ -250,6 +304,7 @@ async function doValuate() {
                 }
               }
             } else if (evtType === 'xd_confirmed') {
+              // 检测到 XD 卡相关信息，推送橙色提示步骤
               task.xd_confirmed = true
               task.steps.push({
                 id: Date.now() + Math.random(),
@@ -261,6 +316,7 @@ async function doValuate() {
                 xd_hint_full: payload.text as string | undefined,
               })
             } else if (evtType === 'base') {
+              // 爬取完成，推送基准价和样本数据
               const last = [...task.steps].reverse().find(s => s.status === 'pending')
               if (last) {
                 last.status = 'done'
@@ -283,8 +339,10 @@ async function doValuate() {
                 expanded: false,
               })
             } else if (evtType === 'llm') {
+              // 某个大模型完成估价，推送其结果
               const last = [...task.steps].reverse().find(s => s.status === 'pending')
               if (last) last.status = 'done'
+              // 截取模型名称（去掉 ep- 前缀）用于展示
               const modelShort = ((payload.model as string) || '').replace(/^ep-[^-]+-\d+-/, '').slice(0, 24)
               task.steps.push({
                 id: Date.now() + Math.random(),
@@ -299,6 +357,7 @@ async function doValuate() {
               task.partial.llm_results = [...task.partial.llm_results, llmPayload]
               task.result = { ...task.partial }
               if (task.partial.llm_results.length < 3) {
+                // 不足 3 个模型时，继续等待
                 task.steps.push({
                   id: Date.now() + Math.random(),
                   text: '等待剩余模型结果...',
@@ -308,6 +367,7 @@ async function doValuate() {
                 })
               }
             } else if (evtType === 'done') {
+              // 所有流程完成
               const last = [...task.steps].reverse().find(s => s.status === 'pending')
               if (last) {
                 last.status = 'done'
@@ -316,6 +376,7 @@ async function doValuate() {
               task.loading = false
               resolve()
             } else if (evtType === 'stopped') {
+              // 任务被服务端主动停止
               task.loading = false
               task.error = (payload.detail as string) || '已停止'
               task.steps.push({
@@ -327,6 +388,7 @@ async function doValuate() {
               })
               resolve()
             } else if (evtType === 'error') {
+              // 服务端推送错误事件
               reject(new Error((payload.detail as string) || 'SSE 错误'))
             }
 
@@ -337,7 +399,7 @@ async function doValuate() {
       }).catch(reject)
     })
   } catch (e) {
-    const err = e as Error
+    const err = e as Error  // 将异常对象转为标准 Error 类型以访问 message/name
     if (err.name === 'AbortError') {
       task.error = '已手动停止'
     } else {
@@ -349,6 +411,7 @@ async function doValuate() {
         filteredOut: [],
         expanded: false,
       })
+      // 若为登录态相关错误，自动弹出登录引导
       if (/401|登录态|请先登录/.test(task.error)) {
         state.showLoginModal = true
         state.isLoggedIn = false
@@ -361,6 +424,8 @@ async function doValuate() {
   }
 }
 
+// 组件挂载后自动检测一次闲鱼登录态（页面打开时提示未登录用户）
+// 引用处: Vue 生命周期钩子
 onMounted(() => {
   checkLoginState()
 })
@@ -511,7 +576,7 @@ onMounted(() => {
               class="sample-img-flags">
               <span v-for="f in s.quality_flags.filter((f: string) => f.startsWith('图片'))" :key="f"
                 class="img-flag-tag">{{
-                f }}</span>
+                  f }}</span>
             </div>
           </div>
           <div class="sample-price">¥{{ s.price }}</div>
