@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, computed } from 'vue'
 import { getLoginState, openXianyuLogin, stopValuateTask } from '@/api'
-import type { ValuationTask, ValuationStep, ValuationResult, LlmResult, SampleItem, BargainItem, AlgorithmResult, QualitySummary } from '../types'
+import type { ValuationTask, ValuationStep, ValuationResult, LlmResult, SampleItem, BargainItem, AlgorithmResult, QualitySummary, SSEEventType, SSEQualitySummary } from '../types'
 
 defineOptions({ name: 'HomeView' })
 
@@ -24,7 +24,15 @@ const state = reactive({
   checkingLogin: false,               // 是否正在检测登录态（防止重复检测）
   showLoginModal: false,             // 是否显示登录引导弹窗
   openingLogin: false,                // 是否正在打开登录页面（控制按钮 loading）
+  selectedModels: ['deepseek'] as string[],  // 当前选中的大模型列表
 })
+
+// 可用模型选项
+const AVAILABLE_MODELS = [
+  { key: 'deepseek', label: 'DeepSeek' },
+  { key: 'qwen', label: '通义千问' },
+  { key: 'doubao', label: '豆包' },
+]
 
 // 计算属性：根据 currentTaskId 从 tasks 中取出对应任务对象
 // 用法同 task，但支持响应式追踪 currentTaskId 变化
@@ -34,10 +42,11 @@ const currentTask: any = computed(() => state.tasks.find(t => t.id === state.cur
 // 创建新的估价任务对象，初始化各字段并预设"正在爬取闲鱼数据..."步骤
 // 返回 reactive 对象，支持直接在模板中响应式访问
 // 引用处: doValuate() 中创建新任务
-function buildTask(keywordText: string): ValuationTask {
+function buildTask(keywordText: string, models: string[]): ValuationTask {
   return reactive({
     id: `task-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,  // 生成唯一任务 ID
     keyword: keywordText,  // 搜索关键词（复制自入参）
+    models,                 // 本次估价使用的模型列表（用于判断 pending 卡片数量）
     loading: true,          // 任务初始为加载中状态
     error: '',              // 初始无错误
     result: null,           // 完整结果待 SSE 完成后填充
@@ -133,7 +142,8 @@ function parseErrorText(e: unknown): string {
 // '成色分析完成' 开头 → 'condition'（展示成色分析记录）
 // 其他 → 'filter'（展示被筛除商品）
 // 引用处: 模板中 stepDetailKind(step) 的判断分支
-function stepDetailKind(step: ValuationStep): 'condition' | 'filter' {
+function
+  stepDetailKind(step: ValuationStep): 'condition' | 'filter' {
   const t = step?.text || ''  // 提取步骤文本内容
   return t.includes('成色分析完成') ? 'condition' : 'filter'
 }
@@ -240,7 +250,7 @@ async function doValuate() {
     return
   }
 
-  const task = buildTask(state.keyword.trim())  // 创建新任务对象
+  const task = buildTask(state.keyword.trim(), [...state.selectedModels])  // 创建新任务对象
   state.tasks.unshift(task)                     // 新任务插入列表头部
   selectTask(task.id)                            // 自动选中新创建的任务
   state.keyword = ''                             // 清空搜索框
@@ -253,7 +263,7 @@ async function doValuate() {
       fetch(`/api/valuate/stream?task_id=${encodeURIComponent(task.id)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keyword: task.keyword }),
+        body: JSON.stringify({ keyword: task.keyword, models: state.selectedModels }),
         signal: controller.signal,
       }).then(async (resp) => {
         if (!resp.ok) {
@@ -274,122 +284,127 @@ async function doValuate() {
             const eventMatch = part.match(/^event: (\w+)/m)   // 解析事件类型
             const dataMatch = part.match(/^data: (.+)/ms)     // 解析事件数据
             if (!eventMatch || !dataMatch) continue
-            const evtType = eventMatch[1]   // 事件类型字符串（如 'step'、'llm'）
+            const evtType = eventMatch[1] as SSEEventType   // 事件类型字符串
             let payload: Record<string, unknown>
             try { payload = JSON.parse(dataMatch[1]) } catch { continue }
 
-            if (evtType === 'start') {
-              // 服务端返回任务真实 ID（用于关联后端任务状态）
-              task.id = (payload.task_id as string) || task.id
-            } else if (evtType === 'step') {
-              // 爬取过程中推送进度步骤
-              if (payload.status === 'pending') {
-                // 新增一条待完成的步骤
+            switch (evtType) {
+              case 'start': {
+                task.id = (payload.task_id as string) || task.id
+                break
+              }
+              case 'step': {
+                if (payload.status === 'pending') {
+                  task.steps.push({
+                    id: Date.now() + Math.random(),
+                    text: payload.text as string,
+                    status: 'pending',
+                    filteredOut: [],
+                    expanded: false,
+                  })
+                } else {
+                  const last = [...task.steps].reverse().find(s => s.status === 'pending')
+                  if (last) {
+                    last.status = 'done'
+                    if (payload.text) last.text = payload.text as string
+                    if ((payload.filtered_out as unknown[])?.length) {
+                      last.filteredOut = payload.filtered_out as ValuationStep['filteredOut']
+                    }
+                  }
+                }
+                break
+              }
+              case 'xd_confirmed': {
+                task.xd_confirmed = true
                 task.steps.push({
                   id: Date.now() + Math.random(),
-                  text: payload.text as string,
-                  status: 'pending',
+                  text: '【XD卡提示】' + (((payload.text as string) || '').split('\n')[0]),
+                  status: 'info',
                   filteredOut: [],
                   expanded: false,
+                  is_xd_hint: true,
+                  xd_hint_full: payload.text as string | undefined,
                 })
-              } else {
-                // 找到最近一条 pending 步骤，标记为完成并填入结果
+                break
+              }
+              case 'base': {
                 const last = [...task.steps].reverse().find(s => s.status === 'pending')
                 if (last) {
                   last.status = 'done'
-                  if (payload.text) last.text = payload.text as string
-                  if ((payload.filtered_out as Array<unknown>)?.length) {
-                    last.filteredOut = payload.filtered_out as ValuationStep['filteredOut']
-                  }
+                  last.text = `爬取完成，获得 ${payload.sample_count} 条有效样本`
                 }
-              }
-            } else if (evtType === 'xd_confirmed') {
-              // 检测到 XD 卡相关信息，推送橙色提示步骤
-              task.xd_confirmed = true
-              task.steps.push({
-                id: Date.now() + Math.random(),
-                text: '【XD卡提示】' + ((payload.text as string) || '').split('\n')[0],
-                status: 'info',
-                filteredOut: [],
-                expanded: false,
-                is_xd_hint: true,
-                xd_hint_full: payload.text as string | undefined,
-              })
-            } else if (evtType === 'base') {
-              // 爬取完成，推送基准价和样本数据
-              const last = [...task.steps].reverse().find(s => s.status === 'pending')
-              if (last) {
-                last.status = 'done'
-                last.text = `爬取完成，获得 ${payload.sample_count} 条有效样本`
-              }
-              task.partial.keyword = payload.keyword as string
-              task.partial.sample_count = payload.sample_count as number
-              task.partial.xd_card_model = payload.xd_card_model as boolean | undefined
-              task.partial.xd_card_bundle_count = payload.xd_card_bundle_count as number | undefined
-              task.partial.algorithm = payload.algorithm as AlgorithmResult | null
-              task.partial.quality_summary = payload.quality_summary as QualitySummary | null
-              task.partial.samples = payload.samples as SampleItem[]
-              task.partial.bargains = payload.bargains as BargainItem[]
-              task.result = { ...task.partial }
-              task.steps.push({
-                id: Date.now() + Math.random(),
-                text: '等待大模型分析结果...',
-                status: 'pending',
-                filteredOut: [],
-                expanded: false,
-              })
-            } else if (evtType === 'llm') {
-              // 某个大模型完成估价，推送其结果
-              const last = [...task.steps].reverse().find(s => s.status === 'pending')
-              if (last) last.status = 'done'
-              // 截取模型名称（去掉 ep- 前缀）用于展示
-              const modelShort = ((payload.model as string) || '').replace(/^ep-[^-]+-\d+-/, '').slice(0, 24)
-              task.steps.push({
-                id: Date.now() + Math.random(),
-                text: payload.error
-                  ? `${modelShort}：分析失败（${payload.error}）`
-                  : `${modelShort} 估价完成：¥${payload.suggested_price}`,
-                status: (payload.error ? 'error' : 'done') as ValuationStep['status'],
-                filteredOut: [],
-                expanded: false,
-              })
-              const llmPayload = payload as unknown as LlmResult
-              task.partial.llm_results = [...task.partial.llm_results, llmPayload]
-              task.result = { ...task.partial }
-              if (task.partial.llm_results.length < 3) {
-                // 不足 3 个模型时，继续等待
+                task.partial.keyword = payload.keyword as string
+                task.partial.sample_count = payload.sample_count as number
+                task.partial.xd_card_model = payload.xd_card_model as boolean | undefined
+                task.partial.xd_card_bundle_count = payload.xd_card_bundle_count as number | undefined
+                task.partial.algorithm = payload.algorithm as AlgorithmResult | null
+                task.partial.quality_summary = payload.quality_summary as SSEQualitySummary | null
+                task.partial.samples = payload.samples as SampleItem[]
+                task.partial.bargains = payload.bargains as BargainItem[]
+                task.result = { ...task.partial }
                 task.steps.push({
                   id: Date.now() + Math.random(),
-                  text: '等待剩余模型结果...',
+                  text: '等待大模型分析结果...',
                   status: 'pending',
                   filteredOut: [],
                   expanded: false,
                 })
+                break
               }
-            } else if (evtType === 'done') {
-              // 所有流程完成
-              const last = [...task.steps].reverse().find(s => s.status === 'pending')
-              if (last) {
-                last.status = 'done'
-                last.text = '全部分析完成'
+              case 'llm': {
+                const last = [...task.steps].reverse().find(s => s.status === 'pending')
+                if (last) last.status = 'done'
+                const modelShort = ((payload.model as string) || '').replace(/^ep-[^-]+-\d+-/, '').slice(0, 24)
+                task.steps.push({
+                  id: Date.now() + Math.random(),
+                  text: payload.error
+                    ? `${modelShort}：分析失败（${payload.error}）`
+                    : `${modelShort} 估价完成：¥${payload.suggested_price}`,
+                  status: (payload.error ? 'error' : 'done') as ValuationStep['status'],
+                  filteredOut: [],
+                  expanded: false,
+                })
+                const llmPayload = payload as unknown as LlmResult
+                task.partial.llm_results = [...task.partial.llm_results, llmPayload]
+                task.result = { ...task.partial }
+                if (task.partial.llm_results.length < task.models.length) {
+                  task.steps.push({
+                    id: Date.now() + Math.random(),
+                    text: '等待剩余模型结果...',
+                    status: 'pending',
+                    filteredOut: [],
+                    expanded: false,
+                  })
+                }
+                break
               }
-              task.loading = false
-              resolve()
-            } else if (evtType === 'stopped') {
-              // 任务被服务端主动停止
-              task.loading = false
-              task.error = (payload.detail as string) || '已停止'
-              task.steps.push({
-                id: Date.now() + Math.random(),
-                text: '任务已停止',
-                status: 'error',
-                filteredOut: [],
-                expanded: false,
-              })
-              resolve()
-            } else if (evtType === 'error') {
-              // 服务端推送错误事件
-              reject(new Error((payload.detail as string) || 'SSE 错误'))
+              case 'done': {
+                const last = [...task.steps].reverse().find(s => s.status === 'pending')
+                if (last) {
+                  last.status = 'done'
+                  last.text = '全部分析完成'
+                }
+                task.loading = false
+                resolve()
+                break
+              }
+              case 'stopped': {
+                task.loading = false
+                task.error = (payload.detail as string) || '已停止'
+                task.steps.push({
+                  id: Date.now() + Math.random(),
+                  text: '任务已停止',
+                  status: 'error',
+                  filteredOut: [],
+                  expanded: false,
+                })
+                resolve()
+                break
+              }
+              case 'error': {
+                reject(new Error((payload.detail as string) || 'SSE 错误'))
+                break
+              }
             }
 
             if (task.id === state.currentTaskId) syncViewByTask(task)
@@ -444,6 +459,18 @@ onMounted(() => {
           <span v-else class="loading-dots">分析中<span>.</span><span>.</span><span>.</span></span>
         </button>
       </div>
+      <div class="model-selector">
+        <span class="model-selector-label">模型选择：</span>
+        <button v-for="m in AVAILABLE_MODELS" :key="m.key" class="model-btn"
+          :class="{ active: state.selectedModels.includes(m.key) }" @click="() => {
+            const idx = state.selectedModels.indexOf(m.key)
+            if (idx >= 0) {
+              if (state.selectedModels.length > 1) state.selectedModels.splice(idx, 1)
+            } else {
+              state.selectedModels.push(m.key)
+            }
+          }">{{ m.label }}</button>
+      </div>
       <div class="task-actions">
         <button class="task-btn" @click="doValuate" :disabled="state.checkingLogin">新增并行估价</button>
         <button class="task-btn stop" @click="stopCurrentTask"
@@ -459,7 +486,7 @@ onMounted(() => {
           <div class="login-modal-text">检测到当前无登录态。点击"打开闲鱼登录页"后，在浏览器完成登录，再点"我已登录，重新检测"。</div>
           <div class="login-modal-actions">
             <button class="modal-btn primary" @click="openLoginPage" :disabled="state.openingLogin">
-              {{ state.openingLogin ? '打开中...' : '打开��鱼登录页' }}
+              {{ state.openingLogin ? '打开中...' : '打开闲鱼登录页' }}
             </button>
             <button class="modal-btn ghost" @click="confirmLoginDone" :disabled="state.checkingLogin">我已登录，重新检测</button>
             <button class="modal-btn text" @click="state.showLoginModal = false">稍后再说</button>
@@ -532,8 +559,9 @@ onMounted(() => {
               <div class="llm-reasoning">{{ m.reasoning }}</div>
             </template>
           </div>
-          <div v-for="n in (3 - (currentTask.result.llm_results?.length || 0))" :key="'pending-' + n"
-            class="llm-card llm-card-pending">
+          <div
+            v-for="n in Math.max(0, (currentTask.models?.length || 1) - (currentTask.result.llm_results?.length || 0))"
+            :key="'pending-' + n" class="llm-card llm-card-pending">
             <div class="llm-model-name">分析中...</div>
             <div class="llm-pending-dots"><span>.</span><span>.</span><span>.</span></div>
           </div>
@@ -636,6 +664,42 @@ onMounted(() => {
   display: flex;
   gap: 12px;
   margin-bottom: 10px;
+}
+
+.model-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.model-selector-label {
+  font-size: 12px;
+  color: var(--text2);
+  white-space: nowrap;
+}
+
+.model-btn {
+  background: var(--bg2);
+  color: var(--text2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.model-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.model-btn.active {
+  background: rgba(232, 197, 71, 0.12);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .task-actions {

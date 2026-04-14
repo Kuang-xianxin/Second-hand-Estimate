@@ -33,6 +33,7 @@ STORAGE_STATE_FILE = BASE_DIR / "xianyu_storage_state.json"
 class ValuateRequest(BaseModel):
     keyword: str
     cookies: Optional[str] = None
+    models: Optional[list[str]] = None  # 可选模型列表，支持 deepseek/qwen/doubao，默认 deepseek
 
 
 def _canonicalize_keyword(keyword: str) -> str:
@@ -952,7 +953,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
         }
         yield f"event: base\ndata: {json.dumps(base_payload, ensure_ascii=False)}\n\n"
 
-        # ---- 阶段2：三模型竞速，谁先完成先推送 ----
+        # ---- 阶段2：多模型竞速，谁先完成先推送 ----
         # LLM prompt 始终用原始价格，让模型自己判断降权
         prompt = _build_prompt_for_stream(
             keyword, pricing.base_price, [i.price for i in items], pricing.sample_count,
@@ -960,16 +961,26 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             xd_card_bundle_count=xd_bundle_count,
         )
 
+        # 根据请求的 models 参数决定调用哪些模型，默认为 deepseek
+        requested_models = set(req.models) if req.models else {"deepseek"}
+        model_map = {
+            "deepseek": (call_deepseek_fn, settings.deepseek_model),
+            "qwen": (call_qwen_fn, settings.qwen_model),
+            "doubao": (call_kimi_fn, settings.doubao_model),
+        }
+
         async def run_model(call_fn, model_name):
             data = await call_fn(prompt)
             v = _to_valuation_for_stream(data, model_name)
             return v
 
         tasks = {
-            asyncio.create_task(run_model(call_deepseek_fn, settings.deepseek_model)): settings.deepseek_model,
-            asyncio.create_task(run_model(call_qwen_fn, settings.qwen_model)): settings.qwen_model,
-            asyncio.create_task(run_model(call_kimi_fn, settings.doubao_model)): settings.doubao_model,
+            asyncio.create_task(run_model(fn, name)): name
+            for key, (fn, name) in model_map.items()
+            if key in requested_models
         }
+        if not tasks:
+            tasks = {asyncio.create_task(run_model(call_deepseek_fn, settings.deepseek_model)): settings.deepseek_model}
         pending = set(tasks.keys())
         llm_results_collected = []
         while pending:

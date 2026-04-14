@@ -1,3 +1,31 @@
+// ============================================================================
+// SSE 事件类型（与后端 backend/app/api/valuate.py 保持一致）
+// ============================================================================
+
+/** SSE 事件类型枚举 */
+/** SSE 事件类型枚举 */
+export type SSEEventType =
+  | 'start'         // 服务端返回任务真实 ID
+  | 'step'          // 爬取/筛选过程中的进度步骤
+  | 'xd_confirmed'   // 检测到 XD 卡相机
+  | 'base'          // 爬取完成，推送基准价和样本数据
+  | 'llm'           // 单个大模型估价结果
+  | 'done'          // 所有流程完成
+  | 'stopped'       // 任务被手动停止
+  | 'error'         // 流程出错
+
+// ============================================================================
+// 以下为原有类型定义
+// ============================================================================
+
+/** SSE quality_summary 扁平结构（与后端直接对应） */
+export interface SSEQualitySummary {
+  avg_score: number
+  high_quality_count: number
+  mid_quality_count: number
+  low_quality_count: number
+}
+
 // 闲鱼登录状态
 // logged_in: 是否已登录闲鱼
 // user_info: 登录用户信息（可选）
@@ -109,7 +137,7 @@ export interface ValuationResult {
   keyword: string
   sample_count: number
   algorithm: AlgorithmResult | null
-  quality_summary: QualitySummary | null
+  quality_summary: SSEQualitySummary | null
   samples: SampleItem[]
   llm_results: LlmResult[]
   bargains: BargainItem[]
@@ -195,6 +223,7 @@ export interface ValuationStep {
 // 估价任务（支持多任务并行）
 // id: 任务唯一 ID
 // keyword: 搜索关键词
+// models: 本次估价使用的模型列表
 // loading: 是否正在处理
 // error: 错误信息（若有）
 // result: 完整估价结果（完成后填充）
@@ -202,9 +231,9 @@ export interface ValuationStep {
 // steps: 步骤列表（流程展示）
 // partial: 流式过程中逐步积累的中间结果（实时展示用）
 export interface ValuationTask {
-  // id: 任务唯一 ID
   id: string
   keyword: string
+  models: string[]
   loading: boolean
   error: string
   result: ValuationResult | null
@@ -214,7 +243,7 @@ export interface ValuationTask {
     keyword: string
     sample_count: number
     algorithm: AlgorithmResult | null
-    quality_summary: QualitySummary | null
+    quality_summary: SSEQualitySummary | null
     llm_results: LlmResult[]
     samples: SampleItem[]
     bargains: BargainItem[]
