@@ -1,0 +1,53 @@
+{
+  "timestamp": "2026-04-14 21:03:01",
+  "samples_checked": [
+    {
+      "title": "无标题",
+      "price": "无价格",
+      "has_xd_tag": false
+    },
+    {
+      "title": "无标题",
+      "price": "无价格",
+      "has_xd_tag": false
+    },
+    {
+      "title": "无标题",
+      "price": "无价格",
+      "has_xd_tag": false
+    },
+    {
+      "title": "无标题",
+      "price": "无价格",
+      "has_xd_tag": false
+    },
+    {
+      "title": "无标题",
+      "price": "无价格",
+      "has_xd_tag": false
+    }
+  ],
+  "xd_card_found": [],
+  "issues": [],
+  "screenshots": [
+    "d:/cursor项目文件/估二手/test_results/deep_test_20260414_210039/01_homepage.png",
+    "d:/cursor项目文件/估二手/test_results/deep_test_20260414_210039/02_search_富士_J150.png",
+    "d:/cursor项目文件/估二手/test_results/deep_test_20260414_210039/02_search_富士_JX680.png",
+    "d:/cursor项目文件/估二手/test_results/deep_test_20260414_210039/02_search_奥林巴斯_TG.png",
+    "d:/cursor项目文件/估二手/test_results/deep_test_20260414_210039/03_multiple_tasks.png",
+    "d:/cursor项目文件/估二手/test_results/deep_test_20260414_210039/04_valuation_results.png",
+    "d:/cursor项目文件/估二手/test_results/deep_test_20260414_210039/05_samples_before.png",
+    "d:/cursor项目文件/估二手/test_results/deep_test_20260414_210039/06_samples_list.png",
+    "d:/cursor项目文件/估二手/test_results/deep_test_20260414_210039/07_bargains_page.png",
+    "d:/cursor项目文件/估二手/test_results/deep_test_20260414_210039/08_bargains_detail.png",
+    "d:/cursor项目文件/估二手/test_results/deep_test_20260414_210039/09_links_check.png",
+    "d:/cursor项目文件/估二手/test_results/deep_test_20260414_210039/10_xd_card_check.png"
+  ],
+  "summary": {
+    "total_samples": 5,
+    "xd_card_samples": 0,
+    "xd_card_items": 0,
+    "total_issues": 0,
+    "total_screenshots": 12
+  }
+}

@@ -151,9 +151,12 @@ def _phone_model_mismatch(keyword: str, title: str) -> bool:
 
 def _extract_ccd_brand(text: str) -> str:
     low = (text or "").lower()
+    # 先检测明确的品牌关键词，确保准确性
     for brand, aliases in CCD_BRANDS.items():
-        if any(alias in low for alias in aliases):
-            return brand
+        for alias in aliases:
+            # 使用单词边界匹配，避免误匹配（如"sony"不能匹配到"fujisony"）
+            if re.search(r'\b' + re.escape(alias) + r'\b', low):
+                return brand
     return ""
 
 

@@ -1,0 +1,55 @@
+{
+  "timestamp": "2026-04-14 20:48:14",
+  "total": 7,
+  "passed": 4,
+  "failed": 2,
+  "warnings": 1,
+  "results": [
+    {
+      "name": "前端服务访问",
+      "status": "pass",
+      "details": "前端服务正常响应"
+    },
+    {
+      "name": "后端API连接",
+      "status": "pass",
+      "details": "后端API正常响应"
+    },
+    {
+      "name": "首页元素检查",
+      "status": "warning",
+      "details": "估价按钮 ✓; 模型选择 ✓; ",
+      "issues": [
+        "搜索框 未找到"
+      ]
+    },
+    {
+      "name": "估价流程测试",
+      "status": "fail",
+      "details": "",
+      "issues": [
+        "未找到搜索框"
+      ]
+    },
+    {
+      "name": "捡漏页面测试",
+      "status": "pass",
+      "details": "捡漏页面加载成功; ",
+      "issues": []
+    },
+    {
+      "name": "历史页面测试",
+      "status": "pass",
+      "details": "历史页面加载成功; ",
+      "issues": []
+    },
+    {
+      "name": "XD卡识别功能",
+      "status": "fail",
+      "details": "",
+      "issues": [
+        "搜索框未找到"
+      ]
+    }
+  ]
+}

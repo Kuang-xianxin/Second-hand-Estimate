@@ -1,0 +1,58 @@
+{
+  "timestamp": "2026-04-14 20:50:02",
+  "total": 8,
+  "passed": 8,
+  "failed": 0,
+  "warnings": 0,
+  "results": [
+    {
+      "name": "前端服务访问",
+      "status": "pass",
+      "details": "前端服务响应正常 (HTTP 200)",
+      "errors": []
+    },
+    {
+      "name": "后端API连接",
+      "status": "pass",
+      "details": "后端API正常响应",
+      "errors": []
+    },
+    {
+      "name": "首页元素检查",
+      "status": "pass",
+      "details": "搜索框 [OK]; 估价按钮 [OK]; 模型选择按钮 [OK]; 页面标题 [OK]; 标题正确: 二手商品智能估价",
+      "issues": []
+    },
+    {
+      "name": "估价流程测试",
+      "status": "pass",
+      "details": "搜索框已找到; 'SD卡 64G' [OK]; 估价按钮 [OK]; 'iPhone 14' [OK]; 估价按钮 [OK]; 'XD卡 2G' [OK]; 估价按钮 [OK]; ",
+      "issues": []
+    },
+    {
+      "name": "模型选择功能",
+      "status": "pass",
+      "details": "找到 3 个模型按钮; 点击 DeepSeek [OK]; 点击 通义千问 [OK]; ",
+      "issues": []
+    },
+    {
+      "name": "捡漏页面测试",
+      "status": "pass",
+      "details": "捡漏页面加载成功; ",
+      "issues": []
+    },
+    {
+      "name": "历史页面测试",
+      "status": "pass",
+      "details": "历史页面加载成功; ",
+      "issues": []
+    },
+    {
+      "name": "XD卡搜索测试",
+      "status": "pass",
+      "details": "'XD卡' [OK]; 'XD卡 2G' [OK]; '富士 XD卡' [OK]; '奥林巴斯 XD卡' [OK]; 'SM卡' [OK]; 'xD卡' [OK]; 成功输入 6/6 个关键词, 找到 1 个建议元素",
+      "issues": []
+    }
+  ],
+  "console_errors": []
+}
