@@ -1,0 +1,9 @@
+- generic [active] [ref=e1]:
+  - img "闲鱼站点Logo" [ref=e3]
+  - generic [ref=e5]:
+    - img [ref=e6]
+    - generic [ref=e7]: 非法访问
+    - generic [ref=e8]: 为了保障您的体验，请使用正常浏览器访问闲鱼~
+    - generic [ref=e9]:
+      - generic [ref=e10] [cursor=pointer]: 关闭
+      - generic [ref=e11] [cursor=pointer]: 反馈问题
