@@ -24,6 +24,7 @@ const state = reactive({
   checkingLogin: false,               // 是否正在检测登录态（防止重复检测）
   showLoginModal: false,             // 是否显示登录引导弹窗
   openingLogin: false,                // 是否正在打开登录页面（控制按钮 loading）
+  ccdMarketOpen: false,               // 市场行情下拉是否展开
   selectedModels: ['deepseek'] as string[],  // 当前选中的大模型列表
 })
 
@@ -217,6 +218,7 @@ async function stopCurrentTask() {
 
   try {
     await stopValuateTask(task.id)
+    
   } catch {
     // ignore
   }
@@ -476,7 +478,7 @@ onMounted(() => {
         <button class="task-btn stop" @click="stopCurrentTask"
           :disabled="!state.loading || !state.currentTaskId">停止当前估价</button>
       </div>
-      <div class="login-tip">
+      <div v-if="!state.isLoggedIn"  class="login-tip">
         <div class="login-tip-title">请先完成一次闲鱼登录授权</div>
       </div>
       <div v-if="state.showLoginModal" class="login-modal-mask">
@@ -509,91 +511,53 @@ onMounted(() => {
     <section class="ccd-market-section">
       <div class="ccd-market-header">
         <span class="ccd-market-icon">📷</span>
-        <span class="ccd-market-title">CCD相机市场行情</span>
-        <span class="ccd-market-date">数据来源：闲鱼真实成交</span>
+        <span class="ccd-market-title">配件情况</span>
+        <span class="ccd-market-date">数据来源：闲鱼，1688，拼多多</span>
       </div>
-      <div class="ccd-market-tip">
-        <span class="trend-info">📊 热门IXUS系列普遍在¥500-1300，旗舰S90/G7可达¥850-1388</span>
-      </div>
-      <div class="ccd-market-grid">
-        <div class="ccd-market-card hot">
-          <div class="card-title">🔥 顶级热门（¥800+）</div>
-          <div class="card-items">
-            <div class="market-item"><span class="item-name">佳能 S90</span><span class="item-price">¥1150</span></div>
-            <div class="market-item"><span class="item-name">佳能 G7</span><span class="item-price">¥850-980</span></div>
-            <div class="market-item"><span class="item-name">佳能 G9</span><span class="item-price">¥850</span></div>
-            <div class="market-item"><span class="item-name">佳能 A630</span><span class="item-price">¥900</span></div>
-            <div class="market-item"><span class="item-name">佳能 A610</span><span class="item-price">¥900</span></div>
-            <div class="market-item"><span class="item-name">佳能 A95</span><span class="item-price">¥700-730</span></div>
-            <div class="market-item"><span class="item-name">佳能 A620</span><span class="item-price">¥750</span></div>
-            <div class="market-item"><span class="item-name">佳能 IXUS 230</span><span class="item-price">¥1300</span></div>
-            <div class="market-item"><span class="item-name">佳能 IXUS 210</span><span class="item-price">¥1000</span></div>
-            <div class="market-item"><span class="item-name">松下 LX3</span><span class="item-price">¥520-580</span></div>
+      <div class="ccd-market-list">
+        <div class="ccd-market-dropdown" :class="{ open: state.ccdMarketOpen }">
+          <div class="dropdown-header" @click="state.ccdMarketOpen = !state.ccdMarketOpen">
+            <span class="dropdown-arrow">{{ state.ccdMarketOpen ? '▼' : '▶' }}</span>
+            <span class="dropdown-label">配件与内存卡行情（点击展开）</span>
           </div>
-        </div>
-        <div class="ccd-market-card mid">
-          <div class="card-title">📊 中等热门（¥400-800）</div>
-          <div class="card-items">
-            <div class="market-item"><span class="item-name">佳能 IXUS 155</span><span class="item-price">¥880</span></div>
-            <div class="market-item"><span class="item-name">佳能 IXUS 125</span><span class="item-price">¥1188</span></div>
-            <div class="market-item"><span class="item-name">佳能 IXUS 120</span><span class="item-price">¥1080</span></div>
-            <div class="market-item"><span class="item-name">佳能 IXUS 95</span><span class="item-price">¥830</span></div>
-            <div class="market-item"><span class="item-name">佳能 IXUS 80/85</span><span class="item-price">¥700-838</span></div>
-            <div class="market-item"><span class="item-name">佳能 SX40</span><span class="item-price">¥830</span></div>
-            <div class="market-item"><span class="item-name">索尼 W830</span><span class="item-price">¥500-628</span></div>
-            <div class="market-item"><span class="item-name">尼康 S9500</span><span class="item-price">¥888</span></div>
-            <div class="market-item"><span class="item-name">尼康 P300</span><span class="item-price">¥750</span></div>
-            <div class="market-item"><span class="item-name">富士 F50fd</span><span class="item-price">¥708</span></div>
-          </div>
-        </div>
-        <div class="ccd-market-card low">
-          <div class="card-title">💡 入门实惠（¥300-400）</div>
-          <div class="card-items">
-            <div class="market-item"><span class="item-name">索尼 T500</span><span class="item-price">¥380</span></div>
-            <div class="market-item"><span class="item-name">索尼 T900</span><span class="item-price">¥360</span></div>
-            <div class="market-item"><span class="item-name">索尼 T200</span><span class="item-price">¥350</span></div>
-            <div class="market-item"><span class="item-name">奥林巴斯 μ750</span><span class="item-price">¥350-480</span></div>
-            <div class="market-item"><span class="item-name">奥林巴斯 TG850</span><span class="item-price">¥580</span></div>
-            <div class="market-item"><span class="item-name">奥林巴斯 FE-3000</span><span class="item-price">¥360-385</span></div>
-            <div class="market-item"><span class="item-name">卡西欧 Z750</span><span class="item-price">¥330-380</span></div>
-            <div class="market-item"><span class="item-name">松下 FX30</span><span class="item-price">¥488</span></div>
-            <div class="market-item"><span class="item-name">三星 DV150F</span><span class="item-price">¥700-800</span></div>
-          </div>
-        </div>
-        <div class="ccd-market-card card">
-          <div class="card-title">🔋 配件行情</div>
-          <div class="card-items">
-            <div class="market-item card-type"><span class="item-name">读卡器</span></div>
-            <div class="market-item"><span class="item-name">　SD卡读卡器</span><span class="item-price">¥1.5</span></div>
-            <div class="market-item"><span class="item-name">　6合1读卡器</span><span class="item-price">¥6</span></div>
-            <div class="market-item"><span class="item-name">　万能充</span><span class="item-price">¥2.5</span></div>
-            <div class="market-item card-type"><span class="item-name">卡套</span></div>
-            <div class="market-item"><span class="item-name">　XD卡卡套</span><span class="item-price">¥15</span></div>
-            <div class="market-item"><span class="item-name">　索尼长棒卡套</span><span class="item-price">¥11</span></div>
-            <div class="market-item"><span class="item-name">　索尼短棒卡套</span><span class="item-price">¥10</span></div>
-            <div class="market-item card-type"><span class="item-name">电池</span></div>
-            <div class="market-item"><span class="item-name">　金霸王5号</span><span class="item-price">¥10/对</span></div>
-            <div class="market-item"><span class="item-name">　1.5V霸浮</span><span class="item-price">¥9.8/对</span></div>
-          </div>
-        </div>
-        <div class="ccd-market-card card">
-          <div class="card-title">💾 内存卡行情</div>
-          <div class="card-items">
-            <div class="market-item card-type"><span class="item-name">XD卡(富士/奥林巴斯)</span><span class="item-note">值钱！</span></div>
-            <div class="market-item"><span class="item-name">　256MB</span><span class="item-price">¥90-150</span></div>
-            <div class="market-item"><span class="item-name">　512MB</span><span class="item-price">¥100-180</span></div>
-            <div class="market-item"><span class="item-name">　1GB</span><span class="item-price">¥120-200</span></div>
-            <div class="market-item card-type"><span class="item-name">MS卡长棒(索尼专用)</span><span class="item-note">值钱！</span></div>
-            <div class="market-item"><span class="item-name">　4MB</span><span class="item-price">¥16</span></div>
-            <div class="market-item"><span class="item-name">　8MB</span><span class="item-price">¥25</span></div>
-            <div class="market-item"><span class="item-name">　16MB</span><span class="item-price">¥30</span></div>
-            <div class="market-item"><span class="item-name">　32MB</span><span class="item-price">¥40</span></div>
-            <div class="market-item"><span class="item-name">　64MB</span><span class="item-price">¥60</span></div>
-            <div class="market-item"><span class="item-name">　128MB</span><span class="item-price">¥80</span></div>
-            <div class="market-item card-type"><span class="item-name">MS卡短棒</span><span class="item-note">同规格少¥5-20</span></div>
-            <div class="market-item card-type"><span class="item-name">SD卡(佳能/尼康)</span><span class="item-note warn">不值钱</span></div>
-            <div class="market-item"><span class="item-name">　2GB</span><span class="item-price">¥10-15</span></div>
-            <div class="market-item"><span class="item-name">　4GB</span><span class="item-price">¥15-25</span></div>
+          <div class="dropdown-body">
+            <div class="ccd-market-grid">
+              <div class="ccd-market-card card">
+                <div class="card-title">🔋 配件行情</div>
+                <div class="card-items">
+                  <div class="market-item card-type"><span class="item-name">读卡器</span></div>
+                  <div class="market-item"><span class="item-name">　SD卡读卡器</span><span class="item-price">¥1.5</span></div>
+                  <div class="market-item"><span class="item-name">　6合1读卡器</span><span class="item-price">¥6</span></div>
+                  <div class="market-item"><span class="item-name">　万能充</span><span class="item-price">¥2.5</span></div>
+                  <div class="market-item card-type"><span class="item-name">卡套</span></div>
+                  <div class="market-item"><span class="item-name">　XD卡卡套</span><span class="item-price">¥15</span></div>
+                  <div class="market-item"><span class="item-name">　索尼长棒卡套</span><span class="item-price">¥11</span></div>
+                  <div class="market-item"><span class="item-name">　索尼短棒卡套</span><span class="item-price">¥10</span></div>
+                  <div class="market-item card-type"><span class="item-name">电池</span></div>
+                  <div class="market-item"><span class="item-name">　1.5V霸浮</span><span class="item-price">¥9.8/对</span></div>
+                </div>
+              </div>
+              <div class="ccd-market-card card">
+                <div class="card-title">💾 内存卡行情</div>
+                <div class="card-items">
+                  <div class="market-item card-type"><span class="item-name">XD卡(富士/奥林巴斯)</span><span class="item-note">值钱！</span></div>
+                  <div class="market-item"><span class="item-name">　256MB</span><span class="item-price">¥90-150</span></div>
+                  <div class="market-item"><span class="item-name">　512MB</span><span class="item-price">¥100-180</span></div>
+                  <div class="market-item"><span class="item-name">　1GB</span><span class="item-price">¥120-200</span></div>
+                  <div class="market-item card-type"><span class="item-name">MS卡长棒(索尼专用)</span><span class="item-note">值钱！</span></div>
+                  <div class="market-item"><span class="item-name">　4MB</span><span class="item-price">¥16</span></div>
+                  <div class="market-item"><span class="item-name">　8MB</span><span class="item-price">¥25</span></div>
+                  <div class="market-item"><span class="item-name">　16MB</span><span class="item-price">¥30</span></div>
+                  <div class="market-item"><span class="item-name">　32MB</span><span class="item-price">¥40</span></div>
+                  <div class="market-item"><span class="item-name">　64MB</span><span class="item-price">¥60</span></div>
+                  <div class="market-item"><span class="item-name">　128MB</span><span class="item-price">¥80</span></div>
+                  <div class="market-item card-type"><span class="item-name">MS卡短棒</span><span class="item-note">同规格少¥5-20</span></div>
+                  <div class="market-item card-type"><span class="item-name">SD卡(佳能/尼康)</span><span class="item-note warn">不值钱</span></div>
+                  <div class="market-item"><span class="item-name">　2GB</span><span class="item-price">¥10-15</span></div>
+                  <div class="market-item"><span class="item-name">　4GB</span><span class="item-price">¥10-20</span></div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1724,11 +1688,59 @@ onMounted(() => {
   color: #ff8800;
 }
 
+.ccd-market-list {
+  margin-bottom: 12px;
+}
+
+.ccd-market-dropdown {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.dropdown-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg3);
+  cursor: pointer;
+  font-size: 13px;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.dropdown-header:hover {
+  background: rgba(232, 197, 71, 0.08);
+}
+
+.dropdown-arrow {
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.dropdown-label {
+  color: var(--text2);
+}
+
+.dropdown-body {
+  display: none;
+  padding: 14px;
+  background: var(--bg2);
+}
+
+.ccd-market-dropdown.open .dropdown-body {
+  display: block;
+}
+
+.ccd-market-dropdown.open .dropdown-header {
+  border-bottom: 1px solid var(--border);
+}
+
 .ccd-market-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
-  margin-bottom: 16px;
 }
 
 .ccd-market-card {

@@ -10,7 +10,7 @@ const isDark = ref(true)
 // 切换深色/浅色主题，更新 body class 并保存偏好到 localStorage
 function toggleTheme() {
   isDark.value = !isDark.value
-  document.body.classList.toggle('light', !isDark.value)
+  document.body.classList.toggle('light')
   localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
 }
 

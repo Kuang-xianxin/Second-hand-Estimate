@@ -3,6 +3,7 @@
 ## 一、模型选择（HomeView.vue）
 
 ### 1.1 模型选项定义
+
 [HomeView.vue 第 27-35 行](file:///d:/cursor项目文件/估二手/frontend/src/views/HomeView.vue#L27)
 
 ```javascript
@@ -14,6 +15,7 @@ const AVAILABLE_MODELS = [
 ```
 
 ### 1.2 模型选择 UI 按钮
+
 [HomeView.vue 第 462-473 行](file:///d:/cursor项目文件/估二手/frontend/src/views/HomeView.vue#L462)
 
 ```vue
@@ -32,6 +34,7 @@ const AVAILABLE_MODELS = [
 ```
 
 ### 1.3 模型按钮样式
+
 [HomeView.vue 第 682-703 行](file:///d:/cursor项目文件/估二手/frontend/src/views/HomeView.vue#L682)
 
 ```css
@@ -59,6 +62,7 @@ const AVAILABLE_MODELS = [
 ## 二、SSE 请求发起（HomeView.vue）
 
 ### 2.1 doValuate() 函数定义
+
 [HomeView.vue 第 245-268 行](file:///d:/cursor项目文件/估二手/frontend/src/views/HomeView.vue#L245)
 
 ```javascript
@@ -89,6 +93,7 @@ async function doValuate() {
 ```
 
 ### 2.2 SSE 流读取解析
+
 [HomeView.vue 第 274-290 行](file:///d:/cursor项目文件/估二手/frontend/src/views/HomeView.vue#L274)
 
 ```javascript
@@ -107,6 +112,7 @@ while (true) {
 ```
 
 ### 2.3 SSE 事件类型处理
+
 [HomeView.vue 第 291-390 行](file:///d:/cursor项目文件/估二手/frontend/src/views/HomeView.vue#L291)
 
 ```javascript
@@ -151,6 +157,7 @@ switch (evtType) {
 ## 三、后端 SSE 接口（valuate.py）
 
 ### 3.1 SSE 流式接口定义
+
 [valuate.py 第 656-671 行](file:///d:/cursor项目文件/估二手/backend/app/api/valuate.py#L656)
 
 ```python
@@ -170,6 +177,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
 ```
 
 ### 3.2 LLM 结果转换
+
 [valuate.py 第 127-138 行](file:///d:/cursor项目文件/估二手/backend/app/api/valuate.py#L127)
 
 ```python
@@ -192,6 +200,7 @@ def _to_valuation_for_stream(data: dict, model_name: str) -> dict:
 ## 四、数据类型定义（types/index.ts）
 
 ### 4.1 SSE 事件类型定义
+
 [types/index.ts 第 1-27 行](file:///d:/cursor项目文件/估二手/frontend/src/types/index.ts#L1)
 
 ```typescript

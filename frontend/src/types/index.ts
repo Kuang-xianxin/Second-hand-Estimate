@@ -134,7 +134,7 @@ export interface BargainItem {
 // xd_card_model: 是否为 XD 卡相机型号
 // xd_card_bundle_count: XD 卡捆绑销售数量
 export interface ValuationResult {
-  keyword: string
+  keyword: string 
   sample_count: number
   algorithm: AlgorithmResult | null
   quality_summary: SSEQualitySummary | null
