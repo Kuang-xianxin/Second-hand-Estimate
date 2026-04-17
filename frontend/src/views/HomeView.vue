@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, computed } from 'vue'
 import { getLoginState, openXianyuLogin, stopValuateTask } from '@/api'
-import type { ValuationTask, ValuationStep, ValuationResult, LlmResult, SampleItem, BargainItem, AlgorithmResult, QualitySummary, SSEEventType, SSEQualitySummary } from '../types'
+import type { ValuationTask, ValuationStep, ValuationResult, LlmResult, SampleItem, BargainItem, AlgorithmResult, SSEEventType, SSEQualitySummary } from '../types'
 
 defineOptions({ name: 'HomeView' })
 
@@ -88,12 +88,13 @@ function selectTask(taskId: string) {
   const task = state.tasks.find(t => t.id === taskId)  // 根据 ID 找到对应任务
   if (!task) return
   state.currentTaskId = taskId
+  state.activeController=task.controller
   syncViewByTask(task)
 }
 
 // 删除指定任务；若任务正在进行则先调用 stopValuateTask 并 abort 请求
 // 若删除的是当前选中任务，则自动切换到下一个任务或清空视图
-// 引用处: 模板中 task-tab-remove 按钮点击事件
+// 引用处: 模板中 task-tab-remove 按钮点击事件          
 async function removeTask(taskId: string) {
   const idx = state.tasks.findIndex(t => t.id === taskId)  // 找到任务在列表中的索引，没找到返回-1
 
