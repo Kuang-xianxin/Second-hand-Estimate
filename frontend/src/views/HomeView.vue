@@ -51,7 +51,8 @@ function buildTask(keywordText: string, models: string[]): ValuationTask {
     loading: true,          // 任务初始为加载中状态
     error: '',              // 初始无错误
     result: null,           // 完整结果待 SSE 完成后填充
-    xd_confirmed: false,    // 初始未确认 XD 卡信息
+    xd_confirmed: false,
+        // 初始未确认 XD 卡信息
     steps: reactive([{
       id: Date.now() + Math.random(),  // 步骤唯一 ID
       text: '正在爬取闲鱼数据...',       // 初始步骤描述
@@ -59,6 +60,7 @@ function buildTask(keywordText: string, models: string[]): ValuationTask {
       filteredOut: [],                 // 被筛除的商品列表
       expanded: false,                 // 是否展开详情
     }]),
+    controller: null,
     partial: reactive({
       keyword: keywordText,  // 搜索关键词
       sample_count: 0,                            // 有效样本数量
@@ -93,9 +95,12 @@ function selectTask(taskId: string) {
 // 若删除的是当前选中任务，则自动切换到下一个任务或清空视图
 // 引用处: 模板中 task-tab-remove 按钮点击事件
 async function removeTask(taskId: string) {
-  const idx = state.tasks.findIndex(t => t.id === taskId)  // 找到任务在列表中的索引
+  const idx = state.tasks.findIndex(t => t.id === taskId)  // 找到任务在列表中的索引，没找到返回-1
+
+
   if (idx < 0) return
   const target = state.tasks[idx]  // 待删除的任务对象
+  state.activeController=target.controller
 
   if (target.loading) {
     try {
@@ -237,6 +242,11 @@ async function stopCurrentTask() {
     filteredOut: [],
     expanded: false,
   })
+  task.steps.forEach(step => {
+    if(step.status === 'pending') {
+    step.status = 'error'
+    }
+  });
   syncViewByTask(task)
 }
 
@@ -257,8 +267,8 @@ async function doValuate() {
   selectTask(task.id)                            // 自动选中新创建的任务
   state.keyword = ''                             // 清空搜索框
 
-  const controller = new AbortController()      // 用于手动中断 fetch 请求
-  state.activeController = controller
+  task.controller = new AbortController()      // 用于手动中断 fetch 请求
+  state.activeController = task.controller
 
   try {
     await new Promise<void>((resolve, reject) => {
@@ -266,7 +276,7 @@ async function doValuate() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ keyword: task.keyword, models: state.selectedModels }),
-        signal: controller.signal,
+        signal: state.tasks[0].controller?.signal,
       }).then(async (resp) => {
         if (!resp.ok) {
           const txt = await resp.text()
@@ -405,7 +415,10 @@ async function doValuate() {
               }
               case 'error': {
                 reject(new Error((payload.detail as string) || 'SSE 错误'))
-                break
+                task.steps.forEach((step,index)=>{
+                  if(step.status==='pending')
+                  step.status='error'
+                })
               }
             }
 
@@ -436,7 +449,7 @@ async function doValuate() {
     }
   } finally {
     task.loading = false
-    if (state.activeController === controller) state.activeController = null
+    if (state.activeController === task.controller) state.activeController = null
     if (task.id === state.currentTaskId) syncViewByTask(task)
   }
 }
@@ -499,7 +512,8 @@ onMounted(() => {
         <button v-for="t in state.tasks" :key="t.id" class="task-tab" :class="{ active: t.id === state.currentTaskId }"
           @click="selectTask(t.id)">
           <span class="task-tab-keyword">{{ t.keyword }}</span>
-          <span class="task-tab-status" :class="t.loading ? 'running' : (t.error ? 'failed' : 'done')">
+          <!--class动态绑定决定字体颜色-->
+          <span class="task-tab-status" :class="t.loading ? 'running' : (t.error ? 'failed' : 'done')">   
             {{ t.loading ? '进行中' : (t.error ? '失败' : '完成') }}
           </span>
           <span class="task-tab-remove" title="删除该任务" @click.stop="removeTask(t.id)">×</span>
@@ -572,9 +586,10 @@ onMounted(() => {
     <section v-if="currentTask?.steps.length" class="steps-section">
       <div class="steps-list">
         <template v-for="step in currentTask.steps" :key="step.id">
+           <!--逻辑与当前面的值为零的时候直接短路，当有筛除数组有元素的时候才展开-->
           <div class="step-item"
             :class="['step-' + (step.status), step.filteredOut?.length ? 'step-expandable' : '']"
-            @click="step.filteredOut?.length && (step.expanded = !step.expanded)">
+            @click="step.filteredOut?.length && (step.expanded = !step.expanded)"> 
             <span class="step-icon">
               <span v-if="step.status === 'done'">✓</span>
               <span v-else-if="step.status === 'error'">✗</span>
@@ -1493,12 +1508,17 @@ onMounted(() => {
   border: 2px solid var(--text2);
   border-top-color: var(--accent);
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: spin 1.2s linear infinite;
 }
-
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.15);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
   }
 }
 

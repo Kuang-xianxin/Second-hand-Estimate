@@ -239,6 +239,7 @@ export interface ValuationTask {
   result: ValuationResult | null
   xd_confirmed: boolean
   steps: ValuationStep[]
+  controller: AbortController | null
   partial: {
     keyword: string
     sample_count: number

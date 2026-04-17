@@ -1,4 +1,3 @@
-import axios from 'axios'
 import type {
   LoginState,
   ValuationResult,
@@ -6,6 +5,7 @@ import type {
   HistoryDetail,
   BargainAlert,
 } from '@/types'
+import axios from 'axios'
 
 // axios 实例，配置基础路径为 /api，超时 5 分钟（用于流式 SSE 请求）
 const http = axios.create({
