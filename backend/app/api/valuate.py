@@ -426,13 +426,13 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
                     item.quality_score = max(20.0, item.quality_score - 20)
                     item.quality_flags.append("图片判断:疑似非整机")
 
-    # 5. XD卡机型检测（爬取完成后，通过样本标题/描述中"自备xd卡"/"xd卡另购"等关键词判断）
-    is_xd_model = False
-    xd_card_bonus: dict = {}
-    camera_like_for_xd = bool(re.search(
-        r"(canon|nikon|sony|佳能|索尼|尼康|富士|松下|奥林巴斯|sx\s*\d|rx\s*\d|a\s*\d)",
-        keyword, flags=re.IGNORECASE
-    ))
+        # 5. xD卡机型检测（两级判断：关键词预判 + 样本描述兜底）
+        is_xd_model = False
+        xd_card_bonus: dict = {}
+        camera_like_for_xd = bool(re.search(
+            r"(canon|nikon|sony|佳能|索尼|尼康|富士|松下|奥林巴斯|sx\s*\d|rx\s*\d|a\s*\d)",
+            keyword, flags=re.IGNORECASE
+        ))
     # camera_only_items：纯相机商品（不含XD卡捆绑），用于算法估价
     # bundle_infos：含卡捆绑商品详情，用于捡漏阶段叠加卡值
     camera_only_items: list = []
@@ -440,7 +440,7 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
     xd_bundle_count = 0
 
     if camera_like_for_xd:
-        is_xd_model = detect_xd_card_model_from_items(items)
+        is_xd_model = detect_xd_card_model_from_items(items, keyword=keyword)
         if is_xd_model:
             camera_only_items, bundle_infos = strip_xd_card_prices(items)
             xd_bundle_count = len(bundle_infos)
@@ -677,6 +677,22 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             yield f"event: stopped\ndata: {json.dumps({'task_id': task_id, 'detail': '任务已停止'}, ensure_ascii=False)}\n\n"
             _mark_stream_task_finished(task_id)
             return
+
+        # ---- 阶段0：关键词预判 xD 机型（独立步骤，提前到最前面）----
+        from app.services.bargain import detect_xd_card_model_from_items
+        is_xd = detect_xd_card_model_from_items([], keyword=keyword)
+        logger.info(f"[XD预判] keyword={keyword!r} canonized={_canonicalize_keyword(keyword)!r} is_xd={is_xd}")
+        if is_xd:
+            card_price_list = "\n".join([f"  {k}：约¥{v}" for k, v in {"16mb":"50","32mb":"60","64mb":"70","128mb":"108","256mb":"120","512mb":"134","1g":"148","2g":"162"}.items()])
+            xd_pre_text = (
+                f"📌【XD卡提示】关键词命中数据库，该相机为XD卡老机型！\n"
+                f"  ① 相机+内存卡总利润超过¥120即为捡漏\n"
+                f"  ② 带卡商品将排除在估价样本外，只用纯相机价格计算基准价\n"
+                f"  ③ 后续通过样本标题二次确认XD卡捆绑情况\n"
+                f"参考XD卡价格：\n{card_price_list}"
+            )
+            yield f"event: xd_confirmed\ndata: {json.dumps({'text': xd_pre_text, 'from_keyword': True}, ensure_ascii=False)}\n\n"
+
         # ---- 阶段1：爬取 + 算法估价 ----
         crawler = get_crawler()
         compact_keyword = re.sub(r"\s+", "", keyword)
@@ -846,7 +862,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
         xd_bundle_count = 0
 
         if camera_like:
-            is_xd_model = detect_xd_card_model_from_items(items)
+            is_xd_model = detect_xd_card_model_from_items(items, keyword=keyword)
             if is_xd_model:
                 from app.services.bargain import strip_xd_card_prices, _get_xd_card_value
                 camera_only_items, bundle_infos = strip_xd_card_prices(items)

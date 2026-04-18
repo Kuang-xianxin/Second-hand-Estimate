@@ -235,12 +235,39 @@ def _is_model_mismatch(query_keyword: str, item_title: str, category: Literal["p
 # XD 卡相关逻辑
 # ---------------------------------------------------------------------------
 
-def detect_xd_card_model_from_items(items: list) -> bool:
+def detect_xd_card_model_from_items(items: list, keyword: str = "") -> bool:
     """
-    爬取完成后，通过分析商品标题/描述判断相机是否使用 XD 卡。
+    通过关键词预判 + 样本描述兜底，判断相机是否使用 xD 卡。
 
-    判断逻辑：扫描前5条商品，只要有一条明确提到"自备xd卡"即认为是XD卡机型。
+    判断逻辑（两级）：
+
+    1. 关键词预判（高可信）：使用 xD 卡机型数据库直接匹配用户搜索关键词
+       - is_xd_card_model() 会将关键词提取为标准机型标识，与数据库比对
+       - 匹配到 -> 直接返回 True，不再依赖样本描述
+       - 未匹配到 -> 进入第 2 步
+
+    2. 样本描述兜底：当关键词未命中数据库时，扫描商品标题/描述寻找 xD 卡信号
+       - 只要前 5 条样本中有 1 条明确提到 "自备xd卡" 即认为是 xD 卡机型
+       - 适用于数据库中未收录的冷门机型或用户输入了非标准名称的情况
+
+    Args:
+        items: 爬取到的商品列表
+        keyword: 用户搜索关键词（如 "富士 F200EXR"）
+
+    Returns:
+        True: 关键词命中数据库，或样本描述中找到 xD 卡信号
+        False: 均未命中
     """
+    # 第一级：关键词预判（高可信）
+    if keyword:
+        try:
+            from app.services.xd_card_models import is_xd_card_model
+            if is_xd_card_model(keyword):
+                return True
+        except ImportError:
+            pass
+
+    # 第二级：样本描述兜底
     for item in items[:5]:
         text = _item_text(item)
         for pat in XD_MODEL_SIGNAL_PATTERNS:

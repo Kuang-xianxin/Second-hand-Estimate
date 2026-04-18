@@ -329,7 +329,7 @@ async function doValuate() {
               }
               case 'xd_confirmed': {
                 task.xd_confirmed = true
-                task.steps.push({
+                task.steps.unshift({
                   id: Date.now() + Math.random(),
                   text: '【XD卡提示】' + (((payload.text as string) || '').split('\n')[0]),
                   status: 'info',
