@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     deepseek_api_key: Optional[str] = None
     qwen_api_key: Optional[str] = None
     doubao_api_key: Optional[str] = None
+    admin_token: Optional[str] = None
 
     deepseek_model: str = "deepseek-reasoner"
     deepseek_vision_model: str = "deepseek-chat"  # 用于图片分析（非推理模型，支持视觉）

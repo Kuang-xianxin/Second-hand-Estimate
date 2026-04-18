@@ -1,10 +1,11 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
 import webbrowser
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -28,6 +29,13 @@ stream_task_controls: Dict[str, Dict[str, object]] = {}
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 STORAGE_STATE_FILE = BASE_DIR / "xianyu_storage_state.json"
+
+
+def require_admin_token(x_admin_token: Optional[str] = Header(default=None)):
+    if not settings.admin_token:
+        return
+    if x_admin_token != settings.admin_token:
+        raise HTTPException(status_code=403, detail="管理员令牌无效")
 
 
 class ValuateRequest(BaseModel):
@@ -1189,7 +1197,12 @@ async def get_login_state():
 
 
 @router.post('/open-xianyu-login')
-async def open_xianyu_login():
+async def open_xianyu_login(_admin=Depends(require_admin_token)):
+    if os.getenv("RENDER"):
+        raise HTTPException(
+            status_code=400,
+            detail="云端部署环境无法直接弹出闲鱼登录页，请在本地完成登录后使用管理员接口重新同步 Cookie。",
+        )
     ok = webbrowser.open('https://www.goofish.com/', new=2)
     if not ok:
         raise HTTPException(status_code=500, detail='打开闲鱼登录页失败，请手动访问 https://www.goofish.com/')
@@ -1201,7 +1214,7 @@ class SyncCookieRequest(BaseModel):
 
 
 @router.post('/sync-cookie')
-async def sync_cookie(req: SyncCookieRequest):
+async def sync_cookie(req: SyncCookieRequest, _admin=Depends(require_admin_token)):
     crawler = get_crawler()
     crawler.save_cookie(req.cookie)
     return {'ok': True, 'message': 'Cookie已更新'}
