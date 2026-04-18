@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Tuple
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 GOOD_CONDITION_KEYWORDS = [
@@ -59,9 +61,12 @@ ACCESSORY_KEYWORDS = [
     "维修", "拆机", "零件", "主板", "传感器", "配件", "说明书", "电子版", "pdf",
 ]
 
-BASE_DIR = pathlib.Path(__file__).resolve().parents[2]
-COOKIE_FILE = BASE_DIR / "xianyu_cookies.txt"
-STORAGE_STATE_FILE = BASE_DIR / "xianyu_storage_state.json"
+def _cookie_file() -> pathlib.Path:
+    return pathlib.Path(settings.cookie_file).expanduser()
+
+
+def _storage_state_file() -> pathlib.Path:
+    return pathlib.Path(settings.storage_state_file).expanduser()
 
 
 @dataclass
@@ -93,20 +98,24 @@ class XianyuCrawler:
             logger.info(f"{prefix}: <无法序列化原始数据: {e}>")
 
     def _load_cookie(self) -> str:
-        if COOKIE_FILE.exists():
-            data = COOKIE_FILE.read_bytes()
+        cookie_file = _cookie_file()
+        if cookie_file.exists():
+            data = cookie_file.read_bytes()
             if data.startswith(b"\xef\xbb\xbf"):
                 data = data[3:]
             return data.decode("utf-8").strip()
         return ""
 
     def save_cookie(self, cookie_str: str):
-        COOKIE_FILE.write_text(cookie_str.strip(), encoding="utf-8")
+        cookie_file = _cookie_file()
+        cookie_file.parent.mkdir(parents=True, exist_ok=True)
+        cookie_file.write_text(cookie_str.strip(), encoding="utf-8")
         self._cookie_str = cookie_str.strip()
         logger.info("Cookie 已保存")
 
     def has_storage_state(self) -> bool:
-        return STORAGE_STATE_FILE.exists() and STORAGE_STATE_FILE.stat().st_size > 0
+        storage_state_file = _storage_state_file()
+        return storage_state_file.exists() and storage_state_file.stat().st_size > 0
 
     def _parse_cookie_list(self) -> List[dict]:
         cookies = []
@@ -362,7 +371,7 @@ class XianyuCrawler:
             "viewport": {"width": 1280, "height": 800},
         }
         if self.has_storage_state():
-            context_kwargs["storage_state"] = str(STORAGE_STATE_FILE)
+            context_kwargs["storage_state"] = str(_storage_state_file())
             return playwright_browser.new_context(**context_kwargs)
 
         context = playwright_browser.new_context(**context_kwargs)
@@ -461,7 +470,7 @@ class XianyuCrawler:
             "final_count": len(items),
             "quality_score_avg": quality_avg,
             "has_storage_state": self.has_storage_state(),
-            "storage_state_file": str(STORAGE_STATE_FILE),
+            "storage_state_file": str(_storage_state_file()),
             "login_page_hint": login_page_hint,
             "risk_page_hint": risk_page_hint,
         }

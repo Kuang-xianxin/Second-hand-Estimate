@@ -1,8 +1,9 @@
 import pathlib
 from playwright.sync_api import sync_playwright
 
-BASE_DIR = pathlib.Path(__file__).resolve().parent
-STORAGE_STATE_FILE = BASE_DIR / "xianyu_storage_state.json"
+from app.config import settings
+
+STORAGE_STATE_FILE = pathlib.Path(settings.storage_state_file).expanduser()
 
 
 def main():
@@ -18,6 +19,7 @@ def main():
         page = context.new_page()
         page.goto('https://www.goofish.com/', wait_until='domcontentloaded', timeout=30000)
         input("登录完成后按 Enter 保存登录态...")
+        STORAGE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         context.storage_state(path=str(STORAGE_STATE_FILE))
         print(f"登录态已保存到: {STORAGE_STATE_FILE}")
         browser.close()

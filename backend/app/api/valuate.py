@@ -1,10 +1,11 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
 import webbrowser
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -26,8 +27,15 @@ logger = logging.getLogger(__name__)
 # 内存中的流式任务控制器：支持并行估价 + 按任务停止
 stream_task_controls: Dict[str, Dict[str, object]] = {}
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-STORAGE_STATE_FILE = BASE_DIR / "xianyu_storage_state.json"
+def _storage_state_file() -> Path:
+    return Path(settings.storage_state_file).expanduser()
+
+
+def require_admin_token(x_admin_token: Optional[str] = Header(default=None)):
+    if not settings.admin_token:
+        return
+    if x_admin_token != settings.admin_token:
+        raise HTTPException(status_code=403, detail="管理员令牌无效")
 
 
 class ValuateRequest(BaseModel):
@@ -1181,15 +1189,21 @@ async def mark_read(alert_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.get('/login-state')
 async def get_login_state():
-    logged_in = STORAGE_STATE_FILE.exists() and STORAGE_STATE_FILE.stat().st_size > 0
+    storage_state_file = _storage_state_file()
+    logged_in = storage_state_file.exists() and storage_state_file.stat().st_size > 0
     return {
         'logged_in': logged_in,
-        'storage_state_file': str(STORAGE_STATE_FILE),
+        'storage_state_file': str(storage_state_file),
     }
 
 
 @router.post('/open-xianyu-login')
-async def open_xianyu_login():
+async def open_xianyu_login(_admin=Depends(require_admin_token)):
+    if os.getenv("RENDER"):
+        raise HTTPException(
+            status_code=400,
+            detail="云端部署环境无法直接弹出闲鱼登录页，请使用管理员方式同步 Cookie 或上传 xianyu_storage_state.json。",
+        )
     ok = webbrowser.open('https://www.goofish.com/', new=2)
     if not ok:
         raise HTTPException(status_code=500, detail='打开闲鱼登录页失败，请手动访问 https://www.goofish.com/')
@@ -1201,7 +1215,7 @@ class SyncCookieRequest(BaseModel):
 
 
 @router.post('/sync-cookie')
-async def sync_cookie(req: SyncCookieRequest):
+async def sync_cookie(req: SyncCookieRequest, _admin=Depends(require_admin_token)):
     crawler = get_crawler()
     crawler.save_cookie(req.cookie)
     return {'ok': True, 'message': 'Cookie已更新'}
