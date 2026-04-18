@@ -926,7 +926,23 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                         # 成色差+价格偏高：降权（质量分额外扣15）
                         if r.get("price_penalty"):
                             item.quality_score = max(10.0, item.quality_score - 15)
-                    yield f"event: step\ndata: {json.dumps({'text': f'成色分析完成', 'status': 'done', 'filtered_out': [{'title': it.title, 'price': it.price, 'reason': '、'.join(img_map[it.item_id].get("image_flags", ["成色分析"])) if img_map.get(it.item_id) else '成色分析'} for it in cond_items if img_map.get(it.item_id)]}, ensure_ascii=False)}\n\n"
+                    condition_filtered_out = []
+                    for analyzed_item in cond_items:
+                        analyzed = img_map.get(analyzed_item.item_id)
+                        if not analyzed:
+                            continue
+                        flags = analyzed.get("image_flags", []) or ["成色分析"]
+                        condition_filtered_out.append({
+                            "title": analyzed_item.title,
+                            "price": analyzed_item.price,
+                            "reason": "、".join(flags),
+                        })
+                    condition_done_payload = {
+                        "text": "成色分析完成",
+                        "status": "done",
+                        "filtered_out": condition_filtered_out,
+                    }
+                    yield f"event: step\ndata: {json.dumps(condition_done_payload, ensure_ascii=False)}\n\n"
 
         # 捡漏检测（xd_card_bonus 已通过文字+图片检测填充完毕）
         bargains = detect_bargains(items, pricing.base_price, query_keyword=keyword, xd_card_bonus=xd_card_bonus if xd_card_bonus else None)
