@@ -19,7 +19,6 @@ backend/xianyu_*.json
 *.db
 debug_*.json
 debug_*.html
-render-data/
 
 # ===== Node / Frontend =====
 node_modules/
