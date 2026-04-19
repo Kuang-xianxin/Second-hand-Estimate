@@ -1142,9 +1142,247 @@ onMounted(() => {
   margin-bottom: 32px;
 }
 
-@media (max-width: 700px) {
+@media (max-width: 768px) {
+  .home {
+    max-width: 100%;
+  }
+
+  .search-section {
+    margin-bottom: 32px;
+  }
+
+  .page-title {
+    font-size: 24px;
+    letter-spacing: 2px;
+  }
+
+  .page-sub {
+    font-size: 13px;
+    margin-bottom: 18px;
+  }
+
+  .search-box {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .search-input {
+    padding: 12px 16px;
+    font-size: 15px;
+  }
+
+  .search-btn {
+    width: 100%;
+    padding: 14px 0;
+    font-size: 15px;
+  }
+
+  .model-selector {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .model-btn {
+    padding: 5px 12px;
+    font-size: 12px;
+  }
+
+  .task-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .task-btn {
+    width: 100%;
+    padding: 12px 14px;
+    font-size: 14px;
+  }
+
+  .login-modal {
+    padding: 16px 16px 14px;
+  }
+
+  .login-modal-title {
+    font-size: 18px;
+  }
+
+  .login-modal-text {
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .login-modal-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .modal-btn {
+    width: 100%;
+    padding: 12px;
+    text-align: center;
+  }
+
+  .task-tabs {
+    gap: 6px;
+  }
+
+  .task-tab {
+    padding: 6px 8px 6px 10px;
+    font-size: 11px;
+  }
+
+  .task-tab-keyword {
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 算法参考响应式 */
+  .algo-reference {
+    padding: 14px 16px;
+  }
+
+  .algo-ref-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .algo-ref-hint {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .algo-ref-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  /* 样本列表响应式 */
+  .sample-item {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 12px;
+  }
+
+  .sample-thumb {
+    width: 56px;
+    height: 56px;
+  }
+
+  .sample-thumb-placeholder {
+    width: 56px;
+    height: 56px;
+  }
+
+  .sample-main {
+    width: 100%;
+    order: 1;
+  }
+
+  .sample-title {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+
+  .sample-price {
+    font-size: 18px;
+    align-self: flex-end;
+    margin-top: -44px;
+    order: 2;
+  }
+
+  .sample-meta {
+    gap: 8px;
+    font-size: 11px;
+  }
+
+  /* 步骤列表响应式 */
+  .steps-section {
+    margin-bottom: 24px;
+  }
+
+  .steps-list {
+    padding: 14px 16px;
+  }
+
+  .step-item {
+    font-size: 12px;
+    gap: 8px;
+  }
+
+  .step-expand-hint {
+    font-size: 10px;
+  }
+
+  /* 捡漏列表响应式 */
+  .bargain-item {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 14px;
+  }
+
+  .bargain-prices {
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .bargain-actual {
+    font-size: 15px;
+  }
+
+  /* CCD 市场区域响应式 */
+  .ccd-market-section {
+    margin-top: 24px;
+    padding: 16px;
+  }
+
+  .ccd-market-header {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .ccd-market-date {
+    width: 100%;
+    margin-left: 0;
+    font-size: 10px;
+  }
+
+  .ccd-market-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ccd-market-footer {
+    padding-top: 10px;
+  }
+
+  .market-insight {
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 480px) {
   .llm-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .final-title {
+    font-size: 14px;
+    letter-spacing: 3px;
+  }
+
+  .section-title {
+    font-size: 12px;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+    padding-bottom: 6px;
   }
 }
 

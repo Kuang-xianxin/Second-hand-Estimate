@@ -24,6 +24,15 @@ body.light {
   --border: #d0d0d8;
   --text: #1a1a1e;
   --text2: #6a6a72;
+  --disclaimer-bg: rgba(224, 92, 92, 0.06);
+  --disclaimer-border: rgba(224, 92, 92, 0.15);
+  --disclaimer-text: rgba(26, 26, 30, 0.45);
+}
+
+body:not(.light) {
+  --disclaimer-bg: rgba(224, 92, 92, 0.08);
+  --disclaimer-border: rgba(224, 92, 92, 0.2);
+  --disclaimer-text: rgba(255, 255, 255, 0.4);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -55,3 +64,20 @@ input, textarea {
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg2); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ========== 全局响应式布局 ========== */
+@media (max-width: 768px) {
+  html { font-size: 14px; }
+}
+
+/* ========== 移动端滚动优化 ========== */
+@media (max-width: 768px) {
+  * { -webkit-tap-highlight-color: transparent; }
+  body { min-height: 100dvh; }
+  input, button, a { min-height: 44px; }
+}
+
+/* ========== 防止iOS缩放 ========== */
+@media screen and (max-width: 768px) {
+  input, select, textarea { font-size: 16px !important; }
+}

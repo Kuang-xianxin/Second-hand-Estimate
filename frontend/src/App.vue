@@ -56,6 +56,14 @@ onMounted(() => {
         </button>
       </div>
     </nav>
+
+    <div class="disclaimer-bar">
+      <span>
+        本网站数据来源于公开的闲鱼平台，仅供个人学习与估价参考，不构成任何交易承诺。
+        请遵守闲鱼平台服务条款，合理使用。
+      </span>
+    </div>
+
     <main class="main-content">
       <router-view v-slot="{ Component }">
         <keep-alive include="HomeView">
@@ -181,11 +189,89 @@ onMounted(() => {
   justify-content: center;
 }
 
+.disclaimer-bar {
+  background: var(--disclaimer-bg);
+  border-bottom: 1px solid var(--disclaimer-border);
+  padding: 6px 32px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--disclaimer-text);
+  letter-spacing: 0.3px;
+}
+
 .main-content {
   flex: 1;
   padding: 40px 32px;
   max-width: 1100px;
   width: 100%;
   margin: 0 auto;
+}
+
+/* ========== 导航栏移动端响应式 ========== */
+@media (max-width: 600px) {
+  .navbar {
+    height: auto;
+    min-height: 52px;
+    padding: 10px 16px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .nav-brand {
+    gap: 8px;
+  }
+
+  .brand-icon {
+    width: 30px;
+    height: 30px;
+    font-size: 16px;
+  }
+
+  .brand-name {
+    font-size: 18px;
+    letter-spacing: 1px;
+  }
+
+  .nav-actions {
+    gap: 8px;
+  }
+
+  .nav-link {
+    padding: 5px 12px;
+    font-size: 13px;
+  }
+
+  .theme-toggle {
+    padding: 5px 8px;
+    font-size: 14px;
+    min-height: 36px;
+    min-width: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .badge {
+    top: 0;
+    right: 0;
+    width: 14px;
+    height: 14px;
+    font-size: 9px;
+  }
+
+  .disclaimer-bar {
+    padding: 5px 16px;
+    font-size: 10px;
+  }
+
+  .main-content {
+    padding: 20px 16px;
+  }
+}
+
+@media (max-width: 400px) {
+  .brand-name {
+    display: none;
+  }
 }
 </style>

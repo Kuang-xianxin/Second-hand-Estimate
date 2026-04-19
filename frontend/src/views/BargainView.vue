@@ -189,4 +189,62 @@ function formatTime(iso: string): string {
   padding: 2px 8px;
   border-radius: 4px;
 }
+
+@media (max-width: 600px) {
+  .bargain-view {
+    max-width: 100%;
+  }
+
+  .bargain-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .page-title {
+    font-size: 20px;
+    letter-spacing: 1px;
+  }
+
+  .alert-card {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 14px 16px;
+  }
+
+  .alert-left {
+    width: 100%;
+  }
+
+  .alert-title {
+    max-width: 100%;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+
+  .alert-right {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  .alert-price {
+    font-size: 18px;
+  }
+
+  .alert-est {
+    flex: 1;
+  }
+
+  .alert-profit {
+    font-size: 12px;
+    padding: 2px 6px;
+  }
+}
 </style>

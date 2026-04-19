@@ -1,0 +1,32 @@
+{
+  "version": "2.0",
+  "envId": "{{envId}}",
+  "framework": {
+    "name": "guessr-frontend",
+    "plugins": {
+      "hosting": {
+        "cloudPath": "/",
+        "outputPath": "dist",
+        "ignore": [
+          "node_modules",
+          ".git",
+          ".vscode",
+          "src",
+          "public",
+          "*.ts",
+          "*.tsx",
+          "*.vue",
+          "*.js",
+          "*.json",
+          "tsconfig*.json",
+          "vite.config.*",
+          "eslint.config.*",
+          ".dockerignore",
+          "Dockerfile*",
+          ".env*",
+          "index.html"
+        ]
+      }
+    }
+  }
+}

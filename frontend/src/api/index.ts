@@ -7,9 +7,14 @@ import type {
 } from '@/types'
 import axios from 'axios'
 
-// axios 实例，配置基础路径为 /api，超时 5 分钟（用于流式 SSE 请求）
+// API 基础地址：
+//   开发环境 (npm run dev): Vite dev server 代理到 /api → http://localhost:8000
+//   生产环境: 使用环境变量 VITE_API_BASE_URL（由部署平台注入）
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api'
+
+// axios 实例，配置基础路径，超时 5 分钟（用于流式 SSE 请求）
 const http = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE,
   timeout: 300000,
 })
 

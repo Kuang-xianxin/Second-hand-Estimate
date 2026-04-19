@@ -271,4 +271,95 @@ function formatTime(iso: string): string {
 .bm-title { flex: 1; font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bm-price { font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: var(--red); }
 .bm-profit { font-family: var(--font-mono); font-size: 12px; color: var(--green); background: rgba(92,184,122,0.1); padding: 2px 6px; border-radius: 4px; }
+
+@media (max-width: 600px) {
+  .history-view {
+    max-width: 100%;
+  }
+
+  .page-title {
+    font-size: 20px;
+    letter-spacing: 1px;
+    margin-bottom: 20px;
+  }
+
+  .record-card {
+    padding: 14px 16px;
+  }
+
+  .record-top {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .record-keyword {
+    font-size: 15px;
+  }
+
+  .record-prices {
+    gap: 10px;
+    font-size: 12px;
+    flex-wrap: wrap;
+  }
+
+  .r-base {
+    font-size: 18px;
+  }
+
+  .r-range {
+    font-size: 12px;
+  }
+
+  .r-sample {
+    font-size: 10px;
+    margin-left: 0;
+  }
+
+  .detail-panel {
+    margin-top: 12px;
+    padding-top: 12px;
+  }
+
+  .llm-row {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .llm-model {
+    width: 100%;
+    font-size: 10px;
+  }
+
+  .llm-price {
+    font-size: 14px;
+  }
+
+  .llm-range,
+  .llm-conf {
+    font-size: 11px;
+  }
+
+  .llm-conf {
+    margin-left: 0;
+  }
+
+  .price-tags {
+    gap: 4px;
+  }
+
+  .price-tag {
+    font-size: 11px;
+    padding: 2px 6px;
+  }
+
+  .bargain-mini-item {
+    padding: 8px 10px;
+  }
+
+  .bm-title {
+    font-size: 12px;
+  }
+}
 </style>
