@@ -7,6 +7,7 @@ export type SSEEventType =
   | 'start'         // 服务端返回任务真实 ID
   | 'step'          // 爬取/筛选过程中的进度步骤
   | 'xd_confirmed'   // 检测到 XD 卡相机
+  | 'masd1_info'    // 检测到 MASD-1 卡套兼容机型
   | 'base'          // 爬取完成，推送基准价和样本数据
   | 'llm'           // 单个大模型估价结果
   | 'done'          // 所有流程完成
@@ -142,6 +143,8 @@ export interface ValuationResult {
   bargains: BargainItem[]
   xd_card_model?: boolean
   xd_card_bundle_count?: number
+  masd1_compatible?: boolean       // 是否支持 MASD-1 xD 卡套
+  masd1_panorama_blocked?: boolean  // 使用卡套时全景功能是否受限
 }
 
 // 单条估价历史记录（列表展示用）
@@ -217,6 +220,9 @@ export interface ValuationStep {
   expanded: boolean
   is_xd_hint?: boolean
   xd_hint_full?: string
+  is_masd1_hint?: boolean
+  masd1_hint_full?: string
+  masd1_panorama_blocked?: boolean
 }
 
 // 估价任务（支持多任务并行）
@@ -237,6 +243,7 @@ export interface ValuationTask {
   error: string
   result: ValuationResult | null
   xd_confirmed: boolean
+  masd1_confirmed: boolean  // 是否已收到 MASD-1 卡套兼容提示
   steps: ValuationStep[]
   controller: AbortController | null
   partial: {
@@ -249,5 +256,7 @@ export interface ValuationTask {
     bargains: BargainItem[]
     xd_card_model?: boolean
     xd_card_bundle_count?: number
+    masd1_compatible?: boolean
+    masd1_panorama_blocked?: boolean
   }
 }

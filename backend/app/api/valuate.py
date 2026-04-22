@@ -19,6 +19,7 @@ from app.crawler.xianyu import get_crawler
 from app.services.pricing import calculate_price
 from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, analyze_item_images, check_xd_card_from_images, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
 from app.services.bargain import detect_bargains, filter_target_items, filter_target_items_with_reasons, detect_xd_card_model_from_items, strip_xd_card_prices, merge_xd_bundle_with_vision
+from app.services.xd_card_models import is_masd1_compatible_model
 from app.config import settings
 
 router = APIRouter(prefix="/api", tags=["估价"])
@@ -433,7 +434,13 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
             r"(canon|nikon|sony|佳能|索尼|尼康|富士|松下|奥林巴斯|sx\s*\d|rx\s*\d|a\s*\d)",
             keyword, flags=re.IGNORECASE
         ))
-    # camera_only_items：纯相机商品（不含XD卡捆绑），用于算法估价
+        # MASD-1 卡套兼容检测
+        masd1_compatible = False
+        masd1_panorama_blocked = False
+        if camera_like_for_xd:
+            masd1_compatible, masd1_panorama_blocked = is_masd1_compatible_model(keyword)
+
+        # camera_only_items：纯相机商品（不含XD卡捆绑），用于算法估价
     # bundle_infos：含卡捆绑商品详情，用于捡漏阶段叠加卡值
     camera_only_items: list = []
     bundle_infos: list = []
@@ -614,6 +621,8 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
         ],
         "xd_card_model": is_xd_model,
         "xd_card_bundle_count": xd_bundle_count,
+        "masd1_compatible": masd1_compatible,
+        "masd1_panorama_blocked": masd1_panorama_blocked,
     }
 
 
@@ -680,8 +689,13 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
 
         # ---- 阶段0：关键词预判 xD 机型（独立步骤，提前到最前面）----
         from app.services.bargain import detect_xd_card_model_from_items
+        from app.services.xd_card_models import is_masd1_compatible_model
         is_xd = detect_xd_card_model_from_items([], keyword=keyword)
         logger.info(f"[XD预判] keyword={keyword!r} canonized={_canonicalize_keyword(keyword)!r} is_xd={is_xd}")
+        masd1_compatible = False
+        masd1_panorama_blocked = False
+        if is_xd:
+            masd1_compatible, masd1_panorama_blocked = is_masd1_compatible_model(keyword)
         if is_xd:
             card_price_list = "\n".join([f"  {k}：约¥{v}" for k, v in {"16mb":"50","32mb":"60","64mb":"70","128mb":"108","256mb":"120","512mb":"134","1g":"148","2g":"162"}.items()])
             xd_pre_text = (
@@ -692,6 +706,16 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                 f"参考XD卡价格：\n{card_price_list}"
             )
             yield f"event: xd_confirmed\ndata: {json.dumps({'text': xd_pre_text, 'from_keyword': True}, ensure_ascii=False)}\n\n"
+            if masd1_compatible:
+                panorama_hint = "⚠️ 注意：此机型使用卡套后全景功能将不可用，需原生xD卡" if masd1_panorama_blocked else "✅ 此机型支持MASD-1卡套，可用廉价microSD替代xD卡"
+                masd1_text = (
+                    f"🟡【MASD-1卡套提示】{panorama_hint}\n"
+                    f"  奥林巴斯xD卡套（MASD-1）可以让相机使用microSD卡，替代昂贵稀缺的xD卡\n"
+                    f"  卡套价格约2-10元，4GB microSD约5-10元，合计不到20元搞定\n"
+                    f"  闲鱼搜索「MASD-1」或「xD卡套」即可购买\n"
+                    f"  因此此类机型xD卡捆绑价值低于富士机型"
+                )
+                yield f"event: masd1_info\ndata: {json.dumps({'text': masd1_text, 'panorama_blocked': masd1_panorama_blocked}, ensure_ascii=False)}\n\n"
 
         # ---- 阶段1：爬取 + 算法估价 ----
         crawler = get_crawler()
@@ -969,6 +993,8 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             "sample_count": len(items),
             "xd_card_model": is_xd_model,
             "xd_card_bundle_count": xd_bundle_count,
+            "masd1_compatible": masd1_compatible,
+            "masd1_panorama_blocked": masd1_panorama_blocked,
             "algorithm": {
                 "base_price": pricing.base_price,
                 "price_min": pricing.price_min,

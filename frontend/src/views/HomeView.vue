@@ -51,8 +51,8 @@ function buildTask(keywordText: string, models: string[]): ValuationTask {
     loading: true,          // 任务初始为加载中状态
     error: '',              // 初始无错误
     result: null,           // 完整结果待 SSE 完成后填充
-    xd_confirmed: false,
-        // 初始未确认 XD 卡信息
+    xd_confirmed: false,    // 初始未确认 XD 卡信息
+    masd1_confirmed: false, // 初始未确认 MASD-1 卡套兼容信息
     steps: reactive([{
       id: Date.now() + Math.random(),  // 步骤唯一 ID
       text: '正在爬取闲鱼数据...',       // 初始步骤描述
@@ -340,6 +340,20 @@ async function doValuate() {
                 })
                 break
               }
+              case 'masd1_info': {
+                task.masd1_confirmed = true
+                task.steps.unshift({
+                  id: Date.now() + Math.random(),
+                  text: '【MASD-1卡套】' + (((payload.text as string) || '').split('\n')[0]),
+                  status: 'info',
+                  filteredOut: [],
+                  expanded: false,
+                  is_masd1_hint: true,
+                  masd1_hint_full: payload.text as string | undefined,
+                  masd1_panorama_blocked: (payload as Record<string, unknown>).panorama_blocked as boolean | undefined,
+                })
+                break
+              }
               case 'base': {
                 const last = [...task.steps].reverse().find(s => s.status === 'pending')
                 if (last) {
@@ -350,6 +364,8 @@ async function doValuate() {
                 task.partial.sample_count = payload.sample_count as number
                 task.partial.xd_card_model = payload.xd_card_model as boolean | undefined
                 task.partial.xd_card_bundle_count = payload.xd_card_bundle_count as number | undefined
+                task.partial.masd1_compatible = payload.masd1_compatible as boolean | undefined
+                task.partial.masd1_panorama_blocked = payload.masd1_panorama_blocked as boolean | undefined
                 task.partial.algorithm = payload.algorithm as AlgorithmResult | null
                 task.partial.quality_summary = payload.quality_summary as SSEQualitySummary | null
                 task.partial.samples = payload.samples as SampleItem[]
@@ -620,6 +636,27 @@ onMounted(() => {
         </template>
       </div>
     </section>
+
+    <!-- MASD-1 卡套醒目提示横幅 -->
+    <div v-if="(currentTask?.masd1_confirmed || currentTask?.partial?.masd1_compatible) && currentTask?.partial?.masd1_compatible" class="masd1-banner">
+      <div class="masd1-banner-icon">💡</div>
+      <div class="masd1-banner-content">
+        <div class="masd1-banner-title">
+          <span class="masd1-tag" :class="currentTask.partial.masd1_panorama_blocked ? 'tag-warn' : 'tag-ok'">
+            {{ currentTask.partial.masd1_panorama_blocked ? '⚠️ 全景受限' : '✅ 支持卡套' }}
+          </span>
+          <span>此机型可使用 MASD-1 xD 卡套</span>
+        </div>
+        <div class="masd1-banner-body">
+          奥林巴斯 xD 卡套（MASD-1）可以让相机使用 microSD 卡替代稀缺昂贵的 xD 卡。
+          卡套约 ¥2-10 元，4GB microSD 约 ¥5-10 元，合计不到 ¥20 元即可搞定存储问题。
+          <span v-if="currentTask.partial.masd1_panorama_blocked" class="masd1-warn">
+            但此机型使用卡套后全景功能将不可用，需原生 xD 卡才能使用全景。
+          </span>
+        </div>
+        <div class="masd1-banner-tip">闲鱼搜索「MASD-1」或「xD 卡套」即可购买，此类机型 xD 卡捆绑价值较低</div>
+      </div>
+    </div>
 
     <section v-if="currentTask?.result" class="result-section">
       <div class="final-valuation-section">
@@ -2101,5 +2138,113 @@ onMounted(() => {
 
 .light .insight-text {
   color: #8a6d00;
+}
+
+/* MASD-1 卡套醒目提示横幅 */
+.masd1-banner {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  background: linear-gradient(135deg, rgba(255, 136, 0, 0.08), rgba(255, 170, 0, 0.05));
+  border: 1px solid rgba(255, 136, 0, 0.35);
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-bottom: 24px;
+  box-shadow: 0 2px 12px rgba(255, 136, 0, 0.12);
+}
+
+.masd1-banner-icon {
+  font-size: 24px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.masd1-banner-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.masd1-banner-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ff8800;
+  margin-bottom: 6px;
+}
+
+.masd1-tag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.masd1-tag.tag-ok {
+  background: rgba(92, 184, 122, 0.2);
+  color: #5cc87a;
+  border: 1px solid rgba(92, 184, 122, 0.4);
+}
+
+.masd1-tag.tag-warn {
+  background: rgba(255, 136, 0, 0.18);
+  color: #ff8800;
+  border: 1px solid rgba(255, 136, 0, 0.4);
+}
+
+.masd1-banner-body {
+  font-size: 12px;
+  color: #cc6600;
+  line-height: 1.6;
+  margin-bottom: 6px;
+}
+
+.light .masd1-banner-body {
+  color: #8a5500;
+}
+
+.masd1-warn {
+  display: block;
+  margin-top: 4px;
+  color: #e05c5c;
+  font-weight: 600;
+}
+
+.light .masd1-warn {
+  color: #c02020;
+}
+
+.masd1-banner-tip {
+  font-size: 11px;
+  color: #996600;
+  line-height: 1.5;
+}
+
+.light .masd1-banner-tip {
+  color: #7a5200;
+}
+
+@media (max-width: 600px) {
+  .masd1-banner {
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 14px;
+    margin-bottom: 18px;
+  }
+
+  .masd1-banner-title {
+    font-size: 13px;
+  }
+
+  .masd1-banner-body {
+    font-size: 11px;
+  }
+
+  .masd1-banner-tip {
+    font-size: 10px;
+  }
 }
 </style>

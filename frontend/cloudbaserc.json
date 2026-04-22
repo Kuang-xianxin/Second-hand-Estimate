@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "envId": "{{envId}}",
+  "envId": "cloud1-5grjfpfy89feeed3-06da6854",
   "framework": {
     "name": "guessr-frontend",
     "plugins": {

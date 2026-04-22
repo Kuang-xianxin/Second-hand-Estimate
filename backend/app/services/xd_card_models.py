@@ -371,6 +371,124 @@ OLYMPUS_ALL_XD_VARIANTS: set[str] = (
 
 
 # ============================================================================
+# MASD-1 卡套兼容相机（奥林巴斯 xD 卡相机中支持 microSD+卡套替代的机型）
+# 数据来源：Olympus 官方 MASD-1 兼容列表（2010年8月更新）+ Retro Digitals / Memorypack
+#
+# 分类说明：
+# - 可用 MASD-1 全景功能不受限（✅）
+# - 使用 MASD-1 时全景功能不可用（⚠️），需原生 xD 卡才能用全景
+# ============================================================================
+
+# μ / Stylus 系列 MASD-1 兼容（17款）
+OLYMPUS_MASD1_MU_STYLUS: set[str] = {
+    # ⚠️ 全景功能不可用
+    "mu 840", "stylus 840",
+    "mu 850sw", "stylus 850sw",
+    "mu 1010", "stylus 1010",
+    "mu 1020", "stylus 1020",
+    "mu 1030sw", "stylus 1030sw",
+    "mu 1040", "stylus 1040",
+    "mu 1050sw", "stylus 1050sw",
+    "mu 1060", "stylus 1060",
+    # ✅ 全景功能可用
+    "mu 1070", "stylus 1070",
+    "mu 5000", "stylus 5000",
+    "mu 550wp", "stylus 550wp",
+    "mu 7000", "stylus 7000",
+    "mu 7010", "stylus 7010",
+    "mu 7020", "stylus 7020",
+    "mu 9000", "stylus 9000",
+    "mu tough-6000", "stylus tough-6000", "tough-6000", "tough6000",
+    "mu tough-8000", "stylus tough-8000", "tough-8000", "tough8000",
+}
+
+OLYMPUS_MASD1_MU_STYLUS_VARIANTS: set[str] = {
+    "olympus mu 840", "olympus stylus 840",
+    "olympus mu 850sw", "olympus stylus 850sw",
+    "olympus mu 1010", "olympus stylus 1010",
+    "olympus mu 1020", "olympus stylus 1020",
+    "olympus mu 1030sw", "olympus stylus 1030sw",
+    "olympus mu 1040", "olympus stylus 1040",
+    "olympus mu 1050sw", "olympus stylus 1050sw",
+    "olympus mu 1060", "olympus stylus 1060",
+    "olympus mu 1070", "olympus stylus 1070",
+    "olympus mu 5000", "olympus stylus 5000",
+    "olympus mu 550wp", "olympus stylus 550wp",
+    "olympus mu 7000", "olympus stylus 7000",
+    "olympus mu 7010", "olympus stylus 7010",
+    "olympus mu 7020", "olympus stylus 7020",
+    "olympus mu 9000", "olympus stylus 9000",
+    "olympus mu tough-6000", "olympus stylus tough-6000",
+    "olympus mu tough-8000", "olympus stylus tough-8000",
+}
+
+# FE 系列 MASD-1 兼容（13款）
+OLYMPUS_MASD1_FE: set[str] = {
+    # ⚠️ 全景功能不可用
+    "fe-20",
+    "fe-360",
+    "fe-370",
+    # ✅ 全景功能可用
+    "fe-25",
+    "fe-26",
+    "fe-45",
+    "fe-46",
+    "fe-3000",
+    "fe-3010",
+    "fe-4000",
+    "fe-4010",
+    "fe-5000",
+    "fe-5010",
+    "fe-5020",
+}
+
+OLYMPUS_MASD1_FE_VARIANTS: set[str] = {
+    "olympus fe-20",
+    "olympus fe-25",
+    "olympus fe-26",
+    "olympus fe-45",
+    "olympus fe-46",
+    "olympus fe-3000",
+    "olympus fe-3010",
+    "olympus fe-360",
+    "olympus fe-370",
+    "olympus fe-4000",
+    "olympus fe-4010",
+    "olympus fe-5000",
+    "olympus fe-5010",
+    "olympus fe-5020",
+}
+
+# SP 系列 MASD-1 兼容（3款）
+OLYMPUS_MASD1_SP: set[str] = {
+    # ⚠️ 全景功能不可用
+    "sp-565uz",
+    # ✅ 全景功能可用
+    "sp-590uz",
+    "sp-700",
+}
+
+OLYMPUS_MASD1_SP_VARIANTS: set[str] = {
+    "olympus sp-565uz",
+    "olympus sp-590uz",
+    "olympus sp-700",
+}
+
+# MASD-1 兼容全集
+OLYMPUS_MASD1_ALL: set[str] = (
+    OLYMPUS_MASD1_MU_STYLUS
+    | OLYMPUS_MASD1_FE
+    | OLYMPUS_MASD1_SP
+)
+
+OLYMPUS_MASD1_ALL_VARIANTS: set[str] = (
+    OLYMPUS_MASD1_MU_STYLUS_VARIANTS
+    | OLYMPUS_MASD1_FE_VARIANTS
+    | OLYMPUS_MASD1_SP_VARIANTS
+)
+
+
+# ============================================================================
 # 合并全集
 # ============================================================================
 
@@ -559,3 +677,90 @@ def is_xd_card_model(keyword: str) -> bool:
             return True
 
     return False
+
+
+def is_masd1_compatible_model(keyword: str) -> tuple[bool, bool]:
+    """
+    判断相机机型是否支持 MASD-1 xD 卡套（microSD 替代方案）。
+
+    仅对已确认的 xD 卡相机进行检测，富士机型不支持 MASD-1。
+
+    判断逻辑：
+    1. 首先确认是否为 xD 卡机型（调用 is_xd_card_model）
+    2. 如果是奥林巴斯 xD 机型，再进一步匹配 MASD-1 兼容数据库
+    3. 如果是富士 xD 机型，直接返回 False（富士不支持 MASD-1）
+
+    数据来源：
+    - Olympus 官网 MASD-1 兼容列表（2010年8月更新）
+    - Retro Digitals / Memorypack 兼容数据
+
+    Args:
+        keyword: 用户输入的搜索关键词，如 "奥林巴斯 μ 1030SW"、"olympus fe-3000"
+
+    Returns:
+        tuple[bool, bool]: (is_compatible, panorama_blocked)
+            - is_compatible: True 表示支持 MASD-1 卡套
+            - panorama_blocked: True 表示使用卡套时全景功能不可用（仅在 is_compatible=True 时有效）
+        例如：(True, False) = 支持卡套，全景正常
+              (True, True)  = 支持卡套，但全景功能不可用
+              (False, False) = 不支持 MASD-1 卡套
+    """
+    if not keyword:
+        return False, False
+
+    if not is_xd_card_model(keyword):
+        return False, False
+
+    tokens = _extract_model_tokens(keyword)
+    normalized_tokens = {_normalize(t) for t in tokens}
+
+    if not hasattr(is_masd1_compatible_model, "_norm_models"):
+        is_masd1_compatible_model._norm_models = {_normalize(k) for k in OLYMPUS_MASD1_ALL}
+        is_masd1_compatible_model._norm_variants = {_normalize(k) for k in OLYMPUS_MASD1_ALL_VARIANTS}
+
+    matched_token = None
+    for token in normalized_tokens:
+        if token in is_masd1_compatible_model._norm_models:
+            matched_token = token
+            break
+        if token in is_masd1_compatible_model._norm_variants:
+            matched_token = token
+            break
+
+    if matched_token is None:
+        for token in tokens:
+            if token in OLYMPUS_MASD1_ALL_VARIANTS:
+                matched_token = token
+                break
+
+    if matched_token is None:
+        normalized = _normalize(keyword)
+        for model_norm in is_masd1_compatible_model._norm_models:
+            if model_norm in normalized or normalized in model_norm:
+                matched_token = model_norm
+                break
+
+    if matched_token is None:
+        return False, False
+
+    PANORAMA_BLOCKED_MODELS = {
+        "mu840", "stylus840",
+        "mu850sw", "stylus850sw",
+        "mu1010", "stylus1010",
+        "mu1020", "stylus1020",
+        "mu1030sw", "stylus1030sw",
+        "mu1040", "stylus1040",
+        "mu1050sw", "stylus1050sw",
+        "mu1060", "stylus1060",
+        "fe20",
+        "fe360",
+        "fe370",
+        "sp565uz",
+    }
+
+    norm_matched = _normalize(matched_token)
+    for blocked in PANORAMA_BLOCKED_MODELS:
+        if blocked in norm_matched or norm_matched in blocked:
+            return True, True
+
+    return True, False
