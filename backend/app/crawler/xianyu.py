@@ -25,6 +25,8 @@ from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+CHROMIUM_PATH = "/home/ubuntu/.cache/ms-playwright/chromium-1208/chrome-linux64/chrome"
+
 GOOD_CONDITION_KEYWORDS = [
     "9成新", "95新", "9.5成新", "99新", "9.9成新", "全新", "近全新", "9成以上", "八九成新", "89新",
 ]
@@ -300,7 +302,7 @@ class XianyuCrawler:
         images: List[str] = []
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"])
+                browser = p.chromium.launch(headless=True, executable_path=CHROMIUM_PATH, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled"])
                 context = self._build_context(browser)
                 page = context.new_page()
 
@@ -401,7 +403,7 @@ class XianyuCrawler:
         risk_page_hint = False
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"])
+            browser = p.chromium.launch(headless=True, executable_path=CHROMIUM_PATH, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled"])
             context = self._build_context(browser)
             page = context.new_page()
 
