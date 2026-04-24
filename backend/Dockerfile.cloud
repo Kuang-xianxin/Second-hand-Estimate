@@ -33,14 +33,12 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 RUN python -m playwright install --with-deps chromium \
-    && playwright install-deps chromium \
-    && rm -rf /root/.cache/ms-playwright
+    && playwright install-deps chromium
 
 COPY . .
 
-# 预下载模型缓存（可选，加速冷启动）
-ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/ms-playwright/chromium-*
-
 EXPOSE 8000
+
+ENV PLAYWRIGHT_CHROMIUM_PATH=/root/.cache/ms-playwright/chromium-*/chrome-linux/chrome
 
 CMD ["python", "main.py"]

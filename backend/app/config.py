@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     admin_token: Optional[str] = None
 
     deepseek_model: str = "deepseek-reasoner"
-    deepseek_vision_model: str = "deepseek-chat"  # 用于图片分析（非推理模型，支持视觉）
+    deepseek_vision_model: str = "deepseek-chat"
     qwen_model: str = "qwen-max"
     qwen_vision_model: str = "qwen-vl-max"
     qwen_vision_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode"
@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         extra = "ignore"
+        # 兼容大小写：同时支持大写和小写环境变量名
+        # 例如 DEEPSEEK_API_KEY 和 deepseek_api_key 都能识别
+        case_sensitive = False
 
 
 settings = Settings()

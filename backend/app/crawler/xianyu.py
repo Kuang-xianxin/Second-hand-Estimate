@@ -23,9 +23,35 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Tuple
 
+import os
+import sys
+
 logger = logging.getLogger(__name__)
 
-CHROMIUM_PATH = "/home/ubuntu/.cache/ms-playwright/chromium-1208/chrome-linux64/chrome"
+# Playwright Chromium 路径跨平台自动检测
+# 策略：
+#   1. 优先使用 PLAYWRIGHT_CHROMIUM_PATH 环境变量
+#   2. Linux 生产环境：尝试 glob 匹配（支持通配符）
+#   3. Windows/macOS：使用 Playwright 自带的 executable_path() API
+_chromium_path = os.environ.get("PLAYWRIGHT_CHROMIUM_PATH", "")
+
+# Linux：使用 glob 匹配通配符路径（如 /root/.cache/ms-playwright/chromium-*/chrome-linux/chrome）
+if sys.platform != "win32" and _chromium_path:
+    import glob as _glob
+    matches = _glob.glob(_chromium_path)
+    if matches:
+        _chromium_path = matches[0]
+
+# Windows/macOS 或环境变量未设置：使用 Playwright API 获取浏览器路径
+if not _chromium_path:
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            _chromium_path = p.chromium.executable_path()
+    except Exception:
+        _chromium_path = ""
+
+CHROMIUM_PATH = _chromium_path if _chromium_path else None
 
 GOOD_CONDITION_KEYWORDS = [
     "9成新", "95新", "9.5成新", "99新", "9.9成新", "全新", "近全新", "9成以上", "八九成新", "89新",
@@ -302,7 +328,7 @@ class XianyuCrawler:
         images: List[str] = []
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, executable_path=CHROMIUM_PATH, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled"])
+                browser = p.chromium.launch(headless=True, executable_path=CHROMIUM_PATH if CHROMIUM_PATH else None, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"])
                 context = self._build_context(browser)
                 page = context.new_page()
 
@@ -312,7 +338,15 @@ class XianyuCrawler:
                             return
                         if response.status != 200:
                             return
-                        body = response.json()
+                        body_bytes = response.body()
+                        try:
+                            body = json.loads(body_bytes)
+                        except json.JSONDecodeError:
+                            try:
+                                import gzip
+                                body = json.loads(gzip.decompress(body_bytes))
+                            except Exception:
+                                return
                         # 递归搜索所有 picUrl / url / imageUrl 字段
                         def extract_pics(obj, depth=0):
                             if depth > 10 or len(images) >= 6:
@@ -403,9 +437,33 @@ class XianyuCrawler:
         risk_page_hint = False
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, executable_path=CHROMIUM_PATH, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled"])
+            browser = p.chromium.launch(headless=True, executable_path=CHROMIUM_PATH if CHROMIUM_PATH else None, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"])
             context = self._build_context(browser)
             page = context.new_page()
+
+            def _try_decode_body(response_body: bytes) -> Optional[dict]:
+                """尝试解压并解析响应体。"""
+                import gzip
+                try:
+                    return json.loads(response_body)
+                except json.JSONDecodeError:
+                    pass
+                # gzip 魔数：0x1f 0x8b
+                if len(response_body) >= 2 and response_body[:2] == b'\x1f\x8b':
+                    try:
+                        return json.loads(gzip.decompress(response_body))
+                    except Exception:
+                        pass
+                # zlib 压缩（闲鱼部分接口用）
+                if len(response_body) >= 2 and response_body[:2] in (b'\x78\x01', b'\x78\x9c', b'\x78\xda'):
+                    try:
+                        import zlib
+                        return json.loads(zlib.decompress(response_body))
+                    except Exception:
+                        pass
+                # 仍然失败，记录十六进制用于调试
+                logger.debug(f"响应体无法解析为JSON/gzip/zlib，长度={len(response_body)}，前20字节hex={response_body[:20].hex()}")
+                return None
 
             def handle_response(response):
                 try:
@@ -415,7 +473,9 @@ class XianyuCrawler:
                     response_statuses.append({"url": response.url[:140], "status": response.status})
                     if response.status != 200:
                         return
-                    body = response.json()
+                    body = _try_decode_body(response.body())
+                    if body is None:
+                        return
                     ret = body.get("ret") if isinstance(body, dict) else None
                     if isinstance(ret, list) and ret:
                         response_ret_samples.append(" | ".join([str(x) for x in ret[:2]]))

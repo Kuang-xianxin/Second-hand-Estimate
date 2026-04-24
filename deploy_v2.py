@@ -168,6 +168,7 @@ FRONTEND_URL=http://localhost:5173
 CRAWL_INTERVAL_SECONDS=300
 MAX_ITEMS_PER_QUERY=60
 BARGAIN_THRESHOLD=120
+PLAYWRIGHT_CHROMIUM_PATH=/root/.cache/ms-playwright/chromium-*/chrome-linux/chrome
 """
 env_escaped = backend_env.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$').replace('`', '\\`')
 env_cmd = f'cat > /opt/guessr/backend/.env << \'ENVEOF\'\n{backend_env}ENVEOF\nchown ubuntu:ubuntu /opt/guessr/backend/.env\nchmod 600 /opt/guessr/backend/.env'
@@ -225,6 +226,7 @@ After=network.target
 User=ubuntu
 WorkingDirectory=/opt/guessr/backend
 Environment="PATH=/opt/guessr/backend/venv/bin"
+Environment="PLAYWRIGHT_CHROMIUM_PATH=/root/.cache/ms-playwright/chromium-*/chrome-linux/chrome"
 ExecStart=/opt/guessr/backend/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=3
