@@ -383,7 +383,7 @@ async function doValuate() {
               case 'llm': {
                 const last = [...task.steps].reverse().find(s => s.status === 'pending')
                 if (last) last.status = 'done'
-                const modelShort = ((payload.model as string) || '').replace(/^ep-[^-]+-\d+-/, '').slice(0, 24)
+                const modelShort = ((payload.model as string) || '')  .replace(/^ep-[^-]+-\d+-/, '').slice(0, 24)
                 task.steps.push({
                   id: Date.now() + Math.random(),
                   text: payload.error
@@ -2222,6 +2222,7 @@ onMounted(() => {
   color: #996600;
   line-height: 1.5;
 }
+
 
 .light .masd1-banner-tip {
   color: #7a5200;
