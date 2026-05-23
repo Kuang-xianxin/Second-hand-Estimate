@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { onMounted, reactive, computed } from 'vue'
-import { getLoginState, openXianyuLogin, stopValuateTask } from '@/api'
-import type { ValuationTask, ValuationStep, ValuationResult, LlmResult, SampleItem, BargainItem, AlgorithmResult, SSEEventType, SSEQualitySummary } from '../types'
+import { getLoginState, openXianyuLogin, stopValuateTask, getBargainsByKeyword } from '@/api'
+import CrawlProgressBar from '@/components/CrawlProgressBar.vue'
+import SystemStatusPanel from '@/components/SystemStatusPanel.vue'
+import type { ValuationTask, ValuationStep, ValuationResult, LlmResult, SampleItem, BargainItem, AlgorithmResult, SSEEventType, SSEQualitySummary, ConditionalBargainItem } from '../types'
 
 defineOptions({ name: 'HomeView' })
 
@@ -68,7 +70,8 @@ function buildTask(keywordText: string, models: string[]): ValuationTask {
       quality_summary: null,                       // ValuationResult.quality_summary，质量汇总
       llm_results: reactive<LlmResult[]>([]),     // ValuationResult.llm_results，多个大模型估价结果
       samples: reactive<SampleItem[]>([]),         // ValuationResult.samples，参与估价的有效样本
-      bargains: reactive<BargainItem[]>([]),      // ValuationResult.bargains，捡漏机会列表
+      bargains: reactive<BargainItem[]>([]),       // ValuationResult.bargains，捡漏机会列表（SSE流式）
+      conditional_bargains: reactive<ConditionalBargainItem[]>([]), // 条件捡漏（估价结果页底部）
     }),
   }) as ValuationTask
 }
@@ -94,7 +97,7 @@ function selectTask(taskId: string) {
 
 // 删除指定任务；若任务正在进行则先调用 stopValuateTask 并 abort 请求
 // 若删除的是当前选中任务，则自动切换到下一个任务或清空视图
-// 引用处: 模板中 task-tab-remove 按钮点击事件          
+// 引用处: 模板中 task-tab-remove 按钮点击事件
 async function removeTask(taskId: string) {
   const idx = state.tasks.findIndex(t => t.id === taskId)  // 找到任务在列表中的索引，没找到返回-1
 
@@ -224,7 +227,7 @@ async function stopCurrentTask() {
 
   try {
     await stopValuateTask(task.id)
-    
+
   } catch {
     // ignore
   }
@@ -378,6 +381,12 @@ async function doValuate() {
                   filteredOut: [],
                   expanded: false,
                 })
+                // 条件捡漏：搜索完成后从数据库查询该型号捡漏（有捡漏才显示）
+                getBargainsByKeyword(payload.keyword as string).then(data => {
+                  if (data && data.length > 0) {
+                    task.partial.conditional_bargains = data
+                  }
+                }).catch(() => {})
                 break
               }
               case 'llm': {
@@ -524,13 +533,18 @@ onMounted(() => {
           </div>
         </div>
       </div>
+
+      <!-- 数据库概况 + 爬取进度 -->
+      <SystemStatusPanel />
+      <CrawlProgressBar :auto-hide="true" />
+
       <p v-if="state.error" class="error-msg">{{ state.error }}</p>
       <div v-if="state.tasks.length" class="task-tabs">
         <button v-for="t in state.tasks" :key="t.id" class="task-tab" :class="{ active: t.id === state.currentTaskId }"
           @click="selectTask(t.id)">
           <span class="task-tab-keyword">{{ t.keyword }}</span>
           <!--class动态绑定决定字体颜色-->
-          <span class="task-tab-status" :class="t.loading ? 'running' : (t.error ? 'failed' : 'done')">   
+          <span class="task-tab-status" :class="t.loading ? 'running' : (t.error ? 'failed' : 'done')">
             {{ t.loading ? '进行中' : (t.error ? '失败' : '完成') }}
           </span>
           <span class="task-tab-remove" title="删除该任务" @click.stop="removeTask(t.id)">×</span>
@@ -606,7 +620,7 @@ onMounted(() => {
            <!--逻辑与当前面的值为零的时候直接短路，当有筛除数组有元素的时候才展开-->
           <div class="step-item"
             :class="['step-' + (step.status), step.filteredOut?.length ? 'step-expandable' : '']"
-            @click="step.filteredOut?.length && (step.expanded = !step.expanded)"> 
+            @click="step.filteredOut?.length && (step.expanded = !step.expanded)">
             <span class="step-icon">
               <span v-if="step.status === 'done'">✓</span>
               <span v-else-if="step.status === 'error'">✗</span>
@@ -748,6 +762,38 @@ onMounted(() => {
           </div>
         </a>
       </div>
+
+      <!-- 条件捡漏区块：有该型号捡漏才显示，无则完全隐藏 -->
+      <template v-if="currentTask?.partial.conditional_bargains?.length">
+        <div class="section-title bargain-title conditional-title">
+          {{ state.result?.keyword }} 的捡漏机会 <span class="bargain-count">{{ currentTask?.partial.conditional_bargains?.length }}</span>
+          <span class="section-title-hint">来自数据库缓存</span>
+        </div>
+        <div class="bargain-list conditional-bargains">
+          <a
+            v-for="b in currentTask?.partial.conditional_bargains"
+            :key="b.item_id"
+            :href="b.url || '#'"
+            target="_blank"
+            class="bargain-item conditional-bargain-item"
+            :class="{ 'bargain-item-xd': b.is_xd_card }"
+            rel="noopener noreferrer"
+          >
+            <div v-if="b.is_xd_card" class="xd-card-badge">
+              含XD卡 {{ b.xd_card_size ? b.xd_card_size.toUpperCase() : '' }}
+              <span class="xd-card-value">+约¥{{ b.xd_card_value }}卡值</span>
+            </div>
+            <div class="bargain-title-text">{{ b.title }}</div>
+            <div class="bargain-prices">
+              <span class="bargain-actual">¥{{ b.price }}</span>
+              <span class="bargain-est">估价 ¥{{ b.base_price }}</span>
+              <span class="bargain-profit" :class="{ 'profit-xd': b.is_xd_card }">
+                +¥{{ b.profit_estimate.toFixed(0) }} 利润
+              </span>
+            </div>
+          </a>
+        </div>
+      </template>
     </section>
   </div>
 </template>
@@ -1354,6 +1400,26 @@ onMounted(() => {
     font-size: 10px;
   }
 
+  /* 条件捡漏区块 */
+  .conditional-title {
+    margin-top: 32px;
+    border-top: 1px dashed var(--border);
+    padding-top: 24px;
+  }
+
+  .section-title-hint {
+    font-size: 11px;
+    color: var(--text2);
+    font-weight: 400;
+    font-family: var(--font-mono);
+    margin-left: 8px;
+    opacity: 0.6;
+  }
+
+  .conditional-bargain-item {
+    border-left: 3px solid var(--green);
+  }
+
   /* 捡漏列表响应式 */
   .bargain-item {
     flex-direction: column;
@@ -1679,6 +1745,10 @@ onMounted(() => {
 
 .steps-section {
   margin-bottom: 32px;
+}
+
+.crawl-section {
+  margin-bottom: 24px;
 }
 
 .steps-list {

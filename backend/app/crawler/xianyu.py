@@ -26,6 +26,8 @@ from typing import List, Optional, Tuple
 import os
 import sys
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 # Playwright Chromium 路径跨平台自动检测
@@ -122,6 +124,7 @@ class XianyuItem:
     quality_flags: List[str] = field(default_factory=list)
     images: List[str] = field(default_factory=list)
     crawled_at: datetime = field(default_factory=datetime.now)
+    query_keyword: str = ""
 
 
 class XianyuCrawler:
@@ -151,6 +154,10 @@ class XianyuCrawler:
 
     def has_storage_state(self) -> bool:
         return STORAGE_STATE_FILE.exists() and STORAGE_STATE_FILE.stat().st_size > 0
+
+    def get_last_debug_summary(self) -> dict:
+        """返回最近一次爬取的调试摘要，包含 login_page_hint / risk_page_hint 等。"""
+        return dict(self._last_debug_summary)
 
     def _parse_cookie_list(self) -> List[dict]:
         cookies = []
@@ -316,6 +323,7 @@ class XianyuCrawler:
                 quality_score=quality_score,
                 quality_flags=quality_flags,
                 images=images,
+                query_keyword=keyword,
             )
         except Exception as e:
             logger.info(f"标准化失败: {e}")
@@ -328,7 +336,14 @@ class XianyuCrawler:
         images: List[str] = []
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, executable_path=CHROMIUM_PATH if CHROMIUM_PATH else None, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"])
+                browser = p.chromium.launch(headless=True, executable_path=CHROMIUM_PATH if CHROMIUM_PATH else None, args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-features=IsolateOrigins,site-per-process",
+                    "--ignore-certificate-errors",
+                    "--disable-web-security",
+                ])
                 context = self._build_context(browser)
                 page = context.new_page()
 
@@ -367,7 +382,7 @@ class XianyuCrawler:
                         logger.debug(f"详情页响应解析失败: {e}")
 
                 page.on("response", handle_detail_response)
-                page.goto(f"https://www.goofish.com/item?id={item_id}", wait_until="networkidle", timeout=20000)
+                page.goto(f"https://www.goofish.com/item?id={item_id}", wait_until="load", timeout=20000)
                 page.wait_for_timeout(3000)
                 context.close()
                 browser.close()
@@ -421,6 +436,15 @@ class XianyuCrawler:
         cookies = self._parse_cookie_list()
         if cookies:
             context.add_cookies(cookies)
+
+        # 应用 stealth 补丁，隐藏自动化特征
+        page = context.new_page()
+        try:
+            from playwright_stealth import stealth
+            stealth(page)
+        except Exception:
+            pass
+        page.close()
         return context
 
     def _scrape_sync(self, keyword: str, max_items: int, filter_keyword: Optional[str] = None) -> List[XianyuItem]:
@@ -437,7 +461,14 @@ class XianyuCrawler:
         risk_page_hint = False
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, executable_path=CHROMIUM_PATH if CHROMIUM_PATH else None, args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"])
+            browser = p.chromium.launch(headless=True, executable_path=CHROMIUM_PATH if CHROMIUM_PATH else None, args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--ignore-certificate-errors",
+                "--disable-web-security",
+            ])
             context = self._build_context(browser)
             page = context.new_page()
 
@@ -473,7 +504,13 @@ class XianyuCrawler:
                     response_statuses.append({"url": response.url[:140], "status": response.status})
                     if response.status != 200:
                         return
-                    body = _try_decode_body(response.body())
+                    try:
+                        body = _try_decode_body(response.body())
+                    except asyncio.CancelledError:
+                        logger.debug(f"响应体读取被取消，跳过 (keyword={keyword})")
+                        raise
+                    except Exception:
+                        return
                     if body is None:
                         return
                     ret = body.get("ret") if isinstance(body, dict) else None
@@ -482,29 +519,72 @@ class XianyuCrawler:
                     raw_list = self._extract_items_from_page_data(body)
                     if raw_list:
                         collected.extend(raw_list)
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     logger.info(f"响应解析失败: {e}")
 
             page.on("request", lambda r: None)  # 保留 request 监听占位
             page.on("response", handle_response)
-            page.goto(f"https://www.goofish.com/search?q={keyword}", wait_until="networkidle", timeout=30000)
-            # 等待足够长让闲鱼两批数据（共60条）都到达
-            page.wait_for_timeout(6000)
+            # 使用 "load" 代替 "networkidle"，避免闲鱼长连接导致永远等不到
+            # 使用 "domcontentloaded" 代替 "load"，跳过图片/CSS/字体等子资源加载
+            # 超时从 30s 提升到 60s，给网络波动更多缓冲
+            page.goto(f"https://www.goofish.com/search?q={keyword}", wait_until="domcontentloaded", timeout=60000)
+            # 等待页面初始数据到达
+            page.wait_for_timeout(4000)
 
-            # 滚动 HTML 元素（闲鱼真实滚动容器）触发更多数据加载
-            for _scroll_i in range(5):
-                prev = len(collected)
-                page.evaluate("""
-                    (() => {
-                        // 闲鱼滚动容器是 HTML.page-search
-                        const html = document.documentElement;
-                        html.scrollTop += 1200;
-                        window.scrollBy(0, 1200);
-                    })();
-                """)
-                page.wait_for_timeout(3000)
-                if len(collected) == prev:
-                    break  # 没有新数据，停止滚动
+            max_pages = max(1, int(getattr(settings, "max_pages_per_query", 9) or 9))
+            # 第 1 页已经由 page.goto 加载，max_pages=1 时不能再点击下一页。
+            for page_num in range(2, max_pages + 1):
+                if len(collected) >= max_items:
+                    break
+                prev_count = len(collected)
+                # 尝试找并点击"下一页"按钮
+                try:
+                    next_selector = (
+                        "button[class*='next'], "
+                        "button[class*='page']:not([disabled]), "
+                        "a[class*='next'], "
+                        "a[class*='page']:not([aria-disabled='true']):not([aria-disabled='true'])"
+                    )
+                    next_btn = page.query_selector(next_selector)
+                    if not next_btn:
+                        # 备选：找含"下一页"文字的按钮
+                        next_btn = page.query_selector(":text('下一页')")
+                    if not next_btn:
+                        # 备选：找分页区最右侧的按钮
+                        pager = page.query_selector(".pager, .pagination, .page-nav, .x-pagination")
+                        if pager:
+                            buttons = pager.query_selector_all("button, a")
+                            for btn in reversed(buttons):
+                                disabled = btn.get_attribute("disabled") or ""
+                                aria_disabled = btn.get_attribute("aria-disabled") or ""
+                                if not disabled and aria_disabled != "true":
+                                    next_btn = btn
+                                    break
+                    if not next_btn:
+                        # 没有下一页按钮，说明已经是最后一页
+                        break
+                    # 点击前记录当前 URL，确保确实发生了导航
+                    current_url = page.url
+                    next_btn.click(timeout=5000)
+                    # 等待页面实际刷新（URL 变化或 DOM 有明显变化）
+                    page.wait_for_function(
+                        "url => url !== arguments[0]",
+                        current_url,
+                        timeout=15000,
+                    )
+                    page.wait_for_timeout(2000)
+                    # 检查是否真的有新数据进来
+                    if len(collected) == prev_count:
+                        # 可能点了但没加载新数据，尝试再等 2 秒
+                        page.wait_for_timeout(2000)
+                        if len(collected) == prev_count:
+                            # 仍然没新数据，说明已经是末页
+                            break
+                except Exception as e:
+                    logger.debug(f"翻页失败（关键词={keyword}，第{page_num}页）: {e}")
+                    break
 
             if not response_urls:
                 page_text = page.content().lower()
@@ -520,8 +600,14 @@ class XianyuCrawler:
                 normalized_count += 1
                 items.append(item)
 
-            context.close()
-            browser.close()
+            try:
+                context.close()
+            except Exception:
+                pass
+            try:
+                browser.close()
+            except Exception:
+                pass
 
         quality_scores = [i.quality_score for i in items]
         quality_avg = round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else 0.0

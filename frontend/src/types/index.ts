@@ -134,7 +134,7 @@ export interface BargainItem {
 // xd_card_model: 是否为 XD 卡相机型号
 // xd_card_bundle_count: XD 卡捆绑销售数量
 export interface ValuationResult {
-  keyword: string 
+  keyword: string
   sample_count: number
   algorithm: AlgorithmResult | null
   quality_summary: SSEQualitySummary | null
@@ -195,6 +195,136 @@ export interface BargainAlert {
   has_xd_bonus?: boolean
   xd_card_size?: string
   xd_card_value?: number
+}
+
+// ============================================================================
+// 以下为新版缓存优先 + 捡漏广场相关类型
+// ============================================================================
+
+/** 缓存估价响应（/api/valuate/cached） */
+export interface CachedValuation {
+  from_cache: boolean
+  cache_level: 'L1' | 'L2'
+  keyword: string
+  display_name?: string
+  brand?: string
+  base_price: number
+  price_min: number
+  price_max: number
+  median_price?: number
+  sample_count: number
+  is_xd_card: boolean
+  xd_card_bundle_count: number
+  crawled_at?: string
+  history: PriceHistoryRecord[]
+}
+
+/** 价格历史记录 */
+export interface PriceHistoryRecord {
+  keyword: string
+  base_price: number
+  median_price: number
+  price_min: number
+  price_max: number
+  sample_count: number
+  trend?: string
+  crawled_at?: string
+}
+
+/** 缓存系统状态（/api/cache/status） */
+export interface CacheStatus {
+  l1: { ok: boolean; engine: string }
+  l2: { ok: boolean; engine: string; total_keywords: number; latest_crawl?: string }
+  l3: { total_records: number }
+}
+
+/** 全局捡漏商品（/api/bargains/global） */
+export interface GlobalBargainItem {
+  id: number
+  item_id: string
+  keyword?: string
+  brand?: string
+  title?: string
+  current_price: number
+  base_price: number
+  profit_estimate: number
+  discount_rate: number
+  condition?: string
+  quality_score?: number
+  is_xd_card: boolean
+  xd_card_size: string
+  xd_card_value: number
+  url?: string
+  image_url?: string
+  created_at?: string
+}
+
+/** 全局捡漏统计 */
+export interface GlobalBargainCount {
+  total: number
+  brand_counts: Record<string, number>
+}
+
+/** 条件捡漏商品（/api/bargains/by-keyword） */
+export interface ConditionalBargainItem {
+  id: number
+  item_id: string
+  keyword?: string
+  title: string
+  price: number
+  current_price: number
+  base_price: number
+  profit_estimate: number
+  discount_rate?: number
+  condition?: string
+  quality_score?: number
+  is_xd_card: boolean
+  xd_card_size: string
+  xd_card_value: number
+  url?: string
+  image_url?: string
+  created_at?: string
+}
+
+/** 爬取进度（/api/crawl/progress） */
+export interface CrawlProgress {
+  batch_id: string
+  stage: string
+  done: number
+  total: number
+  current_keyword: string
+  success_count: number
+  fail_count: number
+  total_items: number
+  bargains_found: number
+  started_at: string
+  finished_at: string
+}
+
+/** 爬取批次摘要 */
+export interface CrawlBatch {
+  batch_id: string
+  status: string
+  total_keywords: number
+  success_count: number
+  fail_count: number
+  total_items: number
+  bargains_found: number
+  started_at: string | null
+  finished_at: string | null
+  error_message: string | null
+}
+
+/** 系统统计概览（/api/stats/overview） */
+export interface SystemStats {
+  cached_models: number
+  latest_crawl: string | null
+  total_items: number
+  total_bargains: number
+  bargains_by_brand: Record<string, number>
+  price_history_count: number
+  recent_batches: CrawlBatch[]
+  brands: Record<string, number>
 }
 
 // 步骤状态枚举
@@ -258,5 +388,6 @@ export interface ValuationTask {
     xd_card_bundle_count?: number
     masd1_compatible?: boolean
     masd1_panorama_blocked?: boolean
+    conditional_bargains: ConditionalBargainItem[]
   }
 }

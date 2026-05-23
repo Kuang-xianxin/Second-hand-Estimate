@@ -4,6 +4,13 @@ import type {
   HistoryRecord,
   HistoryDetail,
   BargainAlert,
+  CachedValuation,
+  CacheStatus,
+  GlobalBargainItem,
+  GlobalBargainCount,
+  ConditionalBargainItem,
+  CrawlProgress,
+  SystemStats,
 } from '@/types'
 import axios from 'axios'
 
@@ -63,4 +70,58 @@ export async function getBargains(unreadOnly = false): Promise<BargainAlert[]> {
 // 标记指定捡漏提醒为已读
 export async function markBargainRead(id: string): Promise<void> {
   await http.patch(`/bargains/${id}/read`)
+}
+
+// ============================================================================
+// 以下为新版缓存优先 + 捡漏广场 API
+// ============================================================================
+
+/** 缓存优先估价（L1 Redis < 1ms 或 L2 PostgreSQL < 20ms），命中直接返回。 */
+export async function valuateCached(keyword: string): Promise<CachedValuation> {
+  const res = await http.get<CachedValuation>('/valuate/cached', { params: { keyword } })
+  return res.data
+}
+
+/** 获取缓存系统状态 */
+export async function getCacheStatus(): Promise<CacheStatus> {
+  const res = await http.get<CacheStatus>('/cache/status')
+  return res.data
+}
+
+/** 获取全局捡漏列表（捡漏广场用） */
+export async function getGlobalBargains(params?: {
+  brand?: string
+  xd_card?: boolean
+  page?: number
+  limit?: number
+}): Promise<GlobalBargainItem[]> {
+  const res = await http.get<GlobalBargainItem[]>('/bargains/global', { params })
+  return res.data
+}
+
+/** 获取全局捡漏总数 */
+export async function getGlobalBargainsCount(params?: {
+  brand?: string
+  xd_card?: boolean
+}): Promise<GlobalBargainCount> {
+  const res = await http.get<GlobalBargainCount>('/bargains/global/count', { params })
+  return res.data
+}
+
+/** 按型号查询条件捡漏（有捡漏才返回，无则空） */
+export async function getBargainsByKeyword(keyword: string): Promise<ConditionalBargainItem[]> {
+  const res = await http.get<ConditionalBargainItem[]>('/bargains/by-keyword', { params: { keyword } })
+  return res.data
+}
+
+/** 获取爬取实时进度（无进度时返回 null） */
+export async function getCrawlProgress(): Promise<CrawlProgress | null> {
+  const res = await http.get<CrawlProgress | null>('/crawl/progress')
+  return res.data
+}
+
+/** 获取系统统计概览 */
+export async function getSystemStats(): Promise<SystemStats> {
+  const res = await http.get<SystemStats>('/stats/overview')
+  return res.data
 }

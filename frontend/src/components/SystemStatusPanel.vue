@@ -1,0 +1,356 @@
+<script setup lang="ts">
+import { ref, onMounted, onUnmounted } from 'vue'
+import { getSystemStats } from '@/api'
+import type { SystemStats } from '@/types'
+
+const stats = ref<SystemStats | null>(null)
+const loading = ref(true)
+const error = ref('')
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
+async function load() {
+  try {
+    stats.value = await getSystemStats()
+    error.value = ''
+  } catch {
+    error.value = '加载失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+function startPolling(intervalMs = 30000) {
+  load()
+  pollTimer = setInterval(load, intervalMs)
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+function formatTime(iso: string | null | undefined): string {
+  if (!iso) return '-'
+  try {
+    const d = new Date(iso)
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+  } catch { return iso }
+}
+
+function formatDuration(start: string | null | undefined, end: string | null | undefined): string {
+  if (!start) return '-'
+  try {
+    const s = new Date(start).getTime()
+    const e = end ? new Date(end).getTime() : Date.now()
+    const diff = Math.round((e - s) / 1000)
+    if (diff < 60) return `${diff}s`
+    if (diff < 3600) return `${Math.round(diff / 60)}m`
+    return `${Math.round(diff / 60 / 60)}h`
+  } catch { return '-' }
+}
+
+const BRAND_COLORS: Record<string, string> = {
+  canon: '#E74C3C',
+  sony: '#3498DB',
+  nikon: '#F39C12',
+  fujifilm: '#E67E22',
+  olympus: '#9B59B6',
+  panasonic: '#1ABC9C',
+  casio: '#C0392B',
+  samsung: '#607D8B',
+  pentax: '#795548',
+  kodak: '#FF9800',
+}
+
+const BRAND_LABELS: Record<string, string> = {
+  canon: '佳能', sony: '索尼', nikon: '尼康',
+  fujifilm: '富士', olympus: '奥林巴斯', panasonic: '松下',
+  casio: '卡西欧', samsung: '三星', pentax: '宾得', kodak: '柯达',
+}
+
+function brandLabel(key: string): string {
+  return BRAND_LABELS[key] || key || '其他'
+}
+
+function brandColor(key: string): string {
+  return BRAND_COLORS[key] || '#888'
+}
+
+onMounted(() => startPolling(30000))
+onUnmounted(stopPolling)
+
+// 暴露刷新方法给父组件
+defineExpose({ refresh: load })
+</script>
+
+<template>
+  <div class="sys-panel">
+    <div class="panel-header">
+      <span class="panel-icon">📊</span>
+      <span class="panel-title">数据库概况</span>
+      <span class="panel-auto">每30s自动刷新</span>
+      <button class="refresh-btn" @click="load" :disabled="loading">
+        {{ loading ? '...' : '↻' }}
+      </button>
+    </div>
+
+    <div v-if="loading && !stats" class="panel-loading">
+      <div class="loading-spinner-sm"></div>
+    </div>
+
+    <div v-else-if="error && !stats" class="panel-error">{{ error }}</div>
+
+    <div v-else-if="stats" class="panel-body">
+      <!-- 核心数字 -->
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-value">{{ stats.cached_models.toLocaleString() }}</div>
+          <div class="stat-label">已缓存型号</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ stats.total_items.toLocaleString() }}</div>
+          <div class="stat-label">商品记录</div>
+        </div>
+        <div class="stat-card highlight">
+          <div class="stat-value">{{ stats.total_bargains.toLocaleString() }}</div>
+          <div class="stat-label">捡漏机会</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">{{ stats.price_history_count.toLocaleString() }}</div>
+          <div class="stat-label">历史记录</div>
+        </div>
+      </div>
+
+      <!-- 品牌覆盖 -->
+      <div class="section">
+        <div class="section-title">型号覆盖</div>
+        <div class="brand-chips">
+          <span
+            v-for="(count, brand) in stats.brands"
+            :key="brand"
+            class="brand-chip"
+            :style="{ '--chip-color': brandColor(brand as string) }"
+          >
+            {{ brandLabel(brand as string) }} {{ count }}
+          </span>
+          <span v-if="!stats.brands || Object.keys(stats.brands).length === 0" class="empty-hint">暂无数据</span>
+        </div>
+      </div>
+
+      <!-- 最近爬取批次 -->
+      <div class="section">
+        <div class="section-title">最近爬取</div>
+        <div class="batch-list">
+          <div v-for="b in stats.recent_batches" :key="b.batch_id" class="batch-item">
+            <div class="batch-meta">
+              <span class="batch-id">{{ b.batch_id }}</span>
+              <span class="batch-status" :class="'status-' + b.status">
+                {{ b.status === 'completed' ? '完成' : b.status === 'failed' ? '失败' : b.status === 'running' ? '进行中' : b.status }}
+              </span>
+            </div>
+            <div class="batch-stats">
+              <span>{{ b.success_count }}/{{ b.total_keywords }} 成功</span>
+              <span v-if="b.total_items">· {{ b.total_items }} 条商品</span>
+              <span v-if="b.bargains_found" class="bargain-hint">· {{ b.bargains_found }} 捡漏</span>
+              <span class="batch-time">{{ formatDuration(b.started_at, b.finished_at) }}</span>
+            </div>
+          </div>
+          <div v-if="!stats.recent_batches?.length" class="empty-hint">暂无爬取记录</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.sys-panel {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg3);
+}
+
+.panel-icon { font-size: 16px; }
+
+.panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+}
+
+.panel-auto {
+  font-size: 10px;
+  color: var(--text2);
+  opacity: 0.5;
+  font-family: var(--font-mono);
+}
+
+.refresh-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text2);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 8px;
+  transition: all 0.15s;
+}
+.refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+.refresh-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.panel-loading {
+  padding: 24px;
+  text-align: center;
+  color: var(--text2);
+}
+
+.panel-error {
+  padding: 16px;
+  color: var(--red);
+  font-size: 13px;
+}
+
+.panel-body { padding: 16px; }
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.stat-card {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 8px;
+  text-align: center;
+}
+
+.stat-card.highlight {
+  border-color: rgba(92, 184, 122, 0.35);
+  background: rgba(92, 184, 122, 0.06);
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--font-mono);
+  margin-bottom: 2px;
+}
+
+.stat-card.highlight .stat-value { color: var(--green); }
+
+.stat-label {
+  font-size: 11px;
+  color: var(--text2);
+}
+
+.section { margin-bottom: 14px; }
+
+.section-title {
+  font-size: 11px;
+  color: var(--text2);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.brand-chip {
+  background: rgba(0, 0, 0, 0.12);
+  border: 1px solid color-mix(in srgb, #888888 40%, transparent);
+  color: #888888;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-family: var(--font-mono);
+}
+
+.batch-list { display: flex; flex-direction: column; gap: 6px; }
+
+.batch-item {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.batch-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.batch-id {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.batch-status {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.status-completed { background: rgba(92, 184, 122, 0.15); color: var(--green); }
+.status-failed { background: rgba(224, 92, 92, 0.15); color: var(--red); }
+.status-running { background: rgba(232, 197, 71, 0.15); color: var(--accent); }
+
+.batch-stats {
+  font-size: 11px;
+  color: var(--text2);
+  font-family: var(--font-mono);
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.bargain-hint { color: var(--green); font-weight: 600; }
+
+.batch-time { margin-left: auto; color: var(--text2); opacity: 0.6; }
+
+.empty-hint { font-size: 12px; color: var(--text2); opacity: 0.5; font-style: italic; }
+
+.loading-spinner-sm {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 600px) {
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .stat-value { font-size: 18px; }
+}
+</style>

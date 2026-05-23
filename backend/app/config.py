@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
 
@@ -26,19 +26,29 @@ class Settings(BaseSettings):
     doubao_timeout_seconds: int = 90
 
     database_url: str = "sqlite+aiosqlite:///./guessr.db"
-    backend_port: int = 8000
+    redis_url: str = "redis://localhost:6379/0"
+    backend_port: int = 8001
     frontend_url: str = "http://localhost:5173"
 
-    crawl_interval_seconds: int = 300
-    max_items_per_query: int = 60
+    # 定时任务
+    crawl_interval_seconds: int = 5400  # 全量爬取间隔（1.5 小时）
+    crawl_enabled: bool = False         # 是否启用定时爬取（开发默认关闭，生产 .env 开启）
+    initial_crawl_enabled: bool = False # 首次启动是否自动触发全量爬取（仅缓存表为空时；开发默认关闭）
+
+    # 爬取控制
+    max_items_per_query: int = 200      # 单个关键词最多爬取商品数
+    max_pages_per_query: int = 2        # 单个关键词最多翻页数（开发默认 2 页防封）
+    crawl_concurrency: int = 1          # 并发爬取数（开发默认单并发防封）
+    crawl_batch_size: int = 50          # 每批关键词数量
+    crawl_dev_keyword_limit: int = 0    # 开发模式关键词上限（0=不限制，生产 .env 设 0 全量）
+
     bargain_threshold: float = 120.0
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
-        # 兼容大小写：同时支持大写和小写环境变量名
-        # 例如 DEEPSEEK_API_KEY 和 deepseek_api_key 都能识别
-        case_sensitive = False
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+        case_sensitive=False,
+    )
 
 
 settings = Settings()

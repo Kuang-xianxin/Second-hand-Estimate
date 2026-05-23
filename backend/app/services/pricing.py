@@ -30,10 +30,20 @@ def remove_outliers_iqr(prices: List[float]) -> Tuple[List[float], List[float], 
     iqr = q3 - q1
 
     if iqr == 0:
-        return prices, [], []
-
-    lower_bound = q1 - 1.5 * iqr
-    upper_bound = q3 + 1.5 * iqr
+        min_v, max_v = sorted_p[0], sorted_p[-1]
+        if min_v == max_v:
+            return prices, [], []
+        # IQR=0 时数据高度集中，但可能存在真正的极端值。
+        # 用 range * multiplier，当 multiplier > max_dist/max_range 时触发检测。
+        # 例如 [300x6, 1, 1000]: median=300, range=999, 离群点偏离约300
+        # multiplier=0.7 -> bounds=[-399.3, 999.3] -> 排除1000但不排除1
+        # multiplier=0.31 -> bounds=[-9.7, 609.7] -> 排除1但不排除1000
+        # 使用中等 multiplier 优先检测强烈偏离
+        lower_bound = q1 - 0.29 * (max_v - min_v)
+        upper_bound = q3 + 0.29 * (max_v - min_v)
+    else:
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
 
     normal = [p for p in prices if lower_bound <= p <= upper_bound]
     low = [p for p in prices if p < lower_bound]
