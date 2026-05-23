@@ -52,6 +52,8 @@ class BatchCrawlReport:
     all_items: list  # 所有成功爬取的商品
     login_required_count: int = 0  # 检测到需要登录的关键词数
     risk_detected_count: int = 0   # 检测到风控页面的关键词数
+    aborted: bool = False
+    abort_reason: str = ""
 
 
 async def crawl_single_keyword(
@@ -130,6 +132,7 @@ async def crawl_all_ccd_models(
     concurrency: int = None,
     batch_size: int = None,
     progress_callback=None,
+    keyword_result_callback=None,
     batch_id: str = "",
     started_at: str = "",
 ) -> BatchCrawlReport:
@@ -154,6 +157,8 @@ async def crawl_all_ccd_models(
     seen_ids: set = set()
     login_required_count = 0
     risk_detected_count = 0
+    aborted = False
+    abort_reason = ""
 
     sem = asyncio.Semaphore(concurrency)
     crawler = get_crawler()
@@ -185,19 +190,23 @@ async def crawl_all_ccd_models(
                 started_at=started_at,
             )
 
-        tasks = [
-            crawl_single_keyword(kw, sem, crawler)
-            for kw in batch
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
         batch_success = 0
         batch_fail = 0
-        for result in results:
+        batch_processed = 0
+        tasks = [
+            asyncio.create_task(crawl_single_keyword(kw, sem, crawler))
+            for kw in batch
+        ]
+
+        for task in asyncio.as_completed(tasks):
+            result = await task
+            batch_processed += 1
             if isinstance(result, Exception):
                 batch_fail += 1
                 fail_count += 1
                 continue
+            if keyword_result_callback:
+                await keyword_result_callback(result)
             if result.login_required:
                 login_required_count += 1
                 logger.warning(f"关键词「{result.keyword}」返回登录页，可能未登录或 cookie 已过期")
@@ -217,12 +226,22 @@ async def crawl_all_ccd_models(
                         seen_ids.add(item.item_id)
                         all_items.append(item)
 
+            if settings.crawl_stop_on_risk and (result.login_required or result.risk_detected):
+                aborted = True
+                abort_reason = "登录态失效" if result.login_required else "触发风控验证"
+                logger.error(f"检测到{abort_reason}，熔断当前批次，取消剩余关键词")
+                for pending in tasks:
+                    if not pending.done():
+                        pending.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                break
+
         # 进度回调：批次完成
         if progress_callback:
             current_kw = f"{batch[0]}...{batch[-1]}" if len(batch) > 1 else batch[0]
             await progress_callback(
                 stage="crawling",
-                done=batch_start + len(batch),
+                done=batch_start + batch_processed,
                 total=total_keywords,
                 current_keyword=current_kw,
                 success=success_count,
@@ -233,13 +252,16 @@ async def crawl_all_ccd_models(
 
         logger.info(f"批次 {batch_num} 完成：成功 {batch_success}，失败 {batch_fail}，累计 {len(all_items)} 条商品")
 
+        if aborted:
+            break
+
         if batch_start + batch_size < total_keywords:
             delay = random.uniform(2, 5)
             logger.info(f"批次间隔等待 {delay:.1f}s")
             await asyncio.sleep(delay)
 
     # 重试失败关键词
-    if failed_keywords:
+    if failed_keywords and not aborted:
         logger.info(f"重试 {len(failed_keywords)} 个失败关键词...")
         retry_sem = asyncio.Semaphore(max(1, concurrency // 2))
         tasks = [
@@ -251,6 +273,8 @@ async def crawl_all_ccd_models(
             if isinstance(result, Exception):
                 fail_count += 1
                 continue
+            if keyword_result_callback:
+                await keyword_result_callback(result)
             if result.success:
                 success_count += 1
                 for item in result.items:
@@ -283,4 +307,6 @@ async def crawl_all_ccd_models(
         all_items=all_items,
         login_required_count=login_required_count,
         risk_detected_count=risk_detected_count,
+        aborted=aborted,
+        abort_reason=abort_reason,
     )

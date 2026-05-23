@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     crawl_concurrency: int = 1          # 并发爬取数（开发默认单并发防封）
     crawl_batch_size: int = 50          # 每批关键词数量
     crawl_dev_keyword_limit: int = 0    # 开发模式关键词上限（0=不限制，生产 .env 设 0 全量）
+    crawl_stop_on_risk: bool = True     # 检测到登录失效/风控时立即熔断，避免继续请求
 
     bargain_threshold: float = 120.0
 

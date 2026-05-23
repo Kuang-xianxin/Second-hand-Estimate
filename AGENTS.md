@@ -115,6 +115,9 @@ backend/
 - 爬虫依赖 Playwright + 闲鱼登录 Cookie，无 Cookie 时爬虫返回 401/429，`crawl_worker.CrawlResult` 会标记 `login_required=True` / `risk_detected=True`，`BatchCrawlReport` 汇总 `login_required_count` / `risk_detected_count`
 - `XianyuCrawler.get_last_debug_summary()` 可获取最近一次爬取的调试摘要（含 `login_page_hint`、`risk_page_hint` 等字段）
 - `crawl_worker.crawl_single_keyword()` 的并发控制：`asyncio.Semaphore` 包裹了 `sleep + crawler.search()`，确保并发数内任务全程串行化，不会所有任务同时 sleep 后同时发起请求
+- `crawl_stop_on_risk=True` 时，批量爬取一旦检测到登录失效或风控验证，会熔断当前批次、取消剩余关键词，并把批次标记为 `aborted`，避免继续请求闲鱼。
+- `crawl_keyword_status` 表记录每个关键词的状态、样本数、登录/风控标记和调试摘要，便于排查失败与后续断点续跑。
+- 定时任务在熔断、无商品或无有效估价结果时会保留旧缓存和旧全局捡漏数据，不会用失败批次清空线上展示。
 - 前端修改后执行 `npm run build` 构建产物到 `frontend/dist/`
 - `XianyuItem` 数据类包含 `query_keyword` 字段，用于将商品回溯到搜索关键词（scheduler.py / cache_updater.py / bargain_detector.py 依赖此字段）
 - `trigger_crawl.py` 支持金丝雀测试参数：`--brand`、`--keyword`、`--max-keywords`、`--limit`、`--max-pages`、`--concurrency`、`--dry-run`
@@ -132,6 +135,7 @@ backend/
 | `crawl_concurrency` | 1 | 并发爬取数（开发默认单并发防封） |
 | `crawl_batch_size` | 50 | 每批关键词数 |
 | `crawl_dev_keyword_limit` | 0 | 开发模式关键词上限（0=不限制，生产 .env 设 0 全量） |
+| `crawl_stop_on_risk` | true | 登录失效/风控时是否熔断批次 |
 | `bargain_threshold` | 120.0 | 捡漏最低利润阈值（元） |
 
 ## 数据库表
@@ -146,6 +150,7 @@ backend/
 | global_bargains   | 全局捡漏（捡漏广场）        |
 | price_history     | 价格历史趋势（L3 缓存）     |
 | crawl_status      | 爬取任务状态            |
+| crawl_keyword_status | 单关键词爬取状态、失败原因和风控摘要 |
 
 
 ## 环境

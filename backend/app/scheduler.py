@@ -70,6 +70,46 @@ async def _clear_progress(r):
         pass
 
 
+def _keyword_status_from_result(result) -> str:
+    if result.login_required:
+        return "login_required"
+    if result.risk_detected:
+        return "risk_detected"
+    if result.success:
+        return "success"
+    return "failed"
+
+
+async def _record_keyword_result(db_session_factory, batch_id: str, result):
+    """记录单关键词爬取结果，供故障排查和后续断点续跑使用。"""
+    from app.models.crawl_status import CrawlKeywordStatus
+    from sqlalchemy import select
+
+    async with db_session_factory() as session:
+        existing_result = await session.execute(
+            select(CrawlKeywordStatus).where(
+                CrawlKeywordStatus.batch_id == batch_id,
+                CrawlKeywordStatus.keyword == result.keyword,
+            )
+        )
+        record = existing_result.scalar_one_or_none()
+        debug_summary = json.dumps(result.debug_summary or {}, ensure_ascii=False)
+        if record is None:
+            record = CrawlKeywordStatus(
+                batch_id=batch_id,
+                keyword=result.keyword,
+            )
+            session.add(record)
+        record.status = _keyword_status_from_result(result)
+        record.item_count = result.total_collected
+        record.login_required = result.login_required
+        record.risk_detected = result.risk_detected
+        record.error_message = result.error
+        record.debug_summary = debug_summary
+        record.finished_at = datetime.utcnow()
+        await session.commit()
+
+
 async def run_full_crawl_task(db_session_factory, skip_lock: bool = False):
     """
     定时任务主函数：全量爬取 → 算法估价 → 全局捡漏 → 缓存更新。
@@ -126,9 +166,14 @@ async def run_full_crawl_task(db_session_factory, skip_lock: bool = False):
                 kw.get("items", 0), 0,
                 started_at,
             )
+
+        async def _keyword_result_callback(result):
+            await _record_keyword_result(db_session_factory, batch_id, result)
+
         crawl_report = await crawl_all_ccd_models(
             keywords,
             progress_callback=_progress_callback,
+            keyword_result_callback=_keyword_result_callback,
             batch_id=batch_id,
             started_at=started_at,
         )
@@ -173,6 +218,32 @@ async def run_full_crawl_task(db_session_factory, skip_lock: bool = False):
             written = await write_crawled_items(crawl_report.all_items, session)
             logger.info(f"[定时任务] 批次 {batch_id} 原始商品写入：{written} 条")
 
+        if crawl_report.aborted:
+            error_message = f"爬取熔断：{crawl_report.abort_reason}"
+            async with db_session_factory() as session:
+                from sqlalchemy import select
+                result = await session.execute(
+                    select(CrawlStatus).where(CrawlStatus.batch_id == batch_id)
+                )
+                status_record = result.scalar_one_or_none()
+                if status_record:
+                    status_record.finished_at = datetime.utcnow()
+                    status_record.status = "aborted"
+                    status_record.total_keywords = crawl_report.total_keywords
+                    status_record.success_count = crawl_report.success_count
+                    status_record.fail_count = crawl_report.fail_count
+                    status_record.total_items = len(crawl_report.all_items)
+                    status_record.error_message = error_message
+                    await session.commit()
+            await _write_progress(
+                r, batch_id, "failed", total_kw, total_kw, error_message,
+                crawl_report.success_count, crawl_report.fail_count,
+                len(crawl_report.all_items), 0, started_at,
+                datetime.utcnow().isoformat(),
+            )
+            logger.error(f"[定时任务] 批次 {batch_id} 终止：{error_message}")
+            return
+
         # 进度：计算估价
         await _write_progress(r, batch_id, "pricing", total_kw, total_kw, "正在计算估价...", crawl_report.success_count, crawl_report.fail_count, len(crawl_report.all_items), 0, started_at)
 
@@ -193,6 +264,31 @@ async def run_full_crawl_task(db_session_factory, skip_lock: bool = False):
                 priced_count += 1
 
         logger.info(f"[定时任务] 批次 {batch_id} 估价完成：{priced_count} 个型号有有效价格")
+        if not keyword_prices:
+            error_message = "没有可写入缓存的有效估价结果，保留旧缓存和旧捡漏数据"
+            async with db_session_factory() as session:
+                from sqlalchemy import select
+                result = await session.execute(
+                    select(CrawlStatus).where(CrawlStatus.batch_id == batch_id)
+                )
+                status_record = result.scalar_one_or_none()
+                if status_record:
+                    status_record.finished_at = datetime.utcnow()
+                    status_record.status = "failed"
+                    status_record.total_keywords = crawl_report.total_keywords
+                    status_record.success_count = crawl_report.success_count
+                    status_record.fail_count = crawl_report.fail_count
+                    status_record.total_items = len(crawl_report.all_items)
+                    status_record.error_message = error_message
+                    await session.commit()
+            await _write_progress(
+                r, batch_id, "failed", total_kw, total_kw, error_message,
+                crawl_report.success_count, crawl_report.fail_count,
+                len(crawl_report.all_items), 0, started_at,
+                datetime.utcnow().isoformat(),
+            )
+            logger.error(f"[定时任务] 批次 {batch_id} 终止：{error_message}")
+            return
 
         # 进度：检测捡漏
         await _write_progress(r, batch_id, "detecting_bargains", total_kw, total_kw, "检测捡漏中...", crawl_report.success_count, crawl_report.fail_count, len(crawl_report.all_items), 0, started_at)

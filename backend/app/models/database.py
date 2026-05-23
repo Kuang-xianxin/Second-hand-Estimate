@@ -66,6 +66,20 @@ async def init_db():
                     status VARCHAR(32) DEFAULT 'running',
                     error_message TEXT
                 )"""),
+                ("crawl_keyword_status", [], """CREATE TABLE IF NOT EXISTS crawl_keyword_status (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    batch_id VARCHAR(64) NOT NULL,
+                    keyword VARCHAR(256) NOT NULL,
+                    status VARCHAR(32) DEFAULT 'pending',
+                    item_count INTEGER DEFAULT 0,
+                    login_required BOOLEAN DEFAULT 0,
+                    risk_detected BOOLEAN DEFAULT 0,
+                    error_message TEXT,
+                    debug_summary TEXT,
+                    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    finished_at TIMESTAMP,
+                    UNIQUE(batch_id, keyword)
+                )"""),
             ]:
                 existing_tables = await _sqlite_get_tables(conn)
                 if table not in existing_tables:
