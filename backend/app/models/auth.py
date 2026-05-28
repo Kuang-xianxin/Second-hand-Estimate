@@ -13,6 +13,7 @@ class AppUser(Base):
     username = Column(String(64), unique=True, nullable=False, index=True)
     password_hash = Column(String(256), nullable=False)
     display_name = Column(String(128), nullable=True)
+    email = Column(String(256), nullable=True, unique=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
     last_login_at = Column(DateTime, nullable=True)

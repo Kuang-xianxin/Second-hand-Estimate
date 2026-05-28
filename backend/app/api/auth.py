@@ -1,18 +1,15 @@
 from datetime import datetime
 import json
-import random
 import re
-import string
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.auth import AppUser
 from app.models.database import get_db
-from app.models.redis_client import get_redis
 from app.services.auth import (
     create_session,
     get_current_user,
@@ -31,9 +28,6 @@ from app.services.xianyu_auth import (
 
 router = APIRouter(prefix="/api", tags=["账号"])
 
-RESET_CODE_TTL = 600  # 10 minutes
-ADMIN_EMAIL = "2764905233@qq.com"
-
 
 class AuthRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=64)
@@ -41,19 +35,8 @@ class AuthRequest(BaseModel):
 
 
 class RegisterRequest(AuthRequest):
+    email: str = Field(default="", max_length=256)
     display_name: Optional[str] = Field(default=None, max_length=128)
-    email: Optional[str] = Field(default=None, max_length=256)
-
-
-class ResetPasswordRequest(BaseModel):
-    email: str = Field(..., min_length=5, max_length=256)
-
-
-class ResetPasswordConfirmRequest(BaseModel):
-    email: str = Field(..., min_length=5, max_length=256)
-    code: str = Field(..., min_length=6, max_length=6)
-    new_password: str = Field(..., min_length=6, max_length=128)
-
 
 class XianyuAuthState(BaseModel):
     bound: bool
@@ -70,7 +53,6 @@ class AuthResponse(BaseModel):
     token: str
     user: dict
     xianyu: XianyuAuthState
-    xianyu_bound: bool = False
 
 
 class BindCurrentStateRequest(BaseModel):
@@ -102,17 +84,6 @@ def _validate_username(username: str) -> str:
     return value
 
 
-def _validate_email(email: str) -> str:
-    value = (email or "").strip().lower()
-    if not value or "@" not in value or "." not in value.split("@")[-1]:
-        raise HTTPException(status_code=422, detail="请提供有效的邮箱地址")
-    return value
-
-
-def _generate_code() -> str:
-    return "".join(random.choices(string.digits, k=6))
-
-
 async def _xianyu_state(user: AppUser, db: AsyncSession, verify_if_present: bool = False) -> XianyuAuthState:
     binding = await get_binding(user.id, db)
     if binding is None:
@@ -137,7 +108,6 @@ def _user_payload(user: AppUser) -> dict:
         "id": user.id,
         "username": user.username,
         "display_name": user.display_name or user.username,
-        "email": getattr(user, "email", ""),
     }
 
 
@@ -153,8 +123,6 @@ def _extract_token(authorization: Optional[str]) -> Optional[str]:
 @router.post("/auth/register", response_model=AuthResponse)
 async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     username = _validate_username(req.username)
-    email = _validate_email(req.email) if req.email else ""
-
     result = await db.execute(select(AppUser).where(AppUser.username == username))
     if result.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="用户名已存在")
@@ -162,19 +130,14 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     user = AppUser(
         username=username,
         password_hash=hash_password(req.password),
+        email=req.email.strip().lower() or None,
         display_name=(req.display_name or username).strip(),
     )
-    if email:
-        user.email = email
     db.add(user)
     await db.commit()
     await db.refresh(user)
     token, _ = await create_session(user, db)
-    xianyu = await _xianyu_state(user, db)
-    return AuthResponse(
-        token=token, user=_user_payload(user), xianyu=xianyu,
-        xianyu_bound=xianyu.status == "valid",
-    )
+    return AuthResponse(token=token, user=_user_payload(user), xianyu=await _xianyu_state(user, db))
 
 
 @router.post("/auth/login", response_model=AuthResponse)
@@ -189,20 +152,12 @@ async def login(req: AuthRequest, db: AsyncSession = Depends(get_db)):
 
     token, _ = await create_session(user, db)
     xianyu = await _xianyu_state(user, db, verify_if_present=True)
-    return AuthResponse(
-        token=token, user=_user_payload(user), xianyu=xianyu,
-        xianyu_bound=xianyu.status == "valid",
-    )
+    return AuthResponse(token=token, user=_user_payload(user), xianyu=xianyu)
 
 
 @router.get("/auth/me")
 async def me(user: AppUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    xianyu = await _xianyu_state(user, db)
-    return {
-        "user": _user_payload(user),
-        "xianyu": xianyu.dict(),
-        "xianyu_bound": xianyu.status == "valid",
-    }
+    return {"user": _user_payload(user), "xianyu": await _xianyu_state(user, db)}
 
 
 @router.post("/auth/logout")
@@ -215,56 +170,6 @@ async def logout(
         await revoke_session(token, db)
     return {"ok": True}
 
-
-# ---- Password Reset ----
-
-@router.post("/auth/reset-password")
-async def reset_password(req: ResetPasswordRequest):
-    """Send a 6-digit reset code to the admin email (logged for now)."""
-    email = _validate_email(req.email)
-    code = _generate_code()
-    r = await get_redis()
-    if r:
-        await r.setex(f"reset:code:{email}", RESET_CODE_TTL, code)
-
-    # TODO: send actual email via SMTP
-    print(f"[PASSWORD RESET] email={email} code={code} admin={ADMIN_EMAIL}")
-    return {"ok": True, "message": f"验证码已发送至管理员邮箱 {ADMIN_EMAIL}，请查收后输入"}
-
-
-@router.post("/auth/reset-password/confirm")
-async def reset_password_confirm(req: ResetPasswordConfirmRequest, db: AsyncSession = Depends(get_db)):
-    email = _validate_email(req.email)
-    if not req.code or len(req.code) != 6 or not req.code.isdigit():
-        raise HTTPException(status_code=422, detail="验证码为 6 位数字")
-
-    r = await get_redis()
-    stored = None
-    if r:
-        stored = await r.get(f"reset:code:{email}")
-        if stored:
-            stored = stored.decode() if isinstance(stored, bytes) else stored
-
-    if not stored or stored != req.code:
-        raise HTTPException(status_code=400, detail="验证码错误或已过期")
-
-    # Find user by email
-    result = await db.execute(select(AppUser).where(AppUser.email == email))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="未找到该邮箱对应的账号")
-
-    user.password_hash = hash_password(req.new_password)
-    await db.commit()
-
-    # Delete code
-    if r:
-        await r.delete(f"reset:code:{email}")
-
-    return {"ok": True, "message": "密码已重置，请使用新密码登录"}
-
-
-# ---- Xianyu ----
 
 @router.get("/xianyu/status", response_model=XianyuAuthState)
 async def xianyu_status(
@@ -319,3 +224,81 @@ async def xianyu_auth_start(
     await upsert_binding(user, db, target, label=req.label or "", status="auth_in_progress")
     start_local_auth_flow(user.id, label=req.label or "")
     return await _xianyu_state(user, db)
+
+# ============================================================
+# 密码重置
+# ============================================================
+
+class ResetRequest(BaseModel):
+    email: str
+
+class ResetConfirm(BaseModel):
+    email: str
+    code: str
+    new_password: str
+
+
+@router.post("/reset-password")
+async def request_reset(req: ResetRequest, db: AsyncSession = Depends(get_db)):
+    """发送密码重置验证码。验证码通过 print 日志输出（后续配 SMTP 发送邮件）。"""
+    import secrets, time
+    from app.models.redis_client import get_redis as _get_redis
+
+    email = req.email.strip().lower()
+    if not email:
+        raise HTTPException(400, "邮箱不能为空")
+
+    # 检查邮箱是否存在
+    result = await db.execute(select(AppUser).where(AppUser.email == email))
+    user = result.scalar_one_or_none()
+    if not user:
+        # 不泄露用户是否存在，统一返回成功
+        return {"ok": True, "message": "如邮箱已注册，验证码将发送至管理员邮箱 2764905233@qq.com"}
+
+    code = secrets.token_hex(3)[:6]
+    r = await _get_redis()
+    if r:
+        await r.setex(f"reset:code:{email}", 600, code)
+
+    # 日志代替发邮件
+    logger.info(f"[密码重置] 用户={user.username} email={email} code={code}")
+    sep = chr(61) * 50; print(f"\n{sep}\n密码重置验证码\n邮箱: {email}\n验证码: {code}\n有效期: 10分钟\n管理员: 2764905233@qq.com\n{sep}\n")
+
+    return {"ok": True, "message": "如邮箱已注册，验证码将发送至管理员邮箱 2764905233@qq.com"}
+
+
+@router.post("/reset-password/confirm")
+async def confirm_reset(req: ResetConfirm, db: AsyncSession = Depends(get_db)):
+    """验证验证码并重置密码"""
+    from app.models.redis_client import get_redis as _get_redis
+
+    email = req.email.strip().lower()
+    code = (req.code or "").strip().lower()
+    new_pw = (req.new_password or "").strip()
+
+    if not email or not code or not new_pw:
+        raise HTTPException(400, "邮箱、验证码、新密码不能为空")
+    if len(new_pw) < 4:
+        raise HTTPException(400, "新密码至少4位")
+
+    r = await _get_redis()
+    if r:
+        stored = await r.get(f"reset:code:{email}")
+        if not stored or stored.decode().lower() != code:
+            raise HTTPException(400, "验证码错误或已过期")
+
+    result = await db.execute(select(AppUser).where(AppUser.email == email))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "用户不存在")
+
+    from app.services.auth import hash_password
+    user.hashed_password = hash_password(new_pw)
+    await db.commit()
+
+    if r:
+        await r.delete(f"reset:code:{email}")
+
+    logger.info(f"[密码重置] 密码已重置 user={user.username}")
+    return {"ok": True, "message": "密码已重置，请使用新密码登录"}
+
