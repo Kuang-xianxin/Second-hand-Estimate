@@ -237,6 +237,7 @@ async def write_crawled_items(
     if not items:
         return 0
 
+    session.autoflush = False
     written = 0
     for item in items:
         try:
