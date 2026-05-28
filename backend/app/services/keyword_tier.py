@@ -1,38 +1,39 @@
 """
 CCD 关键词分层与型号归并系统。
 
-将 ~2003 个搜索关键词映射到 ~676 个 canonical model，并分配
-T0（热门）/ T1（普通）/ T2（长尾）三个爬取频率层级。
+T0（热门 55 个）：每 5 分钟
+T1（普通 ~200 个）：每 12 小时
+T2（长尾 ~400+ 个）：每 3 天
+
+从 ccd_keywords.py 导入全量 2003 关键词，自动分配层级。
 """
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict
 
 
 class KeywordTier(str, Enum):
-    T0_HOT = "t0"       # 热门型号：每 1.5–3h 爬取
-    T1_WARM = "t1"      # 普通型号：每 12–24h 爬取
-    T2_COLD = "t2"      # 长尾型号：每 3–7 天或按需爬取
+    T0_HOT = "t0"
+    T1_WARM = "t1"
+    T2_COLD = "t2"
 
 
 @dataclass
 class CanonicalModel:
-    """一个 canonical model 代表一款物理相机型号，聚合多个搜索关键词。"""
-    model_id: str                          # 唯一标识，如 "canon-ixus-130"
-    display_name: str                      # 展示名，如 "Canon IXUS 130"
-    brand: str                             # 品牌
-    series: str                            # 系列
-    keywords: List[str] = field(default_factory=list)  # 所有搜索关键词
-    tier: KeywordTier = KeywordTier.T1_WARM
+    model_id: str
+    display_name: str
+    brand: str
+    series: str
+    keywords: List[str] = field(default_factory=list)
+    tier: KeywordTier = KeywordTier.T2_COLD
 
 
 # ============================================================
-# T0 热门型号定义（~50 个市场交易最活跃的 CCD 型号）
+# T0 热门型号（55 个，市场交易最活跃的 CCD 型号）
 # ============================================================
-
 T0_CANONICAL_MODELS: List[CanonicalModel] = [
-    # --- Canon IXUS 系列 ---
+    # --- Canon IXUS ---
     CanonicalModel("canon-ixus-130", "Canon IXUS 130 / SD1400 IS", "canon", "IXUS", [
         "佳能ixus130", "canon ixus 130", "ixus130", "sd1400is",
     ], KeywordTier.T0_HOT),
@@ -78,7 +79,7 @@ T0_CANONICAL_MODELS: List[CanonicalModel] = [
     CanonicalModel("canon-ixus-1000hs", "Canon IXUS 1000 HS / SD4500 IS", "canon", "IXUS", [
         "佳能ixus1000", "canon ixus 1000", "ixus1000hs", "sd4500is",
     ], KeywordTier.T0_HOT),
-    # --- Sony T / TX 系列 ---
+    # --- Sony T/TX ---
     CanonicalModel("sony-t700", "Sony Cyber-shot DSC-T700", "sony", "Cyber-shot", [
         "索尼t700", "sony t700", "dsc-t700", "t700",
     ], KeywordTier.T0_HOT),
@@ -127,7 +128,7 @@ T0_CANONICAL_MODELS: List[CanonicalModel] = [
     CanonicalModel("sony-tx20", "Sony Cyber-shot DSC-TX20", "sony", "Cyber-shot", [
         "索尼tx20", "sony tx20", "dsc-tx20", "tx20",
     ], KeywordTier.T0_HOT),
-    # --- Sony W / WX 系列 ---
+    # --- Sony W/WX ---
     CanonicalModel("sony-w800", "Sony Cyber-shot DSC-W800", "sony", "Cyber-shot", [
         "索尼w800", "sony w800", "dsc-w800", "w800",
     ], KeywordTier.T0_HOT),
@@ -149,7 +150,7 @@ T0_CANONICAL_MODELS: List[CanonicalModel] = [
     CanonicalModel("sony-w100", "Sony Cyber-shot DSC-W100", "sony", "Cyber-shot", [
         "索尼w100", "sony w100", "dsc-w100", "w100",
     ], KeywordTier.T0_HOT),
-    # --- Nikon Coolpix S 系列 ---
+    # --- Nikon Coolpix S ---
     CanonicalModel("nikon-s7000", "Nikon Coolpix S7000", "nikon", "Coolpix", [
         "尼康s7000", "nikon s7000",
     ], KeywordTier.T0_HOT),
@@ -175,7 +176,7 @@ T0_CANONICAL_MODELS: List[CanonicalModel] = [
     CanonicalModel("fuji-f31fd", "Fujifilm FinePix F31fd", "fuji", "FinePix", [
         "富士f31", "fuji f31", "finepix f31fd", "f31fd",
     ], KeywordTier.T0_HOT),
-    # --- Olympus mu 系列 ---
+    # --- Olympus mu ---
     CanonicalModel("olympus-mu300", "Olympus mu300", "olympus", "mu", [
         "奥林巴斯μ300", "olympus 300", "mu300",
     ], KeywordTier.T0_HOT),
@@ -210,12 +211,38 @@ T0_CANONICAL_MODELS: List[CanonicalModel] = [
 
 
 # ============================================================
-# 索引构建
+# T1 普通型号：从 ccd_keywords.py 中属于主流系列但非 T0 的关键词
 # ============================================================
-
-_keyword_to_model: Dict[str, CanonicalModel] = {}
-_model_by_id: Dict[str, CanonicalModel] = {}
-_tier_keywords: Dict[KeywordTier, List[str]] = {t: [] for t in KeywordTier}
+_T1_SERIES_PATTERNS = [
+    # Canon IXUS 系列（T0 已覆盖热门子型号，其余归 T1）
+    ("ixus", "canon", "IXUS"),
+    ("powershot a", "canon", "PowerShot A"),
+    ("powershot sx", "canon", "PowerShot SX"),
+    # Sony Cyber-shot T/TX/W/WX/H 系列（T0 已覆盖最热门）
+    ("dsc-t", "sony", "Cyber-shot"),
+    ("dsc-tx", "sony", "Cyber-shot"),
+    ("dsc-w", "sony", "Cyber-shot"),
+    ("dsc-wx", "sony", "Cyber-shot"),
+    ("dsc-h", "sony", "Cyber-shot"),
+    # Nikon Coolpix S/L
+    ("coolpix s", "nikon", "Coolpix"),
+    ("coolpix l", "nikon", "Coolpix"),
+    # Panasonic Lumix FX
+    ("dmc-fx", "panasonic", "Lumix"),
+    # Casio Exilim
+    ("ex-z", "casio", "Exilim"),
+    # Samsung NV/ST
+    ("nv", "samsung", "NV"),
+    ("st", "samsung", "ST"),
+    # Fujifilm FinePix
+    ("finepix", "fuji", "FinePix"),
+    # Olympus mu/FE/SP
+    ("olympus", "olympus", "mu"),
+    # Pentax Optio
+    ("optio", "pentax", "Optio"),
+    # Kodak EasyShare
+    ("kodak", "kodak", "EasyShare"),
+]
 
 
 def _infer_brand(keyword_lower: str) -> str:
@@ -224,16 +251,40 @@ def _infer_brand(keyword_lower: str) -> str:
         ("fuji", "fuji"), ("olympus", "olympus"), ("panasonic", "panasonic"),
         ("lumix", "panasonic"), ("casio", "casio"), ("samsung", "samsung"),
         ("pentax", "pentax"), ("kodak", "kodak"),
+        ("佳能", "canon"), ("尼康", "nikon"), ("索尼", "sony"),
+        ("富士", "fuji"), ("奥林巴斯", "olympus"), ("松下", "panasonic"),
+        ("卡西欧", "casio"), ("三星", "samsung"),
     ]
     for pattern, brand in brands:
         if pattern in keyword_lower:
             return brand
-    return ""
+    return "other"
+
+
+def _matches_t1(keyword_lower: str) -> bool:
+    for pattern, _, _ in _T1_SERIES_PATTERNS:
+        if pattern in keyword_lower:
+            return True
+    # Chinese brand-only keywords are also T1 (e.g. "佳能ccd")
+    for prefix in ["佳能", "索尼", "尼康", "富士", "松下", "卡西欧", "三星", "奥林巴斯"]:
+        if keyword_lower.startswith(prefix):
+            return True
+    return False
+
+
+# ============================================================
+# 索引构建
+# ============================================================
+
+_keyword_to_model: Dict[str, CanonicalModel] = {}
+_model_by_id: Dict[str, CanonicalModel] = {}
+_tier_keywords: Dict[KeywordTier, List[str]] = {t: [] for t in KeywordTier}
 
 
 def _build_indices():
     from app.services.ccd_keywords import ALL_CCD_KEYWORDS
 
+    # Step 1: register T0 models
     for model in T0_CANONICAL_MODELS:
         _model_by_id[model.model_id] = model
         for kw in model.keywords:
@@ -242,20 +293,32 @@ def _build_indices():
 
     t0_set = {kw.strip().lower() for kw in _tier_keywords[KeywordTier.T0_HOT]}
 
+    # Step 2: split remaining keywords into T1 vs T2
+    t1_models: Dict[str, CanonicalModel] = {}  # brand:model_id -> model
+
     for kw in ALL_CCD_KEYWORDS:
         norm = kw.strip().lower()
         if norm in t0_set:
             continue
-        model_id = f"auto:{norm}"
+        if norm in _keyword_to_model:
+            continue  # already mapped
+
+        brand = _infer_brand(norm)
+        is_t1 = _matches_t1(norm)
+        tier = KeywordTier.T1_WARM if is_t1 else KeywordTier.T2_COLD
+
+        # Group by brand for cleaner model_id
+        model_id = f"tier:{brand}:{norm[:40]}"
         model = CanonicalModel(
             model_id=model_id, display_name=kw.strip(),
-            brand=_infer_brand(norm), series="",
-            keywords=[kw.strip()], tier=KeywordTier.T1_WARM,
+            brand=brand, series="",
+            keywords=[kw.strip()], tier=tier,
         )
         _model_by_id[model_id] = model
         _keyword_to_model[norm] = model
-        _tier_keywords[KeywordTier.T1_WARM].append(kw.strip())
+        _tier_keywords[tier].append(kw.strip())
 
+    # Step 3: deduplicate keywords per tier
     for tier in KeywordTier:
         seen = set()
         unique = []
@@ -323,6 +386,7 @@ def get_model_keywords_for_pricing(keyword: str) -> List[str]:
 
 
 def get_all_keywords() -> List[str]:
-    t0 = _tier_keywords.get(KeywordTier.T0_HOT, [])
-    t1 = _tier_keywords.get(KeywordTier.T1_WARM, [])
-    return t0 + t1
+    result = []
+    for tier in (KeywordTier.T0_HOT, KeywordTier.T1_WARM, KeywordTier.T2_COLD):
+        result.extend(_tier_keywords.get(tier, []))
+    return result
