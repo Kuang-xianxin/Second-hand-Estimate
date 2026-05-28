@@ -3,7 +3,9 @@
 """
 import asyncio
 import logging
+import os
 import random
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Tuple
@@ -16,6 +18,33 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BATCH_SIZE = 10
 DEFAULT_CONCURRENCY = 1
+
+
+def _kill_stale_chromium_processes(min_age_seconds: int = 600) -> None:
+    """Kill old headless Chromium workers left behind after browser.close()."""
+    if os.name != "posix":
+        return
+
+    command = (
+        f"pkill -f -O {int(min_age_seconds)} 'chromium.*headless' 2>/dev/null || "
+        "pgrep -af 'chromium.*headless' | while read -r pid args; do "
+        "case \"$pid\" in ''|*[!0-9]*) continue;; esac; "
+        "age=$(ps -o etimes= -p \"$pid\" 2>/dev/null | tr -d ' '); "
+        f"if [ -n \"$age\" ] && [ \"$age\" -ge {int(min_age_seconds)} ]; then "
+        "kill -TERM \"$pid\" 2>/dev/null || true; "
+        "fi; "
+        "done"
+    )
+    try:
+        subprocess.run(
+            ["bash", "-lc", command],
+            timeout=5,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        logger.debug(f"清理旧 Chromium 进程失败: {e}")
 
 
 def _get_concurrency() -> int:
@@ -187,13 +216,16 @@ async def crawl_single_keyword(
             }
             if storage_state_override:
                 search_kwargs["storage_state_override"] = storage_state_override
-            if sem:
-                async with sem:
+            try:
+                if sem:
+                    async with sem:
+                        await asyncio.sleep(random.uniform(0.3, 1.0))
+                        items = await crawler.search(keyword, **search_kwargs)
+                else:
                     await asyncio.sleep(random.uniform(0.3, 1.0))
                     items = await crawler.search(keyword, **search_kwargs)
-            else:
-                await asyncio.sleep(random.uniform(0.3, 1.0))
-                items = await crawler.search(keyword, **search_kwargs)
+            finally:
+                _kill_stale_chromium_processes()
 
             # 检查爬虫调试摘要中的登录/风控状态。
             debug = getattr(crawler, "_last_debug_summary", {}) or {}

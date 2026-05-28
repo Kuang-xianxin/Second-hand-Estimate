@@ -19,6 +19,7 @@ import json
 import logging
 import pathlib
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Tuple
@@ -54,6 +55,16 @@ if not _chromium_path:
         _chromium_path = ""
 
 CHROMIUM_PATH = _chromium_path if _chromium_path else None
+CHROMIUM_LAUNCH_ARGS = [
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-blink-features=AutomationControlled",
+    "--disable-features=IsolateOrigins,site-per-process",
+    "--ignore-certificate-errors",
+    "--disable-web-security",
+    "--max_old_space_size=256",
+    "--js-flags=--max-old-space-size=128",
+]
 
 GOOD_CONDITION_KEYWORDS = [
     "9成新", "95新", "9.5成新", "99新", "9.9成新", "全新", "近全新", "9成以上", "八九成新", "89新",
@@ -159,6 +170,23 @@ class XianyuCrawler:
     def get_last_debug_summary(self) -> dict:
         """返回最近一次爬取的调试摘要，包含 login_page_hint / risk_page_hint 等。"""
         return dict(self._last_debug_summary)
+
+    def _close_context_browser(self, context, browser) -> None:
+        closed = False
+        if context is not None:
+            try:
+                context.close()
+                closed = True
+            except Exception:
+                pass
+        if browser is not None:
+            try:
+                browser.close()
+                closed = True
+            except Exception:
+                pass
+        if closed:
+            time.sleep(2)
 
     def _parse_cookie_list(self) -> List[dict]:
         cookies = []
@@ -335,16 +363,15 @@ class XianyuCrawler:
         """访问商品详情页，拦截接口响应提取图片 URL 列表（最多 6 张）。"""
         from playwright.sync_api import sync_playwright
         images: List[str] = []
+        browser = None
+        context = None
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, executable_path=CHROMIUM_PATH if CHROMIUM_PATH else None, args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-features=IsolateOrigins,site-per-process",
-                    "--ignore-certificate-errors",
-                    "--disable-web-security",
-                ])
+                browser = p.chromium.launch(
+                    headless=True,
+                    executable_path=CHROMIUM_PATH if CHROMIUM_PATH else None,
+                    args=CHROMIUM_LAUNCH_ARGS,
+                )
                 context = self._build_context(browser)
                 page = context.new_page()
 
@@ -385,10 +412,10 @@ class XianyuCrawler:
                 page.on("response", handle_detail_response)
                 page.goto(f"https://www.goofish.com/item?id={item_id}", wait_until="load", timeout=20000)
                 page.wait_for_timeout(3000)
-                context.close()
-                browser.close()
         except Exception as e:
             logger.debug(f"详情页爬取失败 item_id={item_id}: {e}")
+        finally:
+            self._close_context_browser(context, browser)
         return images[:6]
 
     async def fetch_images_for_items(self, items: List[XianyuItem], max_concurrent: int = 5) -> None:
@@ -468,155 +495,149 @@ class XianyuCrawler:
         login_page_hint = False
         risk_page_hint = False
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, executable_path=CHROMIUM_PATH if CHROMIUM_PATH else None, args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-features=IsolateOrigins,site-per-process",
-                "--ignore-certificate-errors",
-                "--disable-web-security",
-            ])
-            context = self._build_context(browser, storage_state_override=storage_state_override)
-            page = context.new_page()
+        browser = None
+        context = None
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=True,
+                    executable_path=CHROMIUM_PATH if CHROMIUM_PATH else None,
+                    args=CHROMIUM_LAUNCH_ARGS,
+                )
+                context = self._build_context(browser, storage_state_override=storage_state_override)
+                page = context.new_page()
 
-            def _try_decode_body(response_body: bytes) -> Optional[dict]:
-                """尝试解压并解析响应体。"""
-                import gzip
-                try:
-                    return json.loads(response_body)
-                except json.JSONDecodeError:
-                    pass
-                # gzip 魔数：0x1f 0x8b
-                if len(response_body) >= 2 and response_body[:2] == b'\x1f\x8b':
+                def _try_decode_body(response_body: bytes) -> Optional[dict]:
+                    """尝试解压并解析响应体。"""
+                    import gzip
                     try:
-                        return json.loads(gzip.decompress(response_body))
-                    except Exception:
+                        return json.loads(response_body)
+                    except json.JSONDecodeError:
                         pass
-                # zlib 压缩（闲鱼部分接口用）
-                if len(response_body) >= 2 and response_body[:2] in (b'\x78\x01', b'\x78\x9c', b'\x78\xda'):
-                    try:
-                        import zlib
-                        return json.loads(zlib.decompress(response_body))
-                    except Exception:
-                        pass
-                # 仍然失败，记录十六进制用于调试
-                logger.debug(f"响应体无法解析为JSON/gzip/zlib，长度={len(response_body)}，前20字节hex={response_body[:20].hex()}")
-                return None
+                    # gzip 魔数：0x1f 0x8b
+                    if len(response_body) >= 2 and response_body[:2] == b'\x1f\x8b':
+                        try:
+                            return json.loads(gzip.decompress(response_body))
+                        except Exception:
+                            pass
+                    # zlib 压缩（闲鱼部分接口用）
+                    if len(response_body) >= 2 and response_body[:2] in (b'\x78\x01', b'\x78\x9c', b'\x78\xda'):
+                        try:
+                            import zlib
+                            return json.loads(zlib.decompress(response_body))
+                        except Exception:
+                            pass
+                    # 仍然失败，记录十六进制用于调试
+                    logger.debug(f"响应体无法解析为JSON/gzip/zlib，长度={len(response_body)}，前20字节hex={response_body[:20].hex()}")
+                    return None
 
-            def handle_response(response):
-                try:
-                    if "mtop.taobao.idlemtopsearch.pc.search" not in response.url:
-                        return
-                    response_urls.append(response.url)
-                    response_statuses.append({"url": response.url[:140], "status": response.status})
-                    if response.status != 200:
-                        return
+                def handle_response(response):
                     try:
-                        body = _try_decode_body(response.body())
+                        if "mtop.taobao.idlemtopsearch.pc.search" not in response.url:
+                            return
+                        response_urls.append(response.url)
+                        response_statuses.append({"url": response.url[:140], "status": response.status})
+                        if response.status != 200:
+                            return
+                        try:
+                            body = _try_decode_body(response.body())
+                        except asyncio.CancelledError:
+                            logger.debug(f"响应体读取被取消，跳过 (keyword={keyword})")
+                            raise
+                        except Exception:
+                            return
+                        if body is None:
+                            return
+                        ret = body.get("ret") if isinstance(body, dict) else None
+                        if isinstance(ret, list) and ret:
+                            response_ret_samples.append(" | ".join([str(x) for x in ret[:2]]))
+                        raw_list = self._extract_items_from_page_data(body)
+                        if raw_list:
+                            collected.extend(raw_list)
                     except asyncio.CancelledError:
-                        logger.debug(f"响应体读取被取消，跳过 (keyword={keyword})")
                         raise
-                    except Exception:
-                        return
-                    if body is None:
-                        return
-                    ret = body.get("ret") if isinstance(body, dict) else None
-                    if isinstance(ret, list) and ret:
-                        response_ret_samples.append(" | ".join([str(x) for x in ret[:2]]))
-                    raw_list = self._extract_items_from_page_data(body)
-                    if raw_list:
-                        collected.extend(raw_list)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    logger.info(f"响应解析失败: {e}")
+                    except Exception as e:
+                        logger.info(f"响应解析失败: {e}")
 
-            page.on("request", lambda r: None)  # 保留 request 监听占位
-            page.on("response", handle_response)
-            # 使用 "load" 代替 "networkidle"，避免闲鱼长连接导致永远等不到
-            # 使用 "domcontentloaded" 代替 "load"，跳过图片/CSS/字体等子资源加载
-            # 超时从 30s 提升到 60s，给网络波动更多缓冲
-            page.goto(f"https://www.goofish.com/search?q={keyword}", wait_until="domcontentloaded", timeout=60000)
-            # 等待页面初始数据到达
-            page.wait_for_timeout(4000)
+                page.on("request", lambda r: None)  # 保留 request 监听占位
+                page.on("response", handle_response)
+                # 使用 "load" 代替 "networkidle"，避免闲鱼长连接导致永远等不到
+                # 使用 "domcontentloaded" 代替 "load"，跳过图片/CSS/字体等子资源加载
+                # 超时从 30s 提升到 60s，给网络波动更多缓冲
+                page.goto(f"https://www.goofish.com/search?q={keyword}", wait_until="domcontentloaded", timeout=60000)
+                # 等待页面初始数据到达
+                page.wait_for_timeout(4000)
 
-            max_pages = max(1, int(getattr(settings, "max_pages_per_query", 9) or 9))
-            # 第 1 页已经由 page.goto 加载，max_pages=1 时不能再点击下一页。
-            for page_num in range(2, max_pages + 1):
-                if len(collected) >= max_items:
-                    break
-                prev_count = len(collected)
-                # 尝试找并点击"下一页"按钮
-                try:
-                    next_selector = (
-                        "button[class*='next'], "
-                        "button[class*='page']:not([disabled]), "
-                        "a[class*='next'], "
-                        "a[class*='page']:not([aria-disabled='true']):not([aria-disabled='true'])"
-                    )
-                    next_btn = page.query_selector(next_selector)
-                    if not next_btn:
-                        # 备选：找含"下一页"文字的按钮
-                        next_btn = page.query_selector(":text('下一页')")
-                    if not next_btn:
-                        # 备选：找分页区最右侧的按钮
-                        pager = page.query_selector(".pager, .pagination, .page-nav, .x-pagination")
-                        if pager:
-                            buttons = pager.query_selector_all("button, a")
-                            for btn in reversed(buttons):
-                                disabled = btn.get_attribute("disabled") or ""
-                                aria_disabled = btn.get_attribute("aria-disabled") or ""
-                                if not disabled and aria_disabled != "true":
-                                    next_btn = btn
-                                    break
-                    if not next_btn:
-                        # 没有下一页按钮，说明已经是最后一页
+                max_pages = max(1, int(getattr(settings, "max_pages_per_query", 9) or 9))
+                # 第 1 页已经由 page.goto 加载，max_pages=1 时不能再点击下一页。
+                for page_num in range(2, max_pages + 1):
+                    if len(collected) >= max_items:
                         break
-                    # 点击前记录当前 URL，确保确实发生了导航
-                    current_url = page.url
-                    next_btn.click(timeout=5000)
-                    # 等待页面实际刷新（URL 变化或 DOM 有明显变化）
-                    page.wait_for_function(
-                        "url => url !== arguments[0]",
-                        current_url,
-                        timeout=15000,
-                    )
-                    page.wait_for_timeout(2000)
-                    # 检查是否真的有新数据进来
-                    if len(collected) == prev_count:
-                        # 可能点了但没加载新数据，尝试再等 2 秒
-                        page.wait_for_timeout(2000)
-                        if len(collected) == prev_count:
-                            # 仍然没新数据，说明已经是末页
+                    prev_count = len(collected)
+                    # 尝试找并点击"下一页"按钮
+                    try:
+                        next_selector = (
+                            "button[class*='next'], "
+                            "button[class*='page']:not([disabled]), "
+                            "a[class*='next'], "
+                            "a[class*='page']:not([aria-disabled='true']):not([aria-disabled='true'])"
+                        )
+                        next_btn = page.query_selector(next_selector)
+                        if not next_btn:
+                            # 备选：找含"下一页"文字的按钮
+                            next_btn = page.query_selector(":text('下一页')")
+                        if not next_btn:
+                            # 备选：找分页区最右侧的按钮
+                            pager = page.query_selector(".pager, .pagination, .page-nav, .x-pagination")
+                            if pager:
+                                buttons = pager.query_selector_all("button, a")
+                                for btn in reversed(buttons):
+                                    disabled = btn.get_attribute("disabled") or ""
+                                    aria_disabled = btn.get_attribute("aria-disabled") or ""
+                                    if not disabled and aria_disabled != "true":
+                                        next_btn = btn
+                                        break
+                        if not next_btn:
+                            # 没有下一页按钮，说明已经是最后一页
                             break
-                except Exception as e:
-                    logger.debug(f"翻页失败（关键词={keyword}，第{page_num}页）: {e}")
-                    break
+                        # 点击前记录当前 URL，确保确实发生了导航
+                        current_url = page.url
+                        next_btn.click(timeout=5000)
+                        # 等待页面实际刷新（URL 变化或 DOM 有明显变化）
+                        page.wait_for_function(
+                            "url => url !== arguments[0]",
+                            current_url,
+                            timeout=15000,
+                        )
+                        page.wait_for_timeout(2000)
+                        # 检查是否真的有新数据进来
+                        if len(collected) == prev_count:
+                            # 可能点了但没加载新数据，尝试再等 2 秒
+                            page.wait_for_timeout(2000)
+                            if len(collected) == prev_count:
+                                # 仍然没新数据，说明已经是末页
+                                break
+                    except Exception as e:
+                        logger.debug(f"翻页失败（关键词={keyword}，第{page_num}页）: {e}")
+                        break
 
-            if not response_urls:
-                page_text = page.content().lower()
-                login_page_hint = ("登录" in page_text or "login" in page_text or "请先登录" in page_text)
-                risk_page_hint = ("验证码" in page_text or "verify" in page_text or "安全验证" in page_text or "风控" in page_text)
+                if not response_urls:
+                    page_text = page.content().lower()
+                    login_page_hint = ("登录" in page_text or "login" in page_text or "请先登录" in page_text)
+                    risk_page_hint = ("验证码" in page_text or "verify" in page_text or "安全验证" in page_text or "风控" in page_text)
 
-            effective_filter_keyword = filter_keyword or keyword
-            for raw in collected:
-                item = self._normalize_item(raw, keyword=effective_filter_keyword)
-                if not item:
-                    filtered_bad_function_count += 1
-                    continue
-                normalized_count += 1
-                items.append(item)
+                effective_filter_keyword = filter_keyword or keyword
+                for raw in collected:
+                    item = self._normalize_item(raw, keyword=effective_filter_keyword)
+                    if not item:
+                        filtered_bad_function_count += 1
+                        continue
+                    normalized_count += 1
+                    items.append(item)
 
-            try:
-                context.close()
-            except Exception:
-                pass
-            try:
-                browser.close()
-            except Exception:
-                pass
 
+        finally:
+            self._close_context_browser(context, browser)
         quality_scores = [i.quality_score for i in items]
         quality_avg = round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else 0.0
 

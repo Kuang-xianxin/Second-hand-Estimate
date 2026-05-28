@@ -5,10 +5,11 @@ import os
 import re
 import uuid
 import webbrowser
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from pydantic import BaseModel
 from typing import Optional, Dict
 from pathlib import Path
@@ -23,6 +24,7 @@ from app.services.xd_card_models import is_masd1_compatible_model
 from app.models.auth import AppUser
 from app.services.auth import get_current_user_optional
 from app.services.xianyu_auth import require_user_xianyu_state
+from app.services.cache import CACHE_TTL_SECONDS, get_cache_l1, get_cache_l2
 from app.config import settings
 
 router = APIRouter(prefix="/api", tags=["估价"])
@@ -58,6 +60,216 @@ def _canonicalize_keyword(keyword: str) -> str:
         return "Sony T700"
 
     return text
+
+
+def _cache_lookup_keys(*keywords: str) -> list[str]:
+    from app.services.keyword_tier import get_canonical_keyword
+
+    keys: list[str] = []
+
+    def add(value: str):
+        value = (value or "").strip()
+        if value and value not in keys:
+            keys.append(value)
+
+    for raw in keywords:
+        normalized = _canonicalize_keyword(raw)
+        compact = re.sub(r"\s+", "", normalized)
+        for value in (raw, normalized, compact, normalized.lower(), compact.lower()):
+            add(value)
+            add(get_canonical_keyword(value))
+
+    return keys
+
+
+def _parse_cached_datetime(value) -> Optional[datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _cache_age_seconds(cached: dict) -> Optional[float]:
+    crawled_at = _parse_cached_datetime(cached.get("crawled_at") or cached.get("updated_at"))
+    if crawled_at is None:
+        return None
+    return (datetime.utcnow() - crawled_at).total_seconds()
+
+
+def _cached_valuation_is_fresh(cached: dict) -> bool:
+    age = _cache_age_seconds(cached)
+    if age is None:
+        return False
+    ttl = int(getattr(settings, "crawl_interval_seconds", CACHE_TTL_SECONDS) or CACHE_TTL_SECONDS)
+    return age < ttl
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _json_list(value) -> list:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return value
+    try:
+        data = json.loads(value)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return [value] if isinstance(value, str) and value.startswith("http") else []
+
+
+async def _find_fresh_cached_valuation(
+    original_keyword: str,
+    keyword: str,
+    db: AsyncSession,
+) -> Optional[tuple[dict, str, list[str]]]:
+    lookup_keys = _cache_lookup_keys(original_keyword, keyword)
+
+    for key in lookup_keys:
+        cached = await get_cache_l1(key)
+        if cached and _cached_valuation_is_fresh(cached):
+            return cached, "L1", lookup_keys
+
+    for key in lookup_keys:
+        cached = await get_cache_l2(key, db)
+        if cached and _cached_valuation_is_fresh(cached):
+            return cached, "L2", lookup_keys
+
+    return None
+
+
+async def _cached_samples_payload(
+    db: AsyncSession,
+    lookup_keys: list[str],
+    sample_limit: int,
+) -> list[dict]:
+    if not lookup_keys:
+        return []
+
+    result = await db.execute(
+        select(CrawledItem)
+        .where(or_(CrawledItem.query_keyword.in_(lookup_keys), CrawledItem.keyword.in_(lookup_keys)))
+        .order_by(CrawledItem.crawled_at.desc())
+        .limit(sample_limit)
+    )
+    rows = result.scalars().all()
+    samples = []
+    seen_ids = set()
+    for item in rows:
+        if item.item_id in seen_ids:
+            continue
+        seen_ids.add(item.item_id)
+        samples.append({
+            "item_id": item.item_id,
+            "title": item.title,
+            "price": _safe_float(item.price),
+            "url": item.url or f"https://www.goofish.com/item?id={item.item_id}",
+            "sold": bool(item.sold),
+            "condition": item.condition,
+            "quality_score": _safe_float(item.quality_score, 50.0),
+            "quality_flags": _json_list(item.quality_flags),
+            "images": _json_list(item.images),
+        })
+    return samples
+
+
+async def _cached_bargains_payload(db: AsyncSession, lookup_keys: list[str]) -> list[dict]:
+    if not lookup_keys:
+        return []
+
+    result = await db.execute(
+        select(BargainAlert)
+        .where(BargainAlert.keyword.in_(lookup_keys))
+        .order_by(BargainAlert.profit_estimate.desc())
+        .limit(20)
+    )
+    return [
+        {
+            "item_id": b.item_id,
+            "title": b.title,
+            "price": b.price,
+            "estimated_price": b.estimated_price,
+            "profit_estimate": b.profit_estimate,
+            "url": b.url,
+            "xd_card_size": b.xd_card_size,
+            "xd_card_value": b.xd_card_value,
+            "has_xd_bonus": bool(b.xd_card_size and b.xd_card_value and b.xd_card_value > 0),
+        }
+        for b in result.scalars().all()
+    ]
+
+
+async def _build_cached_base_payload(
+    cached: dict,
+    cache_level: str,
+    lookup_keys: list[str],
+    db: AsyncSession,
+) -> dict:
+    cached_keyword = cached.get("keyword") or (lookup_keys[0] if lookup_keys else "")
+    sample_count = _safe_int(cached.get("sample_count"), 0)
+    sample_limit = max(1, min(sample_count or settings.max_items_per_query or 30, 60))
+    samples = await _cached_samples_payload(db, [cached_keyword, *lookup_keys], sample_limit)
+    bargains = await _cached_bargains_payload(db, [cached_keyword, *lookup_keys])
+    quality_scores = [
+        _safe_float(s.get("quality_score"), 50.0)
+        for s in samples
+        if s.get("quality_score") is not None
+    ]
+
+    return {
+        "type": "base",
+        "from_cache": True,
+        "cache_level": cache_level,
+        "cache_age_seconds": _cache_age_seconds(cached),
+        "crawled_at": cached.get("crawled_at"),
+        "keyword": cached_keyword,
+        "sample_count": sample_count,
+        "xd_card_model": bool(cached.get("is_xd_card", False)),
+        "xd_card_bundle_count": _safe_int(cached.get("xd_card_bundle_count"), 0),
+        "masd1_compatible": False,
+        "masd1_panorama_blocked": False,
+        "algorithm": {
+            "base_price": _safe_float(cached.get("base_price") or cached.get("median_price") or cached.get("avg_price")),
+            "price_min": _safe_float(cached.get("price_min")),
+            "price_max": _safe_float(cached.get("price_max")),
+            "low_outliers": [],
+            "high_outliers": [],
+        },
+        "quality_summary": {
+            "avg_score": round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else 0,
+            "high_quality_count": len([s for s in quality_scores if s >= 75]),
+            "mid_quality_count": len([s for s in quality_scores if 50 <= s < 75]),
+            "low_quality_count": len([s for s in quality_scores if s < 50]),
+        },
+        "samples": samples,
+        "bargains": bargains,
+    }
 
 
 def _debug_not_enough_items(crawler, keyword: str):
@@ -194,9 +406,40 @@ async def valuate(
     if not keyword:
         raise HTTPException(status_code=400, detail="关键词不能为空")
 
+    cached_hit = await _find_fresh_cached_valuation(original_keyword, keyword, db)
+    if cached_hit:
+        cached, cache_level, lookup_keys = cached_hit
+        base_payload = await _build_cached_base_payload(cached, cache_level, lookup_keys, db)
+        return {
+            "keyword": base_payload["keyword"],
+            "input_keyword": original_keyword,
+            "normalized_keyword": keyword,
+            "from_cache": True,
+            "cache_level": cache_level,
+            "cache_age_seconds": base_payload["cache_age_seconds"],
+            "crawled_at": base_payload["crawled_at"],
+            "debug_query_variants": lookup_keys,
+            "debug_collected_count": base_payload["sample_count"],
+            "debug_filter_counts": {
+                "raw_merged_count": base_payload["sample_count"],
+                "rule_filtered_count": base_payload["sample_count"],
+                "llm_filtered_count": 0,
+            },
+            "sample_count": base_payload["sample_count"],
+            "algorithm": base_payload["algorithm"],
+            "quality_summary": base_payload["quality_summary"],
+            "llm_results": [],
+            "samples": base_payload["samples"],
+            "bargains": base_payload["bargains"],
+            "xd_card_model": base_payload["xd_card_model"],
+            "xd_card_bundle_count": base_payload["xd_card_bundle_count"],
+            "masd1_compatible": base_payload["masd1_compatible"],
+            "masd1_panorama_blocked": base_payload["masd1_panorama_blocked"],
+        }
+
     # 1. 爬取闲鱼数据（相机关键词使用多查询变体，提升召回）
-    crawler = get_crawler()
     storage_state_override = await require_user_xianyu_state(current_user, db)
+    crawler = get_crawler()
 
     compact_keyword = re.sub(r"\s+", "", keyword)
     camera_like = bool(re.search(r"(canon|nikon|sony|佳能|索尼|尼康|富士|松下|奥林巴斯|sx\s*\d|rx\s*\d|a\s*\d)", keyword, flags=re.IGNORECASE))
@@ -208,25 +451,31 @@ async def valuate(
     if compact_keyword and compact_keyword not in query_variants:
         query_variants.append(compact_keyword)
 
-    # 品牌前缀变体
+    # 品牌前缀变体（修复：从 compact_keyword 中剥离已含的系列名，避免重复）
     BRAND_PREFIX_MAP = {
-        r"ixus\s*\d": [("canon ixus", "佳能 ixus")],
-        r"powershot": [("canon powershot", "佳能")],
-        r"ixy\s*\d": [("canon ixy", "佳能 ixy")],
+        r"ixus\s*\d": [("canon", "佳能")],
+        r"powershot": [("canon", "佳能")],
+        r"ixy\s*\d": [("canon", "佳能")],
         r"dsc-": [("sony", "索尼")],
-        r"cyber.shot": [("sony", "索尼")],
-        r"\brx\s*\d": [("sony rx", "索尼 rx")],
-        r"coolpix": [("nikon coolpix", "尼康 coolpix")],
+        r"cyber\.shot": [("sony", "索尼")],
+        r"\brx\s*\d": [("sony", "索尼")],
+        r"coolpix": [("nikon", "尼康")],
         r"finepix": [("fujifilm", "富士")],
-        r"lumix": [("panasonic lumix", "松下 lumix")],
-        r"\bsx\s*\d+\b": [("powershot sx", "佳能 sx")],
+        r"lumix": [("panasonic", "松下")],
+        r"\bsx\s*\d+\b": [("canon powershot", "佳能")],
     }
     kw_lower = keyword.lower()
     for pattern, pairs in BRAND_PREFIX_MAP.items():
         if re.search(pattern, kw_lower):
+            # 从 compact_keyword 中去掉已经包含的系列名部分，避免 "canon ixus ixus130"
+            stripped = re.sub(pattern, "", compact_keyword, flags=re.IGNORECASE).strip()
             for en_prefix, cn_prefix in pairs:
-                query_variants.append(f"{en_prefix} {compact_keyword}".strip())
-                query_variants.append(f"{cn_prefix}{compact_keyword}".strip())
+                if stripped:
+                    query_variants.append(f"{en_prefix} {stripped}".strip())
+                    query_variants.append(f"{cn_prefix}{stripped}".strip())
+                else:
+                    query_variants.append(f"{en_prefix} {compact_keyword}".strip())
+                    query_variants.append(f"{cn_prefix}{compact_keyword}".strip())
             break
 
     # SX系列补全：sx500 -> sx500 is / powershot sx500 is
@@ -692,11 +941,14 @@ async def valuate_stream(
     """SSE 流式估价：爬取完立即推送基础数据，大模型结果谁先完成先推送谁。"""
     task_id = (task_id or str(uuid.uuid4())).strip()
     _register_stream_task(task_id)
-    storage_state_override = await require_user_xianyu_state(current_user, db)
     original_keyword = req.keyword.strip()
     keyword = _canonicalize_keyword(original_keyword)
     if not keyword:
         raise HTTPException(status_code=400, detail="关键词不能为空")
+    cached_hit = await _find_fresh_cached_valuation(original_keyword, keyword, db)
+    storage_state_override = None
+    if not cached_hit:
+        storage_state_override = await require_user_xianyu_state(current_user, db)
 
     async def event_stream():
         yield f"event: start\ndata: {json.dumps({'task_id': task_id}, ensure_ascii=False)}\n\n"
@@ -735,6 +987,14 @@ async def valuate_stream(
                 )
                 yield f"event: masd1_info\ndata: {json.dumps({'text': masd1_text, 'panorama_blocked': masd1_panorama_blocked}, ensure_ascii=False)}\n\n"
 
+        if cached_hit:
+            cached, cache_level, lookup_keys = cached_hit
+            base_payload = await _build_cached_base_payload(cached, cache_level, lookup_keys, db)
+            yield f"event: base\ndata: {json.dumps(base_payload, ensure_ascii=False)}\n\n"
+            _mark_stream_task_finished(task_id)
+            yield "event: done\ndata: {}\n\n"
+            return
+
         # ---- 阶段1：爬取 + 算法估价 ----
         crawler = get_crawler()
         compact_keyword = re.sub(r"\s+", "", keyword)
@@ -752,25 +1012,25 @@ async def valuate_stream(
         # 品牌前缀变体映射
         BRAND_PREFIX_MAP = {
             # ixus / powershot / ixy / kiss -> 佳能
-            r"ixus\s*\d": [("canon ixus", "canon"), ("佳能 ixus", "佳能")],
-            r"powershot": [("canon powershot", "canon"), ("佳能", "佳能")],
-            r"ixy\s*\d": [("canon ixy", "canon"), ("佳能 ixy", "佳能")],
+            r"ixus\s*\d": [("canon", "佳能")],
+            r"powershot": [("canon", "佳能")],
+            r"ixy\s*\d": [("canon", "佳能")],
             # dsc / cyber.shot / rx -> 索尼
             r"dsc-": [("sony", "sony"), ("索尼", "索尼")],
             r"cyber.shot": [("sony", "sony"), ("索尼", "索尼")],
-            r"\brx\s*\d": [("sony rx", "sony"), ("索尼 rx", "索尼")],
+            r"\brx\s*\d": [("sony", "索尼")],
             r"\bzx\s*\d": [("sony", "sony")],
             # coolpix -> 尼康
-            r"coolpix": [("nikon coolpix", "nikon"), ("尼康 coolpix", "尼康")],
+            r"coolpix": [("nikon", "尼康")],
             r"\bp\s*\d{3,4}\b": [("nikon", "nikon"), ("尼康", "尼康")],
             # finepix / x100 -> 富士
             r"finepix": [("fujifilm", "fuji"), ("富士", "富士")],
-            r"x100": [("fujifilm x100", "fuji x100"), ("富士 x100", "富士")],
+            r"x100": [("fujifilm", "富士")],
             r"\bxt\s*\d": [("fujifilm", "fuji"), ("富士", "富士")],
             # lumix -> 松下
-            r"lumix": [("panasonic lumix", "panasonic"), ("松下 lumix", "松下")],
+            r"lumix": [("panasonic", "松下")],
             # sx系列补全
-            r"\bsx\s*\d+\b": [("powershot sx", "canon sx"), ("佳能 sx", "佳能")],
+            r"\bsx\s*\d+\b": [("canon powershot", "佳能")],
         }
         kw_lower = keyword.lower()
         for pattern, prefixes in BRAND_PREFIX_MAP.items():
