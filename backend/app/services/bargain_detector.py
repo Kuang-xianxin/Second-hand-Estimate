@@ -89,6 +89,12 @@ def detect_global_bargains(
         keyword = getattr(item, "query_keyword", "") or getattr(item, "keyword", "")
         base_price = keyword_prices.get(keyword, 0)
         if base_price <= 0:
+            try:
+                from app.services.keyword_tier import get_canonical_keyword
+                base_price = keyword_prices.get(get_canonical_keyword(keyword), 0)
+            except Exception:
+                base_price = 0
+        if base_price <= 0:
             continue
 
         category = _infer_category(keyword)

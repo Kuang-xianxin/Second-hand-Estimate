@@ -135,20 +135,15 @@ async def get_stats_overview(db: AsyncSession = Depends(get_db)):
     )
     total_items = total_items_result.scalar() or 0
 
-    # 全局捡漏总数 + 按品牌分布
-    bargains_total_result = await db.execute(
-        select(sql_func.count(GlobalBargain.id))
-    )
-    total_bargains = bargains_total_result.scalar() or 0
+    # 全局捡漏展示口径：复用捡漏广场过滤，避免历史脏数据污染统计卡片。
+    from app.api.cache_api import _fetch_displayable_global_bargains
 
-    bargains_brand_result = await db.execute(
-        select(GlobalBargain.brand, sql_func.count(GlobalBargain.id))
-        .group_by(GlobalBargain.brand)
-    )
-    bargains_by_brand = {
-        (row[0] or "其他"): row[1]
-        for row in bargains_brand_result.fetchall()
-    }
+    displayable_bargains = await _fetch_displayable_global_bargains(db)
+    total_bargains = len(displayable_bargains)
+    bargains_by_brand = {}
+    for item in displayable_bargains:
+        brand = item.brand or "其他"
+        bargains_by_brand[brand] = bargains_by_brand.get(brand, 0) + 1
 
     # 价格历史记录数
     history_count_result = await db.execute(

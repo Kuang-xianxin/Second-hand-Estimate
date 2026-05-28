@@ -1,9 +1,20 @@
 <script setup lang="ts">
 import { onMounted, reactive, computed } from 'vue'
-import { getLoginState, openXianyuLogin, stopValuateTask, getBargainsByKeyword } from '@/api'
+import {
+  bindCurrentXianyuState,
+  getAuthHeaders,
+  getBargainsByKeyword,
+  getLoginState,
+  loginAccount,
+  logoutAccount,
+  registerAccount,
+  startXianyuAuth,
+  stopValuateTask,
+  verifyXianyuAuth,
+} from '@/api'
 import CrawlProgressBar from '@/components/CrawlProgressBar.vue'
 import SystemStatusPanel from '@/components/SystemStatusPanel.vue'
-import type { ValuationTask, ValuationStep, ValuationResult, LlmResult, SampleItem, BargainItem, AlgorithmResult, SSEEventType, SSEQualitySummary, ConditionalBargainItem } from '../types'
+import type { AppUser, ValuationTask, ValuationStep, ValuationResult, LlmResult, SampleItem, BargainItem, AlgorithmResult, SSEEventType, SSEQualitySummary, ConditionalBargainItem, XianyuAuthState } from '../types'
 
 defineOptions({ name: 'HomeView' })
 
@@ -22,10 +33,18 @@ const state = reactive({
   currentTaskId: '',                  // 当前选中任务的 ID（用于高亮 tab 和刷新视图）
   activeController: null as AbortController | null,  // 当前 fetch 请求的 AbortController（用于手动中断）
   tasks: [] as ValuationTask[],       // 所有估价任务列表（按创建时间倒序）
+  appLoggedIn: false,                 // 站内账号登录状态
+  appUser: null as AppUser | null,     // 当前站内账号
   isLoggedIn: false,                  // 闲鱼是否已登录
+  xianyuStatus: null as XianyuAuthState | null,
   checkingLogin: false,               // 是否正在检测登录态（防止重复检测）
   showLoginModal: false,             // 是否显示登录引导弹窗
   openingLogin: false,                // 是否正在打开登录页面（控制按钮 loading）
+  authMode: 'login' as 'login' | 'register',
+  authUsername: '',
+  authPassword: '',
+  authLoading: false,
+  authMessage: '',
   ccdMarketOpen: false,               // 市场行情下拉是否展开
   selectedModels: ['deepseek'] as string[],  // 当前选中的大模型列表
 })
@@ -188,23 +207,77 @@ async function checkLoginState() {
   state.checkingLogin = true
   try {
     const resp = await getLoginState()
+    state.appLoggedIn = !!resp?.app_logged_in
+    state.appUser = resp?.user || null
+    state.xianyuStatus = resp?.xianyu || null
     state.isLoggedIn = !!resp?.logged_in
-    if (!state.isLoggedIn) state.showLoginModal = true
+    if (!state.appLoggedIn || !state.isLoggedIn) state.showLoginModal = true
   } catch {
+    state.appLoggedIn = false
+    state.appUser = null
     state.isLoggedIn = false
   } finally {
     state.checkingLogin = false
   }
 }
 
-// 调用后端接口打开闲鱼登录页面（通过 webbrowser 打开）
-// 引用处: 登录弹窗中"打开闲鱼登录页"按钮点击事件
+async function submitAccountAuth() {
+  if (!state.authUsername.trim() || !state.authPassword.trim()) return
+  state.authLoading = true
+  state.authMessage = ''
+  try {
+    const resp = state.authMode === 'register'
+      ? await registerAccount(state.authUsername.trim(), state.authPassword)
+      : await loginAccount(state.authUsername.trim(), state.authPassword)
+    state.appLoggedIn = true
+    state.appUser = resp.user
+    state.xianyuStatus = resp.xianyu
+    state.isLoggedIn = resp.xianyu.status === 'valid'
+    state.authPassword = ''
+    state.authMessage = state.isLoggedIn ? '账号已登录，闲鱼授权可用' : '账号已登录，请继续绑定闲鱼授权'
+  } catch (e) {
+    state.authMessage = parseErrorText(e)
+  } finally {
+    state.authLoading = false
+  }
+}
+
+async function logoutCurrentAccount() {
+  await logoutAccount()
+  state.appLoggedIn = false
+  state.appUser = null
+  state.isLoggedIn = false
+  state.xianyuStatus = null
+  state.showLoginModal = true
+}
+
+// 调用后端接口打开当前站内账号的闲鱼授权流程
+// 引用处: 登录弹窗中"打开闲鱼授权"按钮点击事件
 async function openLoginPage() {
+  if (!state.appLoggedIn) {
+    state.authMessage = '请先登录站内账号'
+    return
+  }
   state.openingLogin = true
   try {
-    await openXianyuLogin()
+    state.xianyuStatus = await startXianyuAuth()
+    state.authMessage = '已打开闲鱼授权窗口，完成登录后点击重新检测'
   } catch (e) {
     state.error = parseErrorText(e)
+    state.authMessage = state.error
+  } finally {
+    state.openingLogin = false
+  }
+}
+
+async function bindOldGlobalState() {
+  state.openingLogin = true
+  try {
+    state.xianyuStatus = await bindCurrentXianyuState()
+    state.isLoggedIn = state.xianyuStatus.status === 'valid'
+    state.authMessage = state.isLoggedIn ? '已导入现有闲鱼登录态' : (state.xianyuStatus.failure_reason || '导入后仍需重新校验')
+  } catch (e) {
+    state.authMessage = parseErrorText(e)
   } finally {
     state.openingLogin = false
   }
@@ -213,7 +286,21 @@ async function openLoginPage() {
 // 用户确认完成登录后，重新检测登录态并关闭弹窗
 // 引用处: 登录弹窗中"我已登录，重新检测"按钮点击事件
 async function confirmLoginDone() {
-  await checkLoginState()
+  if (state.appLoggedIn) {
+    state.checkingLogin = true
+    try {
+      state.xianyuStatus = await verifyXianyuAuth()
+      state.isLoggedIn = state.xianyuStatus.status === 'valid'
+      state.authMessage = state.isLoggedIn ? '闲鱼授权校验通过' : (state.xianyuStatus.failure_reason || '闲鱼授权不可用')
+    } catch (e) {
+      state.authMessage = parseErrorText(e)
+      state.isLoggedIn = false
+    } finally {
+      state.checkingLogin = false
+    }
+  } else {
+    await checkLoginState()
+  }
   if (state.isLoggedIn) state.showLoginModal = false
 }
 
@@ -278,7 +365,7 @@ async function doValuate() {
     await new Promise<void>((resolve, reject) => {
       fetch(`/api/valuate/stream?task_id=${encodeURIComponent(task.id)}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ keyword: task.keyword, models: state.selectedModels }),
         signal: state.tasks[0].controller?.signal,
       }).then(async (resp) => {
@@ -517,20 +604,37 @@ onMounted(() => {
         <button class="task-btn stop" @click="stopCurrentTask"
           :disabled="!state.loading || !state.currentTaskId">停止当前估价</button>
       </div>
-      <div v-if="!state.isLoggedIn"  class="login-tip">
-        <div class="login-tip-title">请先完成一次闲鱼登录授权</div>
+      <div v-if="!state.appLoggedIn || !state.isLoggedIn"  class="login-tip">
+        <div class="login-tip-title">{{ !state.appLoggedIn ? '请先登录站内账号' : '请完成闲鱼授权绑定' }}</div>
       </div>
       <div v-if="state.showLoginModal" class="login-modal-mask">
         <div class="login-modal">
-          <div class="login-modal-title">需要先登录闲鱼</div>
-          <div class="login-modal-text">检测到当前无登录态。点击"打开闲鱼登录页"后，在浏览器完成登录，再点"我已登录，重新检测"。</div>
-          <div class="login-modal-actions">
-            <button class="modal-btn primary" @click="openLoginPage" :disabled="state.openingLogin">
-              {{ state.openingLogin ? '打开中...' : '打开闲鱼登录页' }}
+          <div class="login-modal-title">{{ state.appLoggedIn ? '绑定闲鱼授权' : '登录站内账号' }}</div>
+          <div v-if="!state.appLoggedIn" class="auth-panel">
+            <div class="auth-tabs">
+              <button class="auth-tab" :class="{ active: state.authMode === 'login' }" @click="state.authMode = 'login'">登录</button>
+              <button class="auth-tab" :class="{ active: state.authMode === 'register' }" @click="state.authMode = 'register'">注册</button>
+            </div>
+            <input v-model="state.authUsername" class="auth-input" placeholder="用户名" autocomplete="username" />
+            <input v-model="state.authPassword" class="auth-input" placeholder="密码" type="password" autocomplete="current-password" @keydown.enter="submitAccountAuth" />
+            <button class="modal-btn primary wide" @click="submitAccountAuth" :disabled="state.authLoading">
+              {{ state.authLoading ? '处理中...' : (state.authMode === 'login' ? '登录' : '注册并登录') }}
             </button>
-            <button class="modal-btn ghost" @click="confirmLoginDone" :disabled="state.checkingLogin">我已登录，重新检测</button>
+          </div>
+          <div v-else class="login-modal-text">
+            当前账号：{{ state.appUser?.display_name || state.appUser?.username }}。
+            闲鱼状态：{{ state.xianyuStatus?.status || 'missing' }}
+          </div>
+          <div class="login-modal-actions">
+            <button v-if="state.appLoggedIn" class="modal-btn primary" @click="openLoginPage" :disabled="state.openingLogin">
+              {{ state.openingLogin ? '打开中...' : '打开闲鱼授权' }}
+            </button>
+            <button v-if="state.appLoggedIn" class="modal-btn ghost" @click="bindOldGlobalState" :disabled="state.openingLogin">导入现有登录态</button>
+            <button v-if="state.appLoggedIn" class="modal-btn ghost" @click="confirmLoginDone" :disabled="state.checkingLogin">重新检测</button>
+            <button v-if="state.appLoggedIn" class="modal-btn text" @click="logoutCurrentAccount">退出账号</button>
             <button class="modal-btn text" @click="state.showLoginModal = false">稍后再说</button>
           </div>
+          <div v-if="state.authMessage" class="auth-message">{{ state.authMessage }}</div>
         </div>
       </div>
 
@@ -1011,6 +1115,50 @@ onMounted(() => {
   line-height: 1.7;
 }
 
+.auth-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.auth-tab {
+  flex: 1;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.auth-tab.active {
+  color: var(--accent);
+  border-color: rgba(232, 197, 71, 0.45);
+  background: rgba(232, 197, 71, 0.08);
+}
+
+.auth-input {
+  width: 100%;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.auth-message {
+  margin-top: 12px;
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .login-modal-actions {
   margin-top: 16px;
   display: flex;
@@ -1030,6 +1178,10 @@ onMounted(() => {
   background: var(--accent);
   color: #18140a;
   border: none;
+}
+
+.modal-btn.wide {
+  width: 100%;
 }
 
 .modal-btn.ghost {

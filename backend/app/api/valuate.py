@@ -20,6 +20,9 @@ from app.services.pricing import calculate_price
 from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, analyze_item_images, check_xd_card_from_images, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
 from app.services.bargain import detect_bargains, filter_target_items, filter_target_items_with_reasons, detect_xd_card_model_from_items, strip_xd_card_prices, merge_xd_bundle_with_vision
 from app.services.xd_card_models import is_masd1_compatible_model
+from app.models.auth import AppUser
+from app.services.auth import get_current_user_optional
+from app.services.xianyu_auth import require_user_xianyu_state
 from app.config import settings
 
 router = APIRouter(prefix="/api", tags=["估价"])
@@ -181,7 +184,11 @@ def _bucket_fill_items(base_items: list, candidates: list, target_count: int) ->
 
 
 @router.post("/valuate")
-async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
+async def valuate(
+    req: ValuateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[AppUser] = Depends(get_current_user_optional),
+):
     original_keyword = req.keyword.strip()
     keyword = _canonicalize_keyword(original_keyword)
     if not keyword:
@@ -189,6 +196,7 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
 
     # 1. 爬取闲鱼数据（相机关键词使用多查询变体，提升召回）
     crawler = get_crawler()
+    storage_state_override = await require_user_xianyu_state(current_user, db)
 
     compact_keyword = re.sub(r"\s+", "", keyword)
     camera_like = bool(re.search(r"(canon|nikon|sony|佳能|索尼|尼康|富士|松下|奥林巴斯|sx\s*\d|rx\s*\d|a\s*\d)", keyword, flags=re.IGNORECASE))
@@ -284,6 +292,7 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
                     max_items=per_query_max_items,
                     cookie_override=req.cookies,
                     filter_keyword=keyword,
+                    storage_state_override=storage_state_override,
                 )
                 new_count = 0
                 for it in batch:
@@ -674,10 +683,16 @@ async def get_valuate_tasks():
 
 
 @router.post("/valuate/stream")
-async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db), task_id: Optional[str] = Query(None)):
+async def valuate_stream(
+    req: ValuateRequest,
+    db: AsyncSession = Depends(get_db),
+    task_id: Optional[str] = Query(None),
+    current_user: Optional[AppUser] = Depends(get_current_user_optional),
+):
     """SSE 流式估价：爬取完立即推送基础数据，大模型结果谁先完成先推送谁。"""
     task_id = (task_id or str(uuid.uuid4())).strip()
     _register_stream_task(task_id)
+    storage_state_override = await require_user_xianyu_state(current_user, db)
     original_keyword = req.keyword.strip()
     keyword = _canonicalize_keyword(original_keyword)
     if not keyword:
@@ -842,6 +857,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                     batch = await crawler.search(
                         q, max_items=per_query_max_items,
                         cookie_override=req.cookies, filter_keyword=keyword,
+                        storage_state_override=storage_state_override,
                     )
                     for it in batch:
                         if it.item_id not in seen_ids:
@@ -909,7 +925,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                 yield f"event: xd_confirmed\ndata: {json.dumps({'text': xd_confirm_text, 'bundle_count': xd_bundle_count}, ensure_ascii=False)}\n\n"
 
                 # 图片XD卡检测（并发，轻量，限制前10个节省开销）
-                if settings.qwen_api_key:
+                if settings.qwen_api_key and settings.stream_image_analysis_enabled:
                     xd_analysis_items = [i for i in items if i.images and i.item_id not in xd_card_bonus][:10]
                     if xd_analysis_items:
                         sem_xd = asyncio.Semaphore(3)
@@ -935,7 +951,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
         # 详情页补图已禁用（耗时过长，使用列表页图片）
 
         # 图片并发分析（限流控制：最多3并发+间隔）
-        if settings.qwen_api_key:
+        if settings.qwen_api_key and settings.stream_image_analysis_enabled:
             img_items = [i for i in items if i.images]
             yield f"event: step\ndata: {json.dumps({'text': f'图片核查中（{len(img_items)} 个有图样本）...', 'status': 'pending'}, ensure_ascii=False)}\n\n"
             if img_items:
@@ -1252,10 +1268,35 @@ async def mark_read(alert_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get('/login-state')
-async def get_login_state():
+async def get_login_state(
+    current_user: Optional[AppUser] = Depends(get_current_user_optional),
+    db: AsyncSession = Depends(get_db),
+):
+    if current_user is not None:
+        from app.services.xianyu_auth import get_binding
+        binding = await get_binding(current_user.id, db)
+        logged_in = bool(binding and binding.status == "valid")
+        return {
+            'logged_in': logged_in,
+            'app_logged_in': True,
+            'user': {
+                'id': current_user.id,
+                'username': current_user.username,
+                'display_name': current_user.display_name or current_user.username,
+            },
+            'xianyu': {
+                'bound': bool(binding),
+                'status': binding.status if binding else 'missing',
+                'last_verified_at': binding.last_verified_at.isoformat() if binding and binding.last_verified_at else None,
+                'failure_reason': binding.failure_reason if binding else None,
+            },
+            'storage_state_file': binding.storage_state_path if binding else '',
+        }
+
     logged_in = STORAGE_STATE_FILE.exists() and STORAGE_STATE_FILE.stat().st_size > 0
     return {
         'logged_in': logged_in,
+        'app_logged_in': False,
         'storage_state_file': str(STORAGE_STATE_FILE),
     }
 

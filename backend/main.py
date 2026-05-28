@@ -7,6 +7,7 @@ from app.models.database import init_db, AsyncSessionLocal
 from app.api.valuate import router as valuate_router
 from app.api.cache_api import router as cache_router
 from app.api.stats_api import router as stats_router
+from app.api.auth import router as auth_router
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,7 @@ app.add_middleware(
 app.include_router(valuate_router)
 app.include_router(cache_router)
 app.include_router(stats_router)
+app.include_router(auth_router)
 
 
 @app.get("/health")

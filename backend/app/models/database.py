@@ -6,9 +6,13 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_is_postgres = settings.database_url.startswith("postgresql")
+database_url = settings.database_url
+if database_url.startswith("postgresql://"):
+    database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-engine = create_async_engine(settings.database_url, echo=False)
+_is_postgres = database_url.startswith("postgresql")
+
+engine = create_async_engine(database_url, echo=False, pool_pre_ping=True)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
@@ -25,6 +29,9 @@ async def get_db():
 
 
 async def init_db():
+    # Import models that may not be pulled in by API modules before metadata creation.
+    from app.models import auth as _auth_models  # noqa: F401
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

@@ -8,6 +8,7 @@ venv/
 backend/venv/
 backend/venv312/
 *.sqlite3
+backend/data/
 
 # ===== Secrets =====
 .env
@@ -20,6 +21,14 @@ backend/xianyu_*.json
 debug_*.json
 debug_*.html
 frontend/dist/
+_*.txt
+_*.py
+_*.ps1
+_*.sh
+backend/_*.txt
+backend/_*.py
+Dclaudeshell
+5.0.0
 
 # ===== Node / Frontend =====
 node_modules/

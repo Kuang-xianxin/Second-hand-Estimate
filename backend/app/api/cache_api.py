@@ -15,10 +15,114 @@ from app.services.cache import (
 from app.models.item import BargainAlert, CrawledItem
 from app.models.global_bargain import GlobalBargain
 from app.models.cache import CCDPriceCache
-from sqlalchemy import select, func as sql_func
+from app.config import settings
+from app.api.valuate import require_admin_token
+from app.crawler.xianyu import XianyuItem
+from app.services.bargain import filter_target_items
+from sqlalchemy import or_, select, func as sql_func
 
 router = APIRouter(prefix="/api", tags=["缓存"])
 logger = logging.getLogger(__name__)
+
+CCD_GLOBAL_BARGAIN_BRANDS = [
+    "canon", "nikon", "sony", "fujifilm", "fuji", "olympus", "panasonic",
+    "casio", "ricoh", "kodak", "samsung", "pentax", "sanyo",
+]
+
+CCD_GLOBAL_BARGAIN_TERMS = [
+    "ccd", "相机", "数码相机", "卡片机",
+    "佳能", "尼康", "索尼", "富士", "奥林巴斯", "松下", "卡西欧", "柯达",
+    "canon", "nikon", "sony", "fujifilm", "fuji", "olympus", "panasonic",
+    "casio", "kodak", "coolpix", "ixus", "powershot", "cybershot", "finepix",
+    "lumix", "exilim", "sanyo", "三洋",
+]
+
+GLOBAL_BARGAIN_REJECT_KEYWORDS = [
+    "iphone", "苹果", "手机", "华为", "小米", "oppo", "vivo", "pro max",
+]
+
+GLOBAL_BARGAIN_REJECT_TITLE_TERMS = [
+    "eosmsg", "快门次数", "测试快门", "测试相机快门", "软件",
+]
+
+
+def _global_bargain_display_filter():
+    """只展示相机/CCD 相关全局捡漏，避免历史脏数据污染捡漏广场。"""
+    filters = [GlobalBargain.brand.in_(CCD_GLOBAL_BARGAIN_BRANDS)]
+    for term in CCD_GLOBAL_BARGAIN_TERMS:
+        pattern = f"%{term}%"
+        filters.append(GlobalBargain.keyword.ilike(pattern))
+        filters.append(GlobalBargain.title.ilike(pattern))
+    return or_(*filters)
+
+
+def _global_bargain_to_xianyu_item(item: GlobalBargain) -> XianyuItem:
+    """把历史全局捡漏记录转成估价过滤器可识别的样本形状。"""
+    return XianyuItem(
+        item_id=item.item_id,
+        title=item.title or "",
+        price=float(item.current_price or 0),
+        condition=item.condition or "",
+        description=item.title or "",
+        url=item.url or "",
+        sold=False,
+        sold_at=None,
+        quality_score=float(item.quality_score or 50.0),
+        images=[item.image_url] if item.image_url else [],
+        query_keyword=item.keyword or "",
+    )
+
+
+def _is_global_bargain_displayable(item: GlobalBargain) -> bool:
+    keyword = (item.keyword or "").strip()
+    if not keyword:
+        return False
+    keyword_low = keyword.lower()
+    if any(term in keyword_low for term in GLOBAL_BARGAIN_REJECT_KEYWORDS):
+        return False
+    title_low = (item.title or "").lower()
+    if any(term in title_low for term in GLOBAL_BARGAIN_REJECT_TITLE_TERMS):
+        return False
+    return bool(filter_target_items([_global_bargain_to_xianyu_item(item)], keyword))
+
+
+async def _fetch_displayable_global_bargains(
+    db: AsyncSession,
+    brand: Optional[str] = None,
+    xd_card: Optional[bool] = None,
+) -> list[GlobalBargain]:
+    display_filter = _global_bargain_display_filter()
+    query = select(GlobalBargain).where(display_filter).order_by(GlobalBargain.profit_estimate.desc())
+    if brand:
+        query = query.where(GlobalBargain.brand == brand)
+    if xd_card is True:
+        query = query.where(GlobalBargain.is_xd_card == True)
+    elif xd_card is False:
+        query = query.where(GlobalBargain.is_xd_card == False)
+
+    result = await db.execute(query)
+    return [item for item in result.scalars().all() if _is_global_bargain_displayable(item)]
+
+
+def _cache_lookup_keys(keyword: str) -> list[str]:
+    """返回兼容旧关键词与分层 canonical model 的缓存查询 key。"""
+    from app.api.valuate import _canonicalize_keyword
+    from app.services.keyword_tier import get_canonical_keyword
+
+    candidates: list[str] = []
+
+    def add(value: str):
+        value = (value or "").strip()
+        if value and value not in candidates:
+            candidates.append(value)
+
+    normalized = _canonicalize_keyword(keyword)
+    for value in (keyword, normalized):
+        add(value)
+        add(get_canonical_keyword(value))
+        add(value.lower())
+
+    return candidates
 
 
 class CachedValuationResponse(BaseModel):
@@ -69,51 +173,52 @@ async def valuate_cached(
     2. 查 L2（PostgreSQL）5-20ms
     3. 均未命中返回 404，触发旧逻辑（SSE）
     """
-    import re
-    from app.api.valuate import _canonicalize_keyword
-    canonical = _canonicalize_keyword(keyword)
+    lookup_keys = _cache_lookup_keys(keyword)
+    canonical = lookup_keys[0]
 
     # L1
-    cached = await get_cache_l1(canonical)
-    if cached:
-        history = await get_cache_l3(canonical, db)
-        return CachedValuationResponse(
-            from_cache=True,
-            cache_level="L1",
-            keyword=cached.get("keyword", canonical),
-            display_name=cached.get("display_name"),
-            brand=cached.get("brand"),
-            base_price=cached.get("base_price", 0),
-            price_min=cached.get("price_min", 0),
-            price_max=cached.get("price_max", 0),
-            median_price=cached.get("median_price"),
-            sample_count=cached.get("sample_count", 0),
-            is_xd_card=cached.get("is_xd_card", False),
-            xd_card_bundle_count=cached.get("xd_card_bundle_count", 0),
-            crawled_at=cached.get("crawled_at"),
-            history=history,
-        )
+    for key in lookup_keys:
+        cached = await get_cache_l1(key)
+        if cached:
+            history = await get_cache_l3(cached.get("keyword", key), db)
+            return CachedValuationResponse(
+                from_cache=True,
+                cache_level="L1",
+                keyword=cached.get("keyword", key),
+                display_name=cached.get("display_name"),
+                brand=cached.get("brand"),
+                base_price=cached.get("base_price", 0),
+                price_min=cached.get("price_min", 0),
+                price_max=cached.get("price_max", 0),
+                median_price=cached.get("median_price"),
+                sample_count=cached.get("sample_count", 0),
+                is_xd_card=cached.get("is_xd_card", False),
+                xd_card_bundle_count=cached.get("xd_card_bundle_count", 0),
+                crawled_at=cached.get("crawled_at"),
+                history=history,
+            )
 
     # L2
-    cached2 = await get_cache_l2(canonical, db)
-    if cached2:
-        history = await get_cache_l3(canonical, db)
-        return CachedValuationResponse(
-            from_cache=True,
-            cache_level="L2",
-            keyword=cached2.get("keyword", canonical),
-            display_name=cached2.get("display_name"),
-            brand=cached2.get("brand"),
-            base_price=cached2.get("base_price", 0),
-            price_min=cached2.get("price_min", 0),
-            price_max=cached2.get("price_max", 0),
-            median_price=cached2.get("median_price"),
-            sample_count=cached2.get("sample_count", 0),
-            is_xd_card=cached2.get("is_xd_card", False),
-            xd_card_bundle_count=cached2.get("xd_card_bundle_count", 0),
-            crawled_at=cached2.get("crawled_at"),
-            history=history,
-        )
+    for key in lookup_keys:
+        cached2 = await get_cache_l2(key, db)
+        if cached2:
+            history = await get_cache_l3(cached2.get("keyword", key), db)
+            return CachedValuationResponse(
+                from_cache=True,
+                cache_level="L2",
+                keyword=cached2.get("keyword", key),
+                display_name=cached2.get("display_name"),
+                brand=cached2.get("brand"),
+                base_price=cached2.get("base_price", 0),
+                price_min=cached2.get("price_min", 0),
+                price_max=cached2.get("price_max", 0),
+                median_price=cached2.get("median_price"),
+                sample_count=cached2.get("sample_count", 0),
+                is_xd_card=cached2.get("is_xd_card", False),
+                xd_card_bundle_count=cached2.get("xd_card_bundle_count", 0),
+                crawled_at=cached2.get("crawled_at"),
+                history=history,
+            )
 
     # 缓存未命中
     from fastapi import HTTPException
@@ -144,26 +249,9 @@ async def get_global_bargains(
     全局捡漏列表（捡漏广场用）：按利润从高到低排序。
     支持按品牌、XD 卡筛选，分页返回。
     """
-    query = select(GlobalBargain).order_by(GlobalBargain.profit_estimate.desc())
-    count_query = select(sql_func.count(GlobalBargain.id))
-
-    if brand:
-        query = query.where(GlobalBargain.brand == brand)
-        count_query = count_query.where(GlobalBargain.brand == brand)
-    if xd_card is True:
-        query = query.where(GlobalBargain.is_xd_card == True)
-        count_query = count_query.where(GlobalBargain.is_xd_card == True)
-    elif xd_card is False:
-        query = query.where(GlobalBargain.is_xd_card == False)
-        count_query = count_query.where(GlobalBargain.is_xd_card == False)
-
-    total_result = await db.execute(count_query)
-    total = total_result.scalar() or 0
-
+    displayable_items = await _fetch_displayable_global_bargains(db, brand=brand, xd_card=xd_card)
     offset = (page - 1) * limit
-    query = query.offset(offset).limit(limit)
-    result = await db.execute(query)
-    items = result.scalars().all()
+    items = displayable_items[offset:offset + limit]
 
     return [
         GlobalBargainItem(
@@ -196,25 +284,139 @@ async def get_global_bargains_count(
     db: AsyncSession = Depends(get_db),
 ):
     """全局捡漏总数。"""
-    query = select(sql_func.count(GlobalBargain.id))
-    if brand:
-        query = query.where(GlobalBargain.brand == brand)
-    if xd_card is True:
-        query = query.where(GlobalBargain.is_xd_card == True)
-    elif xd_card is False:
-        query = query.where(GlobalBargain.is_xd_card == False)
-    result = await db.execute(query)
-    total = result.scalar() or 0
+    displayable_items = await _fetch_displayable_global_bargains(db, brand=brand, xd_card=xd_card)
+    total = len(displayable_items)
 
     brand_counts = {}
     if brand is None and xd_card is None:
-        brand_result = await db.execute(
-            select(GlobalBargain.brand, sql_func.count(GlobalBargain.id))
-            .group_by(GlobalBargain.brand)
-        )
-        brand_counts = {row[0] or "其他": row[1] for row in brand_result.fetchall()}
+        for item in displayable_items:
+            brand_key = item.brand or "其他"
+            brand_counts[brand_key] = brand_counts.get(brand_key, 0) + 1
 
     return {"total": total, "brand_counts": brand_counts}
+
+
+# ============================================================
+# 爬虫健康/状态接口
+# ============================================================
+
+class CrawlerStatusResponse(BaseModel):
+    has_storage_state: bool = False
+    login_valid: Optional[bool] = None
+    canary_ok: Optional[bool] = None
+    canary_message: str = ""
+    last_debug_summary: dict = {}
+    tier_counts: dict = {}
+    current_concurrency: int = 1
+
+
+@router.get("/crawler/status", response_model=CrawlerStatusResponse)
+async def crawler_status(run_canary: bool = Query(False)):
+    """
+    爬虫健康状态检查：登录态、金丝雀预检结果、分层关键词数。
+    前端可轮询此接口判断是否需要提示用户重新登录。
+    """
+    from app.crawler.xianyu import get_crawler
+    from app.services.keyword_tier import get_tier_counts
+
+    crawler = get_crawler()
+    has_state = crawler.has_storage_state()
+    last_debug = crawler.get_last_debug_summary()
+
+    tier_counts = get_tier_counts()
+
+    canary_ok = None
+    canary_msg = ""
+    if has_state and run_canary:
+        try:
+            from app.services.crawl_worker import crawl_canary
+            ok, reason, _ = await crawl_canary()
+            canary_ok = ok
+            canary_msg = reason
+        except Exception as e:
+            canary_msg = f"canary 检测异常: {e}"
+
+    return CrawlerStatusResponse(
+        has_storage_state=has_state,
+        login_valid=None if canary_ok is None else canary_ok,
+        canary_ok=canary_ok,
+        canary_message=canary_msg,
+        last_debug_summary=last_debug,
+        tier_counts=tier_counts,
+        current_concurrency=settings.crawl_concurrency,
+    )
+
+
+@router.get("/crawler/tiers")
+async def crawler_tiers():
+    """返回各层级关键词统计信息。"""
+    from app.services.keyword_tier import (
+        get_tier_counts,
+        get_t0_model_ids,
+        KeywordTier,
+        get_keywords_by_tier,
+    )
+    return {
+        "tier_counts": get_tier_counts(),
+        "t0_models": get_t0_model_ids(),
+        "t0_keyword_count": len(get_keywords_by_tier(KeywordTier.T0_HOT)),
+        "t1_keyword_count": len(get_keywords_by_tier(KeywordTier.T1_WARM)),
+        "config": {
+            "t0_enabled": settings.crawl_t0_enabled,
+            "t1_enabled": settings.crawl_t1_enabled,
+            "t2_enabled": settings.crawl_t2_enabled,
+            "t0_interval_s": settings.crawl_interval_seconds,
+            "t1_interval_s": settings.crawl_interval_t1_seconds,
+            "t2_interval_s": settings.crawl_interval_t2_seconds,
+            "canary_enabled": settings.crawl_canary_enabled,
+            "dynamic_concurrency": settings.crawl_dynamic_concurrency,
+        },
+    }
+
+
+@router.get("/crawler/login-check")
+async def crawler_login_check():
+    """轻量登录态检查：不爬取，只检查 storage state 是否存在。"""
+    from app.crawler.xianyu import get_crawler, STORAGE_STATE_FILE
+    crawler = get_crawler()
+    has_state = crawler.has_storage_state()
+    return {
+        "has_storage_state": has_state,
+        "storage_state_file": str(STORAGE_STATE_FILE),
+        "needs_login": not has_state,
+    }
+
+
+class TriggerCrawlRequest(BaseModel):
+    tier: str = "t0"           # t0 / t1 / t2
+    limit: int = 0             # 限制关键词数量，0=全部
+    max_items_per_kw: int = 40
+    concurrency: int = 2
+    skip_canary: bool = False
+
+
+@router.post("/crawler/trigger")
+async def trigger_crawl(req: TriggerCrawlRequest, _admin=Depends(require_admin_token)):
+    """手动触发分层爬取+入库全流程。"""
+    from app.scheduler import _run_tier_crawl
+    from app.models.database import AsyncSessionLocal
+    from app.services.keyword_tier import KeywordTier
+
+    tier_map = {"t0": KeywordTier.T0_HOT, "t1": KeywordTier.T1_WARM, "t2": KeywordTier.T2_COLD}
+    tier = tier_map.get(req.tier, KeywordTier.T0_HOT)
+
+    import asyncio
+    asyncio.create_task(_run_tier_crawl(
+        tier=tier,
+        db_session_factory=AsyncSessionLocal,
+        skip_lock=True,
+        max_items_per_kw=req.max_items_per_kw or 40,
+        skip_canary=req.skip_canary,
+        concurrency=req.concurrency or settings.crawl_concurrency,
+        keyword_limit=req.limit or 0,
+    ))
+
+    return {"status": "started", "tier": req.tier, "message": f"已触发 {req.tier} 爬取任务"}
 
 
 @router.get("/bargains/by-keyword")

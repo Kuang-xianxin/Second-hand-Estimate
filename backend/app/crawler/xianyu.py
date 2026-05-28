@@ -152,8 +152,9 @@ class XianyuCrawler:
         self._cookie_str = cookie_str.strip()
         logger.info("Cookie 已保存")
 
-    def has_storage_state(self) -> bool:
-        return STORAGE_STATE_FILE.exists() and STORAGE_STATE_FILE.stat().st_size > 0
+    def has_storage_state(self, storage_state_override: Optional[str] = None) -> bool:
+        state_file = pathlib.Path(storage_state_override) if storage_state_override else STORAGE_STATE_FILE
+        return state_file.exists() and state_file.stat().st_size > 0
 
     def get_last_debug_summary(self) -> dict:
         """返回最近一次爬取的调试摘要，包含 login_page_hint / risk_page_hint 等。"""
@@ -423,13 +424,14 @@ class XianyuCrawler:
 
         await asyncio.gather(*[_fetch_one(i) for i in no_img_items], return_exceptions=True)
 
-    def _build_context(self, playwright_browser):
+    def _build_context(self, playwright_browser, storage_state_override: Optional[str] = None):
+        state_file = pathlib.Path(storage_state_override) if storage_state_override else STORAGE_STATE_FILE
         context_kwargs = {
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "viewport": {"width": 1280, "height": 800},
         }
-        if self.has_storage_state():
-            context_kwargs["storage_state"] = str(STORAGE_STATE_FILE)
+        if self.has_storage_state(str(state_file)):
+            context_kwargs["storage_state"] = str(state_file)
             return playwright_browser.new_context(**context_kwargs)
 
         context = playwright_browser.new_context(**context_kwargs)
@@ -447,7 +449,13 @@ class XianyuCrawler:
         page.close()
         return context
 
-    def _scrape_sync(self, keyword: str, max_items: int, filter_keyword: Optional[str] = None) -> List[XianyuItem]:
+    def _scrape_sync(
+        self,
+        keyword: str,
+        max_items: int,
+        filter_keyword: Optional[str] = None,
+        storage_state_override: Optional[str] = None,
+    ) -> List[XianyuItem]:
         from playwright.sync_api import sync_playwright
 
         items: List[XianyuItem] = []
@@ -469,7 +477,7 @@ class XianyuCrawler:
                 "--ignore-certificate-errors",
                 "--disable-web-security",
             ])
-            context = self._build_context(browser)
+            context = self._build_context(browser, storage_state_override=storage_state_override)
             page = context.new_page()
 
             def _try_decode_body(response_body: bytes) -> Optional[dict]:
@@ -624,8 +632,8 @@ class XianyuCrawler:
             "filtered_bad_condition_count": filtered_bad_function_count,
             "final_count": len(items),
             "quality_score_avg": quality_avg,
-            "has_storage_state": self.has_storage_state(),
-            "storage_state_file": str(STORAGE_STATE_FILE),
+            "has_storage_state": self.has_storage_state(storage_state_override),
+            "storage_state_file": str(pathlib.Path(storage_state_override) if storage_state_override else STORAGE_STATE_FILE),
             "login_page_hint": login_page_hint,
             "risk_page_hint": risk_page_hint,
         }
@@ -650,6 +658,7 @@ class XianyuCrawler:
         max_items: int = 20,
         cookie_override: Optional[str] = None,
         filter_keyword: Optional[str] = None,
+        storage_state_override: Optional[str] = None,
     ) -> List[XianyuItem]:
         if cookie_override and cookie_override.strip():
             self.save_cookie(cookie_override.strip())
@@ -663,7 +672,7 @@ class XianyuCrawler:
             exc = []
             def _target():
                 try:
-                    result.extend(self._scrape_sync(keyword, max_items, filter_keyword))
+                    result.extend(self._scrape_sync(keyword, max_items, filter_keyword, storage_state_override))
                 except Exception as e:
                     exc.append(e)
             t = threading.Thread(target=_target, daemon=True)

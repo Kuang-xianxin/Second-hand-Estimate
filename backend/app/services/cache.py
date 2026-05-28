@@ -249,12 +249,14 @@ async def get_cache_status(session: AsyncSession) -> dict:
         select(sql_func.count(PriceHistory.id))
     )
     l3_count = l3_result.scalar() or 0
+    bind = session.get_bind()
+    l2_engine = bind.dialect.name if bind is not None else "unknown"
 
     return {
         "l1": {"ok": l1_ok, "engine": "redis"},
         "l2": {
             "ok": True,
-            "engine": "postgresql",
+            "engine": l2_engine,
             "total_keywords": l2_count,
             "latest_crawl": l2_latest,
         },

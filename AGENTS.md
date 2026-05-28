@@ -13,6 +13,18 @@
 - **调度**: APScheduler，每 1.5 小时后台全量爬取 + 缓存更新
 - **部署**: Docker 容器化，Nginx 反向代理，腾讯云服务器
 
+## 学习型交付偏好
+
+用户希望在项目迭代中同步学习开发能力，尤其是为开发实习和面试积累知识。以后对项目做代码、架构、数据库、部署、爬虫、前端交互等修改时，最终回复尽量额外说明：
+
+- 本次用到的技术栈或关键工具，例如 FastAPI、SQLAlchemy async、PostgreSQL、Redis、Playwright、Vue 3、TypeScript、SSE、APScheduler、Docker/Nginx 等。
+- 采用了什么实现方式或设计思路，例如鉴权、缓存分层、后台任务、并发控制、反爬风险熔断、数据库 upsert、前端状态管理等。
+- 为什么这样改，解决了什么问题，和其他可选方案相比主要取舍是什么。
+- 用户可以重点学习哪些知识点，以及这些知识点在实习面试中可能怎么被问到。
+- 验证方式和命令，例如后端测试、前端构建、接口联调、数据库检查等。
+
+说明要通俗、具体、可学习；不要只给“改好了”的结论。对于很小的改动，可以用一小段话简要讲清楚。
+
 ## 目录结构
 
 ```
@@ -108,7 +120,8 @@ backend/
 
 - 前端开发服务器端口 `5173`，后端 `8000`，Vite 代理 `/api` 到后端
 - 后端 `.env` 需要配置：AI 模型 API Key、数据库连接字符串、Redis 连接字符串
-- 数据库：PostgreSQL（生产）+ SQLite 降级（开发），连接字符串在 `config.py`
+- 数据库：PostgreSQL（生产）+ SQLite 降级（开发），连接字符串在 `config.py` / `backend/.env`
+- 生产环境必须显式设置 `DATABASE_URL=postgresql+asyncpg://...`（或 `postgresql://...`，后端会自动转 asyncpg）和 `REDIS_URL`；`docker-compose.cloud.yml` 会把这些变量传入容器，并只挂载 `backend/data` 保存闲鱼登录态，不再挂载 SQLite 文件。如果 PgBouncer/PostgreSQL 跑在 Docker 宿主机，连接地址用 `host.docker.internal`，compose 已配置 `host-gateway`。
 - `qwen_result` 列实际存储了 qwen+doubao 两个模型结果（doubao 嵌套在 qwen_result JSON 内部）
 - `valuation_records.openai_result` 为历史遗留字段，新代码不写入
 - 调度间隔由 `config.crawl_interval_seconds` 控制（默认 5400 秒 = 1.5 小时），scheduler.py 使用此配置

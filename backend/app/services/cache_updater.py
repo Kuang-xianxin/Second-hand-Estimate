@@ -25,58 +25,78 @@ def _dt_to_str(dt) -> str:
     return str(dt) if dt else ""
 
 
+def _match_items_to_keyword(keyword: str, items: list) -> list:
+    """按 canonical model 等价关键词匹配 item，解决 canonical ID 与 item.query_keyword 不一致的问题。"""
+    from app.services.keyword_tier import get_canonical_keyword, get_model_keywords_for_pricing
+    equivalent_kw = set(kw.strip().lower() for kw in get_model_keywords_for_pricing(keyword))
+    canonical = get_canonical_keyword(keyword)
+    matched = []
+    for item in items:
+        item_kw = (getattr(item, "query_keyword", "") or getattr(item, "keyword", "")).strip().lower()
+        if item_kw in equivalent_kw or get_canonical_keyword(item_kw) == canonical:
+            matched.append(item)
+    if not matched:
+        keyword_lower = keyword.lower()
+        matched = [i for i in items if keyword_lower in getattr(i, "title", "").lower()]
+    return matched
+
+
 def compute_price_for_keyword(
     keyword: str,
     items: list,
 ) -> dict:
     """
     为单个关键词计算估价结果。
-    复用 pricing.py 的算法逻辑，但返回 dict 格式。
+    复用 /api/valuate/stream 的本地筛选与 pricing.py 算法逻辑，但返回 dict 格式。
     """
     from app.services.pricing import calculate_price
+    from app.services.bargain import (
+        detect_xd_card_model_from_items,
+        filter_target_items,
+        strip_xd_card_prices,
+    )
 
-    # 筛选该关键词对应的商品
-    keyword_items = [
-        i for i in items
-        if (getattr(i, "query_keyword", "") == keyword or
-            getattr(i, "keyword", "") == keyword)
-    ]
-
-    # 如果没有精确匹配，用 title 模糊匹配
-    if not keyword_items:
-        keyword_lower = keyword.lower()
-        keyword_items = [
-            i for i in items
-            if keyword_lower in getattr(i, "title", "").lower()
-        ]
+    keyword_items = _match_items_to_keyword(keyword, items)
 
     if not keyword_items:
         return {}
 
-    prices = [float(getattr(i, "price", 0)) for i in keyword_items]
-    quality_scores = [float(getattr(i, "quality_score", 50) or 50) for i in keyword_items]
+    filtered_items = filter_target_items(keyword_items, keyword)
 
-    pricing = calculate_price(prices, quality_scores=quality_scores)
+    if not filtered_items:
+        logger.info(
+            "缓存估价跳过 %s：%s 条原始样本经 stream 同源筛选后无有效整机样本",
+            keyword,
+            len(keyword_items),
+        )
+        return {}
 
-    # 检测是否 xD 卡机型
     is_xd = False
+    xd_bundle_count = 0
+    items_for_algo = filtered_items
+
     try:
         from app.services.xd_card_models import is_xd_card_model
         is_xd = is_xd_card_model(keyword)
     except ImportError:
         pass
 
-    # 统计含卡捆绑数量（xD 机型）
-    xd_bundle_count = 0
-    if is_xd:
-        try:
-            from app.services.bargain import detect_xd_card_model_from_items
-            if detect_xd_card_model_from_items(keyword_items, keyword=keyword):
-                from app.services.bargain import strip_xd_card_prices
-                camera_only, _ = strip_xd_card_prices(keyword_items)
-                xd_bundle_count = len(keyword_items) - len(camera_only)
-        except ImportError:
-            pass
+    if is_xd and detect_xd_card_model_from_items(filtered_items, keyword=keyword):
+        camera_only, bundle_infos = strip_xd_card_prices(filtered_items)
+        xd_bundle_count = len(bundle_infos)
+        items_for_algo = camera_only
+
+    if not items_for_algo:
+        logger.info(
+            "缓存估价跳过 %s：XD 拆价后无纯相机样本",
+            keyword,
+        )
+        return {}
+
+    prices = [float(getattr(i, "price", 0)) for i in items_for_algo]
+    quality_scores = [float(getattr(i, "quality_score", 50) or 50) for i in items_for_algo]
+
+    pricing = calculate_price(prices, quality_scores=quality_scores)
 
     avg_price = round(sum(prices) / len(prices), 2) if prices else 0
     import statistics
@@ -84,7 +104,7 @@ def compute_price_for_keyword(
 
     return {
         "keyword": keyword,
-        "display_name": keyword,
+        "display_name": _get_display_name(keyword),
         "brand": extract_brand(keyword),
         "series": extract_series(keyword),
         "base_price": pricing.base_price,
@@ -97,6 +117,11 @@ def compute_price_for_keyword(
         "xd_card_bundle_count": xd_bundle_count,
         "crawled_at": datetime.utcnow(),
     }
+
+
+def _get_display_name(keyword: str) -> str:
+    from app.services.keyword_tier import get_display_name
+    return get_display_name(keyword)
 
 
 def extract_brand(keyword: str) -> str:

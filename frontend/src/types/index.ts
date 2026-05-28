@@ -33,10 +33,37 @@ export interface SSEQualitySummary {
 //   - avatar: 用户头像（可选）
 export interface LoginState {
   logged_in: boolean
+  app_logged_in?: boolean
+  user?: AppUser
+  xianyu?: XianyuAuthState
+  storage_state_file?: string
   user_info?: {
     nick: string
     avatar?: string
   }
+}
+
+export interface AppUser {
+  id: number
+  username: string
+  display_name: string
+}
+
+export interface XianyuAuthState {
+  bound: boolean
+  status: string
+  provider?: string
+  account_label?: string | null
+  last_verified_at?: string | null
+  last_used_at?: string | null
+  expires_at?: string | null
+  failure_reason?: string | null
+}
+
+export interface AuthResponse {
+  token: string
+  user: AppUser
+  xianyu: XianyuAuthState
 }
 
 // 算法估价结果

@@ -11,6 +11,8 @@ import type {
   ConditionalBargainItem,
   CrawlProgress,
   SystemStats,
+  AuthResponse,
+  XianyuAuthState,
 } from '@/types'
 import axios from 'axios'
 
@@ -24,6 +26,73 @@ const http = axios.create({
   baseURL: API_BASE,
   timeout: 300000,
 })
+
+const AUTH_TOKEN_KEY = 'guessr_auth_token'
+
+export function getAuthToken(): string {
+  return localStorage.getItem(AUTH_TOKEN_KEY) || ''
+}
+
+export function setAuthToken(token: string) {
+  if (token) localStorage.setItem(AUTH_TOKEN_KEY, token)
+  else localStorage.removeItem(AUTH_TOKEN_KEY)
+}
+
+export function getAuthHeaders(): Record<string, string> {
+  const token = getAuthToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+http.interceptors.request.use((config) => {
+  const token = getAuthToken()
+  if (token) {
+    config.headers = config.headers || {}
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+export async function registerAccount(username: string, password: string): Promise<AuthResponse> {
+  const res = await http.post<AuthResponse>('/auth/register', { username, password })
+  setAuthToken(res.data.token)
+  return res.data
+}
+
+export async function loginAccount(username: string, password: string): Promise<AuthResponse> {
+  const res = await http.post<AuthResponse>('/auth/login', { username, password })
+  setAuthToken(res.data.token)
+  return res.data
+}
+
+export async function logoutAccount(): Promise<void> {
+  try {
+    await http.post('/auth/logout')
+  } finally {
+    setAuthToken('')
+  }
+}
+
+export async function getCurrentAccount(): Promise<AuthResponse | null> {
+  const token = getAuthToken()
+  if (!token) return null
+  const res = await http.get<{ user: AuthResponse['user']; xianyu: XianyuAuthState }>('/auth/me')
+  return { token, user: res.data.user, xianyu: res.data.xianyu }
+}
+
+export async function startXianyuAuth(): Promise<XianyuAuthState> {
+  const res = await http.post<XianyuAuthState>('/xianyu/auth/start', {})
+  return res.data
+}
+
+export async function verifyXianyuAuth(): Promise<XianyuAuthState> {
+  const res = await http.post<XianyuAuthState>('/xianyu/verify')
+  return res.data
+}
+
+export async function bindCurrentXianyuState(): Promise<XianyuAuthState> {
+  const res = await http.post<XianyuAuthState>('/xianyu/bind-current-state', {})
+  return res.data
+}
 
 // 获取闲鱼登录状态
 export async function getLoginState(): Promise<LoginState> {

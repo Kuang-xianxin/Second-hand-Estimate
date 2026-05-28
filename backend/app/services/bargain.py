@@ -10,7 +10,10 @@ PHONE_HINT_KEYWORDS = [
 ]
 
 CCD_HINT_KEYWORDS = [
-    "ccd", "卡片机", "数码相机", "相机", "镜头", "佳能", "尼康", "富士", "索尼", "松下", "奥林巴斯", "理光",
+    "ccd", "卡片机", "数码相机", "相机", "镜头",
+    "canon", "nikon", "sony", "fujifilm", "fuji", "olympus", "panasonic", "lumix", "casio", "ricoh", "kodak",
+    "ixus", "ixy", "powershot", "coolpix", "cybershot", "finepix", "exilim",
+    "佳能", "尼康", "富士", "索尼", "松下", "奥林巴斯", "理光", "卡西欧", "柯达",
 ]
 
 COMMON_RISK_KEYWORDS = [
@@ -27,13 +30,44 @@ CCD_RISK_KEYWORDS = [
     "进灰", "霉", "霉斑", "镜片划伤", "镜头划伤", "快门故障", "快门异常",
     "对焦故障", "对焦异常", "不开机", "死机", "电池仓腐蚀", "维修", "拆修",
     "漏光", "暗角严重", "传感器坏点", "屏幕坏", "闪光灯坏", "仅机身无配件",
+    "进水", "锈迹", "破损", "镜头坏", "故障", "不能开机", "无法开机",
+    "坏了", "当废品", "废品", "有问题", "用不了", "不能用", "找人修",
+    "修一下",
 ]
 
 CCD_ACCESSORY_KEYWORDS = [
     "说明书", "电子版", "pdf", "外屏", "内屏", "液晶屏", "显示屏", "屏幕总成",
-    "电池", "充电器", "充电线", "数据线", "镜头盖", "镜头组", "转接环", "滤镜", "遮光罩",
+    "电池", "充电器", "充电线", "数据线", "usb盖", "usb 盖", "数据盖", "hdmi盖", "hdmi 盖", "盖子",
+    "镜头盖", "镜头组", "转接环", "滤镜", "遮光罩",
     "读卡器", "内存卡", "存储卡", "相机包", "保护套", "贴膜", "背带", "三脚架", "快装板", "热靴",
-    "拆机", "零件", "主板", "排线",
+    "拆机", "零件", "主板", "排线", "底座", "手册", "电路图", "资料", "软件安装", "导航软件",
+]
+
+CCD_HARD_ACCESSORY_KEYWORDS = [
+    "说明书", "电子版", "pdf", "外屏", "内屏", "液晶屏", "显示屏", "屏幕总成",
+    "usb盖", "usb 盖", "数据盖", "hdmi盖", "hdmi 盖", "盖子", "镜头盖", "镜头组",
+    "转接环", "滤镜", "遮光罩", "贴膜", "三脚架", "快装板", "热靴",
+    "拆机", "零件", "主板", "排线", "底座", "手册",
+    "电路图", "资料", "软件安装", "导航软件",
+]
+
+CCD_SOFT_ACCESSORY_KEYWORDS = [
+    "电池", "充电器", "充电线", "数据线", "内存卡", "存储卡", "读卡器", "相机包", "保护套", "背带",
+]
+
+CCD_STANDALONE_ACCESSORY_HINTS = [
+    "适用", "适用于", "适配", "专用", "型号众多", "全新包邮", "单电池", "电池+充电器",
+    "电池充电器",
+]
+
+CCD_NON_CAMERA_KEYWORDS = [
+    "牙刷", "路亚", "鱼竿", "碳板", "穿越机", "打卡机", "考勤机", "众泰", "汽车", "中控导航",
+    "素材", "渲染图", "模型展示", "虚拟物品", "自动发货", "eosmsg", "快门次数", "测试快门",
+    "测试相机快门", "软件",
+]
+
+CCD_WHOLE_CAMERA_SIGNALS = [
+    "ccd", "相机", "数码相机", "卡片机", "机身", "整机", "套机", "拍照", "成色", "功能正常",
 ]
 
 CCD_BRANDS = {
@@ -45,6 +79,7 @@ CCD_BRANDS = {
     "panasonic": ["panasonic", "松下", "lumix"],
     "ricoh": ["ricoh", "理光"],
     "casio": ["casio", "卡西欧", "exilim"],
+    "sanyo": ["sanyo", "三洋", "vpc"],
 }
 
 # XD 卡价格表（富士/奥林巴斯老相机常见配卡）
@@ -154,9 +189,13 @@ def _extract_ccd_brand(text: str) -> str:
     # 先检测明确的品牌关键词，确保准确性
     for brand, aliases in CCD_BRANDS.items():
         for alias in aliases:
-            # 使用单词边界匹配，避免误匹配（如"sony"不能匹配到"fujisony"）
-            if re.search(r'\b' + re.escape(alias) + r'\b', low):
-                return brand
+            if re.search(r"[\u4e00-\u9fff]", alias):
+                if alias in low:
+                    return brand
+            else:
+                # 使用 ASCII 边界匹配，避免误匹配（如"sony"不能匹配到"fujisony"）
+                if re.search(r"(?<![a-z0-9])" + re.escape(alias) + r"(?![a-z0-9])", low):
+                    return brand
     return ""
 
 
@@ -175,6 +214,15 @@ def _ccd_model_mismatch(keyword: str, title: str) -> bool:
 
     kw_tokens = _extract_model_tokens(keyword)
     item_tokens = _extract_model_tokens(title)
+    title_low = (title or "").lower()
+    has_whole_camera_signal = any(signal in title_low for signal in CCD_WHOLE_CAMERA_SIGNALS)
+
+    if kw_brand and not item_brand and not has_whole_camera_signal:
+        return True
+
+    if kw_tokens and not item_tokens:
+        return True
+
     if kw_tokens and item_tokens:
         def _tokens_overlap(a, b):
             for ta in a:
@@ -185,6 +233,36 @@ def _ccd_model_mismatch(keyword: str, title: str) -> bool:
         if not _tokens_overlap(kw_tokens, item_tokens):
             return True
 
+    return False
+
+
+def _ccd_invalid_sample_reason(item) -> str:
+    text = _item_text(item)
+    has_whole_camera_signal = any(signal in text for signal in CCD_WHOLE_CAMERA_SIGNALS)
+    if any(kw.lower() in text for kw in CCD_NON_CAMERA_KEYWORDS):
+        return "非相机商品"
+    if any(kw.lower() in text for kw in CCD_HARD_ACCESSORY_KEYWORDS):
+        return "配件/耗材/资料"
+    if any(kw.lower() in text for kw in CCD_SOFT_ACCESSORY_KEYWORDS):
+        if not has_whole_camera_signal or any(hint.lower() in text for hint in CCD_STANDALONE_ACCESSORY_HINTS):
+            return "配件/耗材/资料"
+    if "当配件" in text or "配件机" in text or "零件机" in text:
+        return "故障/维修/零件机"
+    for kw in CCD_RISK_KEYWORDS:
+        kw_low = kw.lower()
+        if kw_low not in text:
+            continue
+        if _is_negated_keyword(text, kw_low):
+            continue
+        return "故障/维修/零件机"
+    return ""
+
+
+def _is_negated_keyword(text: str, keyword: str) -> bool:
+    for match in re.finditer(re.escape(keyword), text):
+        prefix = text[max(0, match.start() - 6):match.start()]
+        if any(neg in prefix for neg in ["无", "没", "没有", "未", "非", "不是"]):
+            return True
     return False
 
 
@@ -219,6 +297,15 @@ def filter_target_items_with_reasons(items: list, query_keyword: str):
                 "reason": "型号不符",
             })
             continue
+        if category == "ccd":
+            reason = _ccd_invalid_sample_reason(item)
+            if reason:
+                filtered_out.append({
+                    "title": item.title,
+                    "price": item.price,
+                    "reason": reason,
+                })
+                continue
         kept.append(item)
     return kept, filtered_out
 
