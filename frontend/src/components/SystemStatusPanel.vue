@@ -6,6 +6,8 @@ import type { SystemStats } from '@/types'
 const stats = ref<SystemStats | null>(null)
 const loading = ref(true)
 const error = ref('')
+const activeBrand = ref<string | null>(null)
+const expandedBatch = ref<string | null>(null)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 async function load() {
@@ -125,13 +127,15 @@ defineExpose({ refresh: load })
 
       <!-- 品牌覆盖 -->
       <div class="section">
-        <div class="section-title">型号覆盖</div>
+        <div class="section-title">型号覆盖 · 点击筛选</div>
         <div class="brand-chips">
           <span
             v-for="(count, brand) in stats.brands"
             :key="brand"
             class="brand-chip"
-            :style="{ '--chip-color': brandColor(brand as string) }"
+            :class="{ active: activeBrand === brand }"
+            :style="{ background: activeBrand === brand ? brandColor(brand as string) + '22' : 'rgba(0,0,0,0.12)', borderColor: brandColor(brand as string), color: activeBrand === brand ? brandColor(brand as string) : '#888' }"
+            @click="activeBrand = activeBrand === brand ? null : brand"
           >
             {{ brandLabel(brand as string) }} {{ count }}
           </span>
@@ -143,18 +147,23 @@ defineExpose({ refresh: load })
       <div class="section">
         <div class="section-title">最近爬取</div>
         <div class="batch-list">
-          <div v-for="b in stats.recent_batches" :key="b.batch_id" class="batch-item">
+          <div v-for="b in stats.recent_batches" :key="b.batch_id" class="batch-item" @click="expandedBatch = expandedBatch === b.batch_id ? null : b.batch_id">
             <div class="batch-meta">
               <span class="batch-id">{{ b.batch_id }}</span>
               <span class="batch-status" :class="'status-' + b.status">
-                {{ b.status === 'completed' ? '完成' : b.status === 'failed' ? '失败' : b.status === 'running' ? '进行中' : b.status }}
+                {{ b.status === 'completed' ? '✅ 完成' : b.status === 'failed' ? '❌ 失败' : b.status === 'running' ? '⏳ 进行中' : b.status }}
               </span>
             </div>
             <div class="batch-stats">
               <span>{{ b.success_count }}/{{ b.total_keywords }} 成功</span>
-              <span v-if="b.total_items">· {{ b.total_items }} 条商品</span>
+              <span v-if="b.total_items">· {{ b.total_items.toLocaleString() }} 条商品</span>
               <span v-if="b.bargains_found" class="bargain-hint">· {{ b.bargains_found }} 捡漏</span>
               <span class="batch-time">{{ formatDuration(b.started_at, b.finished_at) }}</span>
+            </div>
+            <div v-if="expandedBatch === b.batch_id" class="batch-detail">
+              <div>开始: {{ formatTime(b.started_at) }}</div>
+              <div v-if="b.finished_at">结束: {{ formatTime(b.finished_at) }}</div>
+              <div v-if="b.error_message" class="batch-error">错误: {{ b.error_message }}</div>
             </div>
           </div>
           <div v-if="!stats.recent_batches?.length" class="empty-hint">暂无爬取记录</div>
@@ -296,7 +305,10 @@ defineExpose({ refresh: load })
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s;
 }
+.batch-item:hover { border-color: var(--accent); }
 
 .batch-meta {
   display: flex;
@@ -336,6 +348,25 @@ defineExpose({ refresh: load })
 .batch-time { margin-left: auto; color: var(--text2); opacity: 0.6; }
 
 .empty-hint { font-size: 12px; color: var(--text2); opacity: 0.5; font-style: italic; }
+
+.batch-detail {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+  color: var(--text2);
+  font-family: var(--font-mono);
+}
+.batch-error { color: var(--red); }
+
+.brand-chip.active {
+  font-weight: 700;
+  transform: scale(1.05);
+}
+.brand-chip {
+  cursor: pointer;
+  transition: all 0.15s;
+}
 
 .loading-spinner-sm {
   width: 20px;
