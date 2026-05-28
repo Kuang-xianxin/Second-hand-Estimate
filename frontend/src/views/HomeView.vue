@@ -37,6 +37,7 @@ const state = reactive({
   appUser: null as AppUser | null,     // 当前站内账号
   isLoggedIn: false,                  // 闲鱼是否已登录
   xianyuStatus: null as XianyuAuthState | null,
+  xianyuBound: false,
   checkingLogin: false,               // 是否正在检测登录态（防止重复检测）
   showLoginModal: false,             // 是否显示登录引导弹窗
   openingLogin: false,                // 是否正在打开登录页面（控制按钮 loading）
@@ -241,7 +242,7 @@ async function submitAccountAuth() {
     state.appLoggedIn = true
     state.appUser = resp.user
     state.xianyuStatus = resp.xianyu
-    state.isLoggedIn = resp.xianyu.status === 'valid'
+    state.isLoggedIn = resp.xianyu.status === 'valid'; state.xianyuBound = resp.xianyu.status === 'valid'
     state.authPassword = ''
     state.authMessage = state.isLoggedIn ? '账号已登录，闲鱼授权可用' : '账号已登录，请继续绑定闲鱼授权'
   } catch (e) {
@@ -574,6 +575,39 @@ async function doValuate() {
     if (state.activeController === task.controller) state.activeController = null
     if (task.id === state.currentTaskId) syncViewByTask(task)
   }
+}
+
+
+// 发送密码重置验证码
+async function sendResetCode() {
+  state.resetLoading = true
+  state.resetMessage = ''
+  try {
+    const resp = await fetch('/api/auth/reset-password', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: state.resetEmail })
+    })
+    const data = await resp.json()
+    if (data.ok) { state.resetStep = 'code'; state.resetMessage = data.message }
+    else { state.resetMessage = data.detail || '发送失败' }
+  } catch (e: any) { state.resetMessage = '网络错误' }
+  finally { state.resetLoading = false }
+}
+
+// 确认密码重置
+async function confirmResetPassword() {
+  state.resetLoading = true
+  state.resetMessage = ''
+  try {
+    const resp = await fetch('/api/auth/reset-password/confirm', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: state.resetEmail, code: state.resetCode, new_password: state.resetNewPassword })
+    })
+    const data = await resp.json()
+    if (data.ok) { state.resetStep = 'done'; state.resetMessage = data.message }
+    else { state.resetMessage = data.detail || '重置失败' }
+  } catch (e: any) { state.resetMessage = '网络错误' }
+  finally { state.resetLoading = false }
 }
 
 // 组件挂载后自动检测一次闲鱼登录态（页面打开时提示未登录用户）
