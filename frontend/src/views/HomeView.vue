@@ -43,8 +43,17 @@ const state = reactive({
   authMode: 'login' as 'login' | 'register',
   authUsername: '',
   authPassword: '',
+  authEmail: '',
   authLoading: false,
   authMessage: '',
+  // Password reset
+  showResetModal: false,
+  resetEmail: '',
+  resetCode: '',
+  resetNewPassword: '',
+  resetStep: 'email' as 'email' | 'code' | 'done',
+  resetLoading: false,
+  resetMessage: '',
   ccdMarketOpen: false,               // 市场行情下拉是否展开
   selectedModels: ['deepseek'] as string[],  // 当前选中的大模型列表
 })
@@ -576,7 +585,70 @@ onMounted(() => {
 
 <template>
   <div class="home">
-    <section class="search-section">
+    <!-- 未登录或未绑定闲鱼：全屏认证页 -->
+    <div v-if="!state.appLoggedIn || !state.xianyuBound" class="auth-fullscreen">
+      <div class="auth-fullscreen-card">
+        <h1 class="page-title">二手商品智能估价</h1>
+        <p class="page-sub">登录站内账号并绑定闲鱼授权后即可使用</p>
+
+        <!-- 登录/注册 -->
+        <div v-if="!state.appLoggedIn" class="auth-panel">
+          <div class="auth-tabs">
+            <button class="auth-tab" :class="{ active: state.authMode === 'login' }" @click="state.authMode = 'login'">登录</button>
+            <button class="auth-tab" :class="{ active: state.authMode === 'register' }" @click="state.authMode = 'register'">注册</button>
+          </div>
+          <input v-model="state.authUsername" class="auth-input" placeholder="用户名" autocomplete="username" />
+          <input v-model="state.authPassword" class="auth-input" placeholder="密码" type="password" autocomplete="current-password" @keydown.enter="submitAccountAuth" />
+          <input v-if="state.authMode === 'register'" v-model="state.authEmail" class="auth-input" placeholder="邮箱（用于密码找回）" type="email" autocomplete="email" />
+          <button class="modal-btn primary wide" @click="submitAccountAuth" :disabled="state.authLoading">
+            {{ state.authLoading ? '处理中...' : (state.authMode === 'login' ? '登录' : '注册并登录') }}
+          </button>
+          <div v-if="state.authMessage" class="auth-message">{{ state.authMessage }}</div>
+          <button v-if="state.authMode === 'login'" class="modal-btn text" @click="state.showResetModal = true">忘记密码？</button>
+        </div>
+
+        <!-- 绑定闲鱼 -->
+        <div v-else class="auth-panel">
+          <div class="auth-message success">已登录：{{ state.appUser?.display_name || state.appUser?.username }}</div>
+          <p class="page-sub">请先绑定闲鱼账号授权，才能使用估价功能</p>
+          <div class="login-modal-actions">
+            <button class="modal-btn primary" @click="openLoginPage" :disabled="state.openingLogin">
+              {{ state.openingLogin ? '打开中...' : '打开闲鱼授权' }}
+            </button>
+            <button class="modal-btn ghost" @click="bindOldGlobalState" :disabled="state.openingLogin">导入现有登录态</button>
+            <button class="modal-btn ghost" @click="confirmLoginDone" :disabled="state.checkingLogin">重新检测</button>
+          </div>
+          <div v-if="state.authMessage" class="auth-message">{{ state.authMessage }}</div>
+          <button class="modal-btn text" @click="logoutCurrentAccount">退出账号</button>
+        </div>
+      </div>
+
+      <!-- 密码重置弹窗 -->
+      <div v-if="state.showResetModal" class="login-modal-mask">
+        <div class="login-modal">
+          <div class="login-modal-title">重置密码</div>
+          <div v-if="state.resetStep === 'email'">
+            <p class="page-sub">输入注册邮箱，验证码将发送至管理员邮箱 2764905233@qq.com</p>
+            <input v-model="state.resetEmail" class="auth-input" placeholder="注册邮箱" type="email" />
+            <button class="modal-btn primary wide" @click="sendResetCode" :disabled="state.resetLoading">{{ state.resetLoading ? '发送中...' : '发送验证码' }}</button>
+          </div>
+          <div v-else-if="state.resetStep === 'code'">
+            <input v-model="state.resetCode" class="auth-input" placeholder="6位验证码" maxlength="6" />
+            <input v-model="state.resetNewPassword" class="auth-input" placeholder="新密码" type="password" />
+            <button class="modal-btn primary wide" @click="confirmResetPassword" :disabled="state.resetLoading">{{ state.resetLoading ? '提交中...' : '重置密码' }}</button>
+          </div>
+          <div v-else-if="state.resetStep === 'done'">
+            <p class="auth-message success">密码已重置，请使用新密码登录</p>
+            <button class="modal-btn primary wide" @click="state.showResetModal = false; state.resetStep = 'email'; state.authMode = 'login'">返回登录</button>
+          </div>
+          <div v-if="state.resetMessage" class="auth-message">{{ state.resetMessage }}</div>
+          <button class="modal-btn text" @click="state.showResetModal = false; state.resetStep = 'email'; state.resetMessage = ''">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 已认证：正常功能 -->
+    <section v-if="state.appLoggedIn && state.xianyuBound" class="search-section">
       <h1 class="page-title">二手商品智能估价</h1>
       <p class="page-sub">输入商品名称，获取市场价格区间与多模型分析</p>
       <div class="search-box">

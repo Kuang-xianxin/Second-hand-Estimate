@@ -22,7 +22,7 @@ from app.services.llm import multi_model_valuation, classify_camera_items_by_llm
 from app.services.bargain import detect_bargains, filter_target_items, filter_target_items_with_reasons, detect_xd_card_model_from_items, strip_xd_card_prices, merge_xd_bundle_with_vision
 from app.services.xd_card_models import is_masd1_compatible_model
 from app.models.auth import AppUser
-from app.services.auth import get_current_user_optional
+from app.services.auth import get_current_user
 from app.services.xianyu_auth import require_user_xianyu_state
 from app.services.cache import CACHE_TTL_SECONDS, get_cache_l1, get_cache_l2
 from app.config import settings
@@ -399,7 +399,7 @@ def _bucket_fill_items(base_items: list, candidates: list, target_count: int) ->
 async def valuate(
     req: ValuateRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[AppUser] = Depends(get_current_user_optional),
+    current_user: AppUser = Depends(get_current_user),
 ):
     original_keyword = req.keyword.strip()
     keyword = _canonicalize_keyword(original_keyword)
@@ -936,7 +936,7 @@ async def valuate_stream(
     req: ValuateRequest,
     db: AsyncSession = Depends(get_db),
     task_id: Optional[str] = Query(None),
-    current_user: Optional[AppUser] = Depends(get_current_user_optional),
+    current_user: AppUser = Depends(get_current_user),
 ):
     """SSE 流式估价：爬取完立即推送基础数据，大模型结果谁先完成先推送谁。"""
     task_id = (task_id or str(uuid.uuid4())).strip()
@@ -1529,7 +1529,7 @@ async def mark_read(alert_id: int, db: AsyncSession = Depends(get_db)):
 
 @router.get('/login-state')
 async def get_login_state(
-    current_user: Optional[AppUser] = Depends(get_current_user_optional),
+    current_user: AppUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     if current_user is not None:

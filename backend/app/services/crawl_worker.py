@@ -8,6 +8,7 @@ import random
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 from app.crawler.xianyu import get_crawler
@@ -18,6 +19,45 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BATCH_SIZE = 10
 DEFAULT_CONCURRENCY = 1
+_CPU_CORES = os.cpu_count() or 2
+_CPU_SOFT_LIMIT = _CPU_CORES * 1.5
+_CPU_HARD_LIMIT = _CPU_CORES * 2.5
+
+
+async def _pick_storage_state() -> Optional[str]:
+    """轮换选择有效的用户闲鱼 login state，分散风控风险。"""
+    try:
+        from app.models.database import AsyncSessionLocal
+        from app.models.auth import XianyuAuthBinding
+        from sqlalchemy import select, func
+        import random as _random
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(XianyuAuthBinding.storage_state_path)
+                .where(XianyuAuthBinding.status == "valid")
+                .order_by(func.random())
+                .limit(1)
+            )
+            row = result.first()
+            if row and row[0]:
+                path = Path(row[0])
+                if path.exists() and path.stat().st_size > 0:
+                    return str(path)
+    except Exception:
+        pass
+    return None
+
+
+def _check_cpu_load() -> Tuple[bool, float]:
+    """Return (should_proceed, current_load)."""
+    try:
+        load = os.getloadavg()[0]
+        if load > _CPU_HARD_LIMIT:
+            return False, load
+        return True, load
+    except Exception:
+        return True, 0.0
 
 
 def _kill_stale_chromium_processes(min_age_seconds: int = 600) -> None:
@@ -361,11 +401,28 @@ async def crawl_all_ccd_models(
         logger.info(f"开发模式：限制为 {total_keywords} 个关键词")
     logger.info(f"开始{'T0' if tier == 't0' else 'T1' if tier == 't1' else ''}爬取：{total_keywords} 个关键词，{concurrency} 并发，每词最多 {max_items_per_kw} 条")
 
+    # Rotate to a random user's Xianyu state for this crawl batch
+    if not storage_state_override:
+        rotated_state = await _pick_storage_state()
+        if rotated_state:
+            storage_state_override = rotated_state
+            logger.info(f"多用户轮换：使用 storage_state={rotated_state[-40:]}")
+
     for batch_start in range(0, total_keywords, batch_size):
         batch = keywords[batch_start:batch_start + batch_size]
         batch_num = batch_start // batch_size + 1
         total_batches = (total_keywords + batch_size - 1) // batch_size
         logger.info(f"批次 {batch_num}/{total_batches}：{len(batch)} 个关键词")
+
+        # CPU load check: pause or skip if overloaded
+        ok, load = _check_cpu_load()
+        if not ok:
+            logger.warning(f"CPU load {load:.1f} > hard limit {_CPU_HARD_LIMIT:.1f}，跳过本轮爬取")
+            break
+        if load > _CPU_SOFT_LIMIT:
+            wait_s = int((load - _CPU_SOFT_LIMIT) * 5)
+            logger.info(f"CPU load {load:.1f}偏高，等待 {wait_s}s...")
+            await asyncio.sleep(wait_s)
 
         # 动态调整并发 + 重建信号量
         current_conc = dyn_concurrency.adjust()

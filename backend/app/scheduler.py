@@ -2,6 +2,7 @@
 APScheduler 定时任务——分层爬取 + 缓存更新 + 全局捡漏检测。
 
 T0 热门型号：每 1.5h 高频爬取，少量样本够用即停
+import os
 T1 普通型号：每 12h 爬取一次
 T2 长尾型号：每 3d 或按需爬取
 """
@@ -143,6 +144,18 @@ async def _run_tier_crawl(
 
     # 分布式锁
     lock_id = f"crawl-{tier.value}"
+
+    # CPU 保护：负载过高时延迟或跳过
+    cpu_load = os.getloadavg()[0] if hasattr(os, 'getloadavg') else 0
+    cpu_cores = os.cpu_count() or 2
+    if cpu_load > cpu_cores * 2.5:
+        logger.warning(f"[{tier.value}] CPU 负载过高 ({cpu_load:.1f})，跳过本轮爬取")
+        r and await r.delete(lock_id)
+        return
+    if cpu_load > cpu_cores * 1.5:
+        wait_sec = int((cpu_load - cpu_cores) * 5)
+        logger.info(f"[{tier.value}] CPU 负载偏高 ({cpu_load:.1f})，等待 {wait_sec}s")
+        await asyncio.sleep(wait_sec)
     if not skip_lock:
         try:
             lock = await acquire_crawl_lock(worker_id=lock_id)
