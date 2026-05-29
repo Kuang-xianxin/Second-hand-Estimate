@@ -66,6 +66,7 @@ defineExpose({ refresh: load })
     <div class="progress-header">
       <div class="progress-stage">
         <span class="stage-icon" :class="'icon-' + stageColor">{{ stageIcon }}</span>
+        <span v-if="progress.tier" class="tier-badge">{{ progress.tier.toUpperCase() }}</span>
         <span class="stage-text">{{ progress.stage || '进行中' }}</span>
         <span v-if="progress.total > 0" class="stage-count">
           {{ progress.done }}/{{ progress.total }} 个型号
@@ -154,6 +155,17 @@ defineExpose({ refresh: load })
   align-items: center;
   justify-content: center;
   border-radius: 50%;
+}
+
+.tier-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(232,197,71,0.15);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
 }
 
 .icon-yellow { color: var(--accent); }

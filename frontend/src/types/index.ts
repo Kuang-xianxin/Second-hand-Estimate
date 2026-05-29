@@ -326,6 +326,7 @@ export interface CrawlProgress {
   bargains_found: number
   started_at: string
   finished_at: string
+  tier?: string
 }
 
 /** 爬取批次摘要 */
