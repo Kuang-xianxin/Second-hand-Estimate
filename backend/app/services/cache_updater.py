@@ -258,7 +258,7 @@ async def write_crawled_items(
                 quality_flags_val = _json.dumps(quality_flags_val, ensure_ascii=False)
 
             if existing:
-                existing.keyword = getattr(item, "keyword", "") or getattr(item, "query_keyword", "")
+                existing.keyword = getattr(item, "query_keyword", "") or getattr(item, "keyword", "")
                 existing.query_keyword = getattr(item, "query_keyword", "") or getattr(item, "keyword", "")
                 existing.title = getattr(item, "title", "")
                 existing.price = float(getattr(item, "price", 0))
@@ -272,7 +272,7 @@ async def write_crawled_items(
             else:
                 session.add(CrawledItem(
                     item_id=item_id,
-                    keyword=getattr(item, "keyword", "") or getattr(item, "query_keyword", ""),
+                    keyword=getattr(item, "query_keyword", "") or getattr(item, "keyword", ""),
                     query_keyword=getattr(item, "query_keyword", "") or getattr(item, "keyword", ""),
                     title=getattr(item, "title", ""),
                     price=float(getattr(item, "price", 0)),
