@@ -272,7 +272,37 @@ async function logoutCurrentAccount() {
   state.appUser = null
   state.isLoggedIn = false
   state.xianyuStatus = null
+  state.xianyuBound = false
   state.showLoginModal = true
+}
+
+// 上传闲鱼登录文件
+async function uploadXianyuState(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  state.authLoading = true
+  state.authMessage = '上传中...'
+  try {
+    const form = new FormData()
+    form.append('file', file)
+    const token = localStorage.getItem('guessr_auth_token') || ''
+    const resp = await fetch('/api/xianyu/upload-state', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: form,
+    })
+    const data = await resp.json()
+    if (data.ok) {
+      state.authMessage = '上传成功，正在检测...'
+      await confirmLoginDone()
+    } else {
+      state.authMessage = data.detail || '上传失败'
+    }
+  } catch (e: any) {
+    state.authMessage = '上传失败：' + (e.message || '网络错误')
+  } finally {
+    state.authLoading = false
+  }
 }
 
 // 调用后端接口打开当前站内账号的闲鱼授权流程
@@ -658,16 +688,17 @@ onMounted(() => {
         <!-- 绑定闲鱼 -->
         <div v-else class="auth-panel">
           <div class="auth-message success">已登录：{{ state.appUser?.display_name || state.appUser?.username }}</div>
-          <p class="page-sub">请先绑定闲鱼账号授权，才能使用估价功能</p>
+          <p class="page-sub">你需要上传闲鱼登录文件来完成绑定</p>
           <div class="login-modal-actions">
-            <button class="modal-btn primary" @click="openLoginPage" :disabled="state.openingLogin">
-              {{ state.openingLogin ? '打开中...' : '打开闲鱼授权' }}
-            </button>
-            <button class="modal-btn ghost" @click="bindOldGlobalState" :disabled="state.openingLogin">导入现有登录态</button>
+            <label class="modal-btn primary upload-btn">
+              📁 上传登录文件
+              <input type="file" accept=".json" style="display:none" @change="uploadXianyuState" />
+            </label>
+            <button class="modal-btn ghost" @click="bindOldGlobalState" :disabled="state.openingLogin">使用服务器已有登录态</button>
             <button class="modal-btn ghost" @click="confirmLoginDone" :disabled="state.checkingLogin">重新检测</button>
           </div>
           <div v-if="state.authMessage" class="auth-message">{{ state.authMessage }}</div>
-          <button class="modal-btn text" @click="logoutCurrentAccount">退出账号</button>
+          <button class="modal-btn danger" @click="logoutCurrentAccount">退出登录</button>
         </div>
       </div>
 
@@ -1314,6 +1345,21 @@ onMounted(() => {
   background: transparent;
   color: var(--text2);
   border: none;
+}
+
+.modal-btn.danger {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  background: transparent;
+  color: #E05C5C;
+  border: 1px solid rgba(224, 92, 92, 0.3);
+  font-size: 12px;
+  padding: 6px 0;
+}
+.modal-btn.danger:hover {
+  background: rgba(224, 92, 92, 0.1);
+  border-color: rgba(224, 92, 92, 0.5);
 }
 
 .modal-btn:disabled {
