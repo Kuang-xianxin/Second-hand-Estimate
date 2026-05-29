@@ -763,7 +763,7 @@ onMounted(() => {
     </section>
 
     <!-- CCD市场行情快捷查看区域 -->
-    <section class="ccd-market-section">
+    <section v-if="state.appLoggedIn && state.xianyuBound" class="ccd-market-section">
       <div class="ccd-market-header">
         <span class="ccd-market-icon">📷</span>
         <span class="ccd-market-title">配件情况</span>
