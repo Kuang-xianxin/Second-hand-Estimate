@@ -21,7 +21,7 @@ DEFAULT_BATCH_SIZE = 10
 DEFAULT_CONCURRENCY = 1
 _CPU_CORES = os.cpu_count() or 2
 _CPU_SOFT_LIMIT = _CPU_CORES * 1.5
-_CPU_HARD_LIMIT = _CPU_CORES * 2.5
+_CPU_HARD_LIMIT = 999
 
 
 async def _pick_storage_state() -> Optional[str]:
@@ -257,6 +257,8 @@ async def crawl_single_keyword(
             if storage_state_override:
                 search_kwargs["storage_state_override"] = storage_state_override
             try:
+                # 随机延迟 3-8 秒，避免触发闲鱼风控
+                await asyncio.sleep(random.uniform(3, 8))
                 if sem:
                     async with sem:
                         await asyncio.sleep(random.uniform(0.3, 1.0))
