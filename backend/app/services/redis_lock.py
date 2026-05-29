@@ -6,7 +6,7 @@ from app.models.redis_client import get_redis, LOCK_CRAWL_KEY
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_LOCK_TTL = 7200  # 2 小时，超时自动释放
+DEFAULT_LOCK_TTL = 1800  # 2 小时，超时自动释放
 
 
 class RedisLock:
