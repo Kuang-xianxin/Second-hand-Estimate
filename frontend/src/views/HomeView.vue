@@ -722,7 +722,10 @@ async function confirmResetPassword() {
 // 组件挂载后自动检测一次闲鱼登录态（页面打开时提示未登录用户）
 // 引用处: Vue 生命周期钩子
 onMounted(() => {
-  checkLoginState()
+  // 有 token 才检查登录状态，游客直接看登录页
+  if (localStorage.getItem('guessr_auth_token')) {
+    checkLoginState()
+  }
 })
 </script>
 
@@ -1310,6 +1313,21 @@ onMounted(() => {
   line-height: 1.6;
   font-family: var(--font-mono);
 }
+
+.auth-fullscreen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+.auth-fullscreen-card {
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+}
+.auth-fullscreen-card .page-title { font-size: 28px; margin-bottom: 8px; }
+.auth-fullscreen-card .page-sub { margin-bottom: 20px; }
 
 .login-modal-mask {
   position: fixed;

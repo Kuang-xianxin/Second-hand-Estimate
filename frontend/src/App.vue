@@ -74,11 +74,12 @@ onMounted(() => {
     isDark.value = false
     document.body.classList.add('light')
   }
-  loadUnread()
-  loadCrawlStatus()
   checkLogin()
-  // 每 5 秒轮询一次爬取状态
-  crawlTimer = setInterval(loadCrawlStatus, 5000)
+  if (loggedIn.value) {
+    loadUnread()
+    loadCrawlStatus()
+    crawlTimer = setInterval(loadCrawlStatus, 5000)
+  }
 })
 
 onUnmounted(() => {
