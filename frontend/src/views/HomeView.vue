@@ -241,6 +241,7 @@ async function checkLoginState() {
     state.appUser = resp?.user || null
     state.xianyuStatus = resp?.xianyu || null
     state.isLoggedIn = !!resp?.logged_in
+    state.xianyuBound = state.appLoggedIn && state.isLoggedIn
     if (!state.appLoggedIn || !state.isLoggedIn) state.showLoginModal = true
   } catch {
     state.appLoggedIn = false
@@ -408,6 +409,7 @@ async function confirmLoginDone() {
     try {
       state.xianyuStatus = await verifyXianyuAuth()
       state.isLoggedIn = state.xianyuStatus.status === 'valid'
+      state.xianyuBound = state.isLoggedIn
       state.authMessage = state.isLoggedIn ? '闲鱼授权校验通过' : (state.xianyuStatus.failure_reason || '闲鱼授权不可用')
     } catch (e) {
       state.authMessage = parseErrorText(e)
