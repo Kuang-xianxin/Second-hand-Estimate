@@ -56,8 +56,14 @@ const state = reactive({
   resetLoading: false,
   resetMessage: '',
   ccdMarketOpen: false,               // 市场行情下拉是否展开
-  selectedModels: ['deepseek'] as string[],  // 当前选中的大模型列表
+  selectedModels: ['deepseek'] as string[],
 })
+
+// 二维码登录
+const qrImage = ref('');
+const qrSessionId = ref('');
+const qrChecking = ref(false);
+let qrPollTimer: ReturnType<typeof setInterval> | null = null
 
 // 可用模型选项
 const AVAILABLE_MODELS = [
@@ -303,6 +309,63 @@ async function uploadXianyuState(e: Event) {
   } finally {
     state.authLoading = false
   }
+}
+
+// 扫码登录闲鱼
+async function startQrLogin() {
+  try {
+    state.openingLogin = true
+    state.authMessage = ''
+    const token = localStorage.getItem('guessr_auth_token') || ''
+    const resp = await fetch('/api/xianyu/auth/qr-start', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+    })
+    const data = await resp.json()
+    if (data.ok) {
+      qrImage.value = data.qr_image
+      qrSessionId.value = data.session_id
+      qrChecking.value = true
+      qrPollTimer = setInterval(pollQrLogin, 3000)
+    } else {
+      state.authMessage = data.detail || '生成二维码失败'
+    }
+  } catch (e: any) {
+    state.authMessage = '请求失败：' + (e.message || '网络错误')
+  } finally {
+    state.openingLogin = false
+  }
+}
+
+async function pollQrLogin() {
+  try {
+    const token = localStorage.getItem('guessr_auth_token') || ''
+    const resp = await fetch('/api/xianyu/auth/qr-check?session_id=' + qrSessionId.value, {
+      headers: { 'Authorization': 'Bearer ' + token },
+    })
+    const data = await resp.json()
+    if (data.logged_in) {
+      clearQrPoll()
+      qrImage.value = ''
+      state.authMessage = '扫码登录成功！'
+      await confirmLoginDone()
+    }
+  } catch { /* keep polling */ }
+}
+
+function cancelQrLogin() {
+  clearQrPoll()
+  qrImage.value = ''
+  fetch('/api/xianyu/auth/qr-cancel', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('guessr_auth_token') || '' },
+    body: JSON.stringify({ session_id: qrSessionId.value }),
+  }).catch(() => {})
+}
+
+function clearQrPoll() {
+  if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = null }
+  qrChecking.value = false
 }
 
 // 调用后端接口打开当前站内账号的闲鱼授权流程
@@ -688,13 +751,25 @@ onMounted(() => {
         <!-- 绑定闲鱼 -->
         <div v-else class="auth-panel">
           <div class="auth-message success">已登录：{{ state.appUser?.display_name || state.appUser?.username }}</div>
-          <p class="page-sub">你需要上传闲鱼登录文件来完成绑定</p>
-          <div class="login-modal-actions">
-            <label class="modal-btn primary upload-btn">
+          <p class="page-sub">请用闲鱼 App 扫描二维码完成绑定</p>
+          
+          <!-- 二维码区域 -->
+          <div v-if="qrImage" class="qr-container">
+            <img :src="qrImage" class="qr-image" alt="闲鱼登录二维码" />
+            <p class="qr-hint">打开闲鱼 App → 扫一扫 → 确认登录</p>
+            <div class="qr-loading-dots" v-if="qrChecking"><span>.</span><span>.</span><span>.</span> 等待扫码</div>
+            <button class="modal-btn text" @click="cancelQrLogin">取消</button>
+          </div>
+          
+          <!-- 按钮区域 -->
+          <div v-else class="login-modal-actions">
+            <button class="modal-btn primary wide" @click="startQrLogin" :disabled="state.openingLogin">
+              {{ state.openingLogin ? '正在生成...' : '📱 扫码登录闲鱼' }}
+            </button>
+            <label class="modal-btn ghost upload-btn">
               📁 上传登录文件
               <input type="file" accept=".json" style="display:none" @change="uploadXianyuState" />
             </label>
-            <button class="modal-btn ghost" @click="bindOldGlobalState" :disabled="state.openingLogin">使用服务器已有登录态</button>
             <button class="modal-btn ghost" @click="confirmLoginDone" :disabled="state.checkingLogin">重新检测</button>
           </div>
           <div v-if="state.authMessage" class="auth-message">{{ state.authMessage }}</div>
