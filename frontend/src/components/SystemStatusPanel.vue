@@ -37,7 +37,7 @@ function formatTime(iso: string | null | undefined): string {
   if (!iso) return '-'
   try {
     // 后端存的是 CST(UTC+8) 但无时区标记，加 8 小时偏移
-    const d = new Date(iso + (iso.endsWith('Z') || iso.includes('+') ? '' : '+08:00'))
+    const d = new Date(iso + 'Z')
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0') + ' ' + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0')
   } catch { return iso }
 }

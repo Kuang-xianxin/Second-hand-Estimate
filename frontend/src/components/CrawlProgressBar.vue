@@ -83,7 +83,7 @@ defineExpose({ refresh: load })
           💎 {{ progress.bargains_found }}
         </span>
         <span v-if="progress.started_at" class="meta-item time">
-          {{ new Date(progress.started_at + (progress.started_at.endsWith('Z') || progress.started_at.includes('+') ? '' : '+08:00')).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }}
+          {{ new Date(progress.started_at + 'Z').toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }}
         </span>
       </div>
     </div>
