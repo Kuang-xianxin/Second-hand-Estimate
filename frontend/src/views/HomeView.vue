@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, computed } from 'vue'
+import { onMounted, reactive, computed, ref } from 'vue'
 import {
   bindCurrentXianyuState,
   getAuthHeaders,
@@ -731,8 +731,13 @@ onMounted(() => {
 
 <template>
   <div class="home">
+    <!-- DEBUG BANNER -->
+    <div style="background:red;color:white;padding:10px;text-align:center;font-size:20px;position:fixed;top:0;left:0;right:0;z-index:9999">
+      ✅ Vue 已加载 | appLoggedIn={{ state.appLoggedIn }} | xianyuBound={{ state.xianyuBound }}
+    </div>
+
     <!-- 未登录或未绑定闲鱼：全屏认证页 -->
-    <div v-if="!state.appLoggedIn || !state.xianyuBound" class="auth-fullscreen">
+    <div v-if="!state.appLoggedIn" class="auth-fullscreen">
       <div class="auth-fullscreen-card">
         <h1 class="page-title">二手商品智能估价</h1>
         <p class="page-sub">登录站内账号并绑定闲鱼授权后即可使用</p>
@@ -807,7 +812,7 @@ onMounted(() => {
     </div>
 
     <!-- 已认证：正常功能 -->
-    <section v-if="state.appLoggedIn && state.xianyuBound" class="search-section">
+    <section v-if="state.appLoggedIn" class="search-section">
       <h1 class="page-title">二手商品智能估价</h1>
       <p class="page-sub">输入商品名称，获取市场价格区间与多模型分析</p>
       <div class="search-box">
@@ -888,7 +893,7 @@ onMounted(() => {
     </section>
 
     <!-- CCD市场行情快捷查看区域 -->
-    <section v-if="state.appLoggedIn && state.xianyuBound" class="ccd-market-section">
+    <section v-if="state.appLoggedIn" class="ccd-market-section">
       <div class="ccd-market-header">
         <span class="ccd-market-icon">📷</span>
         <span class="ccd-market-title">配件情况</span>
