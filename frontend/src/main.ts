@@ -21,7 +21,14 @@ const router = createRouter({
   ],
 })
 
-// 创建 Vue 应用实例，注册路由并挂载到 #app 节点
+// 路由守卫：未登录用户跳转首页
+router.beforeEach((to, _from) => {
+  const token = localStorage.getItem('guessr_auth_token')
+  if (to.path === '/') return true
+  if (!token) return '/'
+  return true
+})
+
 const app = createApp(App)
 app.use(router)
 app.mount('#app')

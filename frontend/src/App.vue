@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
-import { getBargains, getCrawlProgress, getCacheStatus } from '@/api'
+import { getBargains, getCrawlProgress, getCacheStatus, getAuthToken } from '@/api'
 import type { CrawlProgress, CacheStatus } from '@/types'
 
 // 未读捡漏提醒数量（显示在导航栏徽标上）
 const unreadCount = ref(0)
 // 主题状态：true=深色模式，false=浅色模式
 const isDark = ref(true)
+
+// 登录状态
+const loggedIn = ref(false)
+function checkLogin() {
+  loggedIn.value = !!getAuthToken()
+}
 
 // 爬取进度状态
 const crawlProgress = ref<CrawlProgress | null>(null)
@@ -70,6 +76,7 @@ onMounted(() => {
   }
   loadUnread()
   loadCrawlStatus()
+  checkLogin()
   // 每 5 秒轮询一次爬取状态
   crawlTimer = setInterval(loadCrawlStatus, 5000)
 })
@@ -92,11 +99,13 @@ onUnmounted(() => {
       <div class="nav-actions">
         <div class="nav-links">
           <router-link to="/" class="nav-link" active-class="active">估价</router-link>
-          <router-link to="/bargains" class="nav-link" active-class="active">
-            捡漏
-            <span v-if="unreadCount > 0" class="badge">{{ unreadCount }}</span>
-          </router-link>
-          <router-link to="/history" class="nav-link" active-class="active">记录</router-link>
+          <template v-if="loggedIn">
+            <router-link to="/bargains" class="nav-link" active-class="active">
+              捡漏
+              <span v-if="unreadCount > 0" class="badge">{{ unreadCount }}</span>
+            </router-link>
+            <router-link to="/history" class="nav-link" active-class="active">记录</router-link>
+          </template>
         </div>
         <!-- 后台爬取状态指示器 -->
         <div v-if="crawlLabel" class="crawl-indicator" :title="'后台任务：' + crawlLabel">
