@@ -731,10 +731,7 @@ onMounted(() => {
 
 <template>
   <div class="home">
-    <!-- DEBUG BANNER -->
-    <div style="background:red;color:white;padding:10px;text-align:center;font-size:20px;position:fixed;top:0;left:0;right:0;z-index:9999">
-      ✅ Vue 已加载 | appLoggedIn={{ state.appLoggedIn }} | xianyuBound={{ state.xianyuBound }}
-    </div>
+    
 
     <!-- 未登录或未绑定闲鱼：全屏认证页 -->
     <div v-if="!state.appLoggedIn" class="auth-fullscreen">

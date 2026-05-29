@@ -100,13 +100,11 @@ onUnmounted(() => {
       <div class="nav-actions">
         <div class="nav-links">
           <router-link to="/" class="nav-link" active-class="active">估价</router-link>
-          <template v-if="loggedIn">
-            <router-link to="/bargains" class="nav-link" active-class="active">
-              捡漏
-              <span v-if="unreadCount > 0" class="badge">{{ unreadCount }}</span>
-            </router-link>
-            <router-link to="/history" class="nav-link" active-class="active">记录</router-link>
-          </template>
+          <router-link to="/bargains" class="nav-link" active-class="active">
+            捡漏
+            <span v-if="unreadCount > 0" class="badge">{{ unreadCount }}</span>
+          </router-link>
+          <router-link to="/history" class="nav-link" active-class="active">记录</router-link>
         </div>
         <!-- 后台爬取状态指示器 -->
         <div v-if="crawlLabel" class="crawl-indicator" :title="'后台任务：' + crawlLabel">
