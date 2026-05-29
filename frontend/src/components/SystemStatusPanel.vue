@@ -80,6 +80,13 @@ function brandColor(key: string): string {
   return BRAND_COLORS[key] || '#888'
 }
 
+const t0Percent = computed(() => Math.min(100, Math.round((stats.value?.cached_models || 0) / 200 * 100)))
+const t1Percent = computed(() => Math.min(100, Math.round(((stats.value?.cached_models || 0) - 52) / 1012 * 100)))
+const t2Percent = computed(() => 0)
+const t0Count = computed(() => stats.value?.cached_models || 0)
+const t1Count = computed(() => Math.max(0, (stats.value?.cached_models || 0) - 52))
+const t2Count = computed(() => 0)
+
 onMounted(() => startPolling(30000))
 onUnmounted(stopPolling)
 
@@ -105,14 +112,14 @@ defineExpose({ refresh: load })
     <div v-else-if="error && !stats" class="panel-error">{{ error }}</div>
 
     <div v-else-if="stats" class="panel-body">
-      <!-- 核心数字 -->
+      <!-- 核心数字：2行 -->
       <div class="stat-grid">
         <div class="stat-card">
           <div class="stat-value">{{ stats.cached_models.toLocaleString() }}</div>
           <div class="stat-label">已缓存型号</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value">{{ stats.total_items.toLocaleString() }}</div>
+          <div class="stat-value">{{ stats.price_history_count.toLocaleString() }}</div>
           <div class="stat-label">商品记录</div>
         </div>
         <div class="stat-card highlight">
@@ -120,53 +127,82 @@ defineExpose({ refresh: load })
           <div class="stat-label">捡漏机会</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value">{{ stats.price_history_count.toLocaleString() }}</div>
-          <div class="stat-label">历史记录</div>
+          <div class="stat-value">{{ formatTime(stats.latest_crawl) }}</div>
+          <div class="stat-label">最近更新</div>
+        </div>
+      </div>
+
+      <!-- 分层覆盖进度 -->
+      <div class="section">
+        <div class="section-title">📊 数据覆盖</div>
+        <div class="tier-bars">
+          <div class="tier-row">
+            <span class="tier-label t0">T0 热门</span>
+            <div class="tier-bar-track"><div class="tier-bar-fill t0-fill" :style="{ width: t0Percent + '%' }"></div></div>
+            <span class="tier-num">{{ t0Count }} / 200</span>
+          </div>
+          <div class="tier-row">
+            <span class="tier-label t1">T1 普通</span>
+            <div class="tier-bar-track"><div class="tier-bar-fill t1-fill" :style="{ width: t1Percent + '%' }"></div></div>
+            <span class="tier-num">{{ t1Count }} / 1012</span>
+          </div>
+          <div class="tier-row">
+            <span class="tier-label t2">T2 长尾</span>
+            <div class="tier-bar-track"><div class="tier-bar-fill t2-fill" :style="{ width: t2Percent + '%' }"></div></div>
+            <span class="tier-num">{{ t2Count }} / 779</span>
+          </div>
         </div>
       </div>
 
       <!-- 品牌覆盖 -->
       <div class="section">
-        <div class="section-title">型号覆盖 · 点击筛选</div>
+        <div class="section-title">🏷️ 型号覆盖 · 点击筛选</div>
         <div class="brand-chips">
-          <span
-            v-for="(count, brand) in stats.brands"
-            :key="brand"
-            class="brand-chip"
+          <span v-for="(count, brand) in stats.brands" :key="brand" class="brand-chip"
             :class="{ active: activeBrand === brand }"
             :style="{ background: activeBrand === brand ? brandColor(brand as string) + '22' : 'rgba(0,0,0,0.12)', borderColor: brandColor(brand as string), color: activeBrand === brand ? brandColor(brand as string) : '#888' }"
-            @click="activeBrand = activeBrand === brand ? null : brand"
-          >
+            @click="activeBrand = activeBrand === brand ? null : brand">
             {{ brandLabel(brand as string) }} {{ count }}
           </span>
-          <span v-if="!stats.brands || Object.keys(stats.brands).length === 0" class="empty-hint">暂无数据</span>
+        </div>
+      </div>
+
+      <!-- 捡漏分布 -->
+      <div v-if="stats.bargains_by_brand && Object.keys(stats.bargains_by_brand).length" class="section">
+        <div class="section-title">💰 捡漏分布</div>
+        <div class="brand-chips">
+          <span v-for="(count, brand) in stats.bargains_by_brand" :key="brand" class="brand-chip bargain-chip"
+            :style="{ borderColor: brandColor(brand as string), color: brandColor(brand as string) }">
+            {{ brandLabel(brand as string) }} {{ count }}个
+          </span>
         </div>
       </div>
 
       <!-- 最近爬取批次 -->
       <div class="section">
-        <div class="section-title">最近爬取</div>
+        <div class="section-title">🕐 最近爬取批次</div>
         <div class="batch-list">
-          <div v-for="b in stats.recent_batches" :key="b.batch_id" class="batch-item" @click="expandedBatch = expandedBatch === b.batch_id ? null : b.batch_id">
+          <div v-for="b in stats.recent_batches.slice(0, 5)" :key="b.batch_id" class="batch-item"
+            @click="expandedBatch = expandedBatch === b.batch_id ? null : b.batch_id">
             <div class="batch-meta">
-              <span class="batch-id">{{ b.batch_id }}</span>
+              <span class="batch-id">{{ b.batch_id.split('_').slice(0,2).join('_') }}</span>
               <span class="batch-status" :class="'status-' + b.status">
-                {{ b.status === 'completed' ? '✅ 完成' : b.status === 'failed' ? '❌ 失败' : b.status === 'running' ? '⏳ 进行中' : b.status }}
+                {{ b.status === 'completed' ? '✅' : b.status === 'failed' ? '❌' : '⏳' }}
               </span>
             </div>
             <div class="batch-stats">
-              <span>{{ b.success_count }}/{{ b.total_keywords }} 成功</span>
-              <span v-if="b.total_items">· {{ b.total_items.toLocaleString() }} 条商品</span>
-              <span v-if="b.bargains_found" class="bargain-hint">· {{ b.bargains_found }} 捡漏</span>
+              <span v-if="b.total_items">{{ b.total_items.toLocaleString() }}条</span>
+              <span v-if="b.bargains_found">· {{ b.bargains_found }}捡漏</span>
               <span class="batch-time">{{ formatDuration(b.started_at, b.finished_at) }}</span>
             </div>
             <div v-if="expandedBatch === b.batch_id" class="batch-detail">
+              <div>{{ b.status === 'failed' ? '❌' : '📋' }} {{ b.batch_id }}</div>
+              <div>{{ b.success_count }}/{{ b.total_keywords }} 关键词成功</div>
               <div>开始: {{ formatTime(b.started_at) }}</div>
               <div v-if="b.finished_at">结束: {{ formatTime(b.finished_at) }}</div>
-              <div v-if="b.error_message" class="batch-error">错误: {{ b.error_message }}</div>
+              <div v-if="b.error_message" class="batch-error">{{ b.error_message }}</div>
             </div>
           </div>
-          <div v-if="!stats.recent_batches?.length" class="empty-hint">暂无爬取记录</div>
         </div>
       </div>
     </div>
@@ -348,6 +384,23 @@ defineExpose({ refresh: load })
 .batch-time { margin-left: auto; color: var(--text2); opacity: 0.6; }
 
 .empty-hint { font-size: 12px; color: var(--text2); opacity: 0.5; font-style: italic; }
+
+/* 分层进度条 */
+.tier-bars { display: flex; flex-direction: column; gap: 6px; }
+.tier-row { display: flex; align-items: center; gap: 8px; }
+.tier-label { font-size: 11px; width: 60px; font-weight: 600; }
+.tier-label.t0 { color: #E74C3C; }
+.tier-label.t1 { color: #F39C12; }
+.tier-label.t2 { color: #888; }
+.tier-bar-track { flex: 1; height: 8px; background: var(--bg3); border-radius: 4px; overflow: hidden; }
+.tier-bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s; }
+.t0-fill { background: linear-gradient(90deg, #E74C3C, #F39C12); }
+.t1-fill { background: linear-gradient(90deg, #3498DB, #1ABC9C); }
+.t2-fill { background: #888; }
+.tier-num { font-size: 10px; color: var(--text2); font-family: var(--font-mono); width: 70px; text-align: right; }
+
+/* 捡漏标签 */
+.bargain-chip { background: rgba(92,184,122,0.08) !important; }
 
 .batch-detail {
   margin-top: 6px;
