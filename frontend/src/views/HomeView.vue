@@ -169,11 +169,25 @@ async function removeTask(taskId: string) {
 // 兼容 Pydantic 验证错误（resp.data.detail）、HTTP 错误和网络错误
 // 引用处: openLoginPage()、doValuate() catch 块
 function parseErrorText(e: unknown): string {
-  const err = e as Record<string, unknown> | undefined   // 将错误对象转为字典
-  const resp = err?.response as Record<string, unknown> | undefined  // axios 封装的响应对象
-  const data = resp?.data as Record<string, unknown> | undefined     // 响应体中的 data 字段
-  const detail = data?.detail                                // Pydantic 验证错误的 detail 字段
+  const err = e as Record<string, unknown> | undefined
+  const resp = err?.response as Record<string, unknown> | undefined
+  const data = resp?.data as Record<string, unknown> | undefined
+  // FastAPI detail field
+  const detail = data?.detail
   if (typeof detail === 'string') return detail
+  // Axios error message from response
+  const msg = data?.message || data?.error
+  if (typeof msg === 'string') return msg
+  // HTTP status text
+  const status = resp?.status
+  if (status === 500) return '服务器内部错误，请稍后重试'
+  if (status === 401) return '用户名或密码错误'
+  if (status === 409) return '用户名已存在'
+  if (status === 404) return '接口不存在'
+  if (status === 429) return '请求过于频繁，请稍后重试'
+  // Network error
+  if (err?.code === 'ERR_NETWORK' || err?.message === 'Network Error')
+    return '网络连接失败，请检查网络'
   return ((e as Error)?.message) || '请求失败，请检查后端是否启动'
 }
 
