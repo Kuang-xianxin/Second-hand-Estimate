@@ -259,10 +259,6 @@ async def crawl_single_keyword(
             try:
                 # 随机延迟 3-8 秒，避免触发闲鱼风控
                 await asyncio.sleep(random.uniform(15, 30))
-                # 每 10 个关键词暂停 60 秒，降低风控
-                if written > 0 and written % 10 == 0:
-                    logger.info(f"已爬 {written} 个关键词，暂停 60s...")
-                    await asyncio.sleep(60)
                 if sem:
                     async with sem:
                         await asyncio.sleep(random.uniform(0.3, 1.0))

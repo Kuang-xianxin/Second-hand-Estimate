@@ -136,15 +136,18 @@ async def require_user_xianyu_state(
             raise HTTPException(status_code=401, detail="请先登录站内账号")
         return str(STORAGE_STATE_FILE) if _state_has_cookies(STORAGE_STATE_FILE) else None
 
-    ok, reason, _ = await verify_binding(user, db, force=False)
-    if not ok:
-        raise HTTPException(status_code=401, detail=f"闲鱼授权不可用：{reason}")
+    # 先检查用户是否有个人绑定
     binding = await get_binding(user.id, db)
-    if binding:
+    if binding and _state_has_cookies(Path(binding.storage_state_path)):
         binding.last_used_at = datetime.utcnow()
         await db.commit()
         return binding.storage_state_path
-    return None
+
+    # 没有个人绑定时回退到全局登录态
+    if _state_has_cookies(STORAGE_STATE_FILE):
+        return str(STORAGE_STATE_FILE)
+
+    raise HTTPException(status_code=401, detail="闲鱼授权不可用：请先绑定闲鱼账号或导入全局登录态")
 
 
 async def choose_scheduler_storage_state(db: AsyncSession) -> Optional[str]:

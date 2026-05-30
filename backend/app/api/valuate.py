@@ -835,10 +835,10 @@ async def valuate(
             "high_outliers": pricing.high_outliers,
         },
         "quality_summary": {
-            "avg_score": round(sum(quality_scores) / len(quality_scores), 2) if quality_scores else 0,
-            "high_quality_count": len([s for s in quality_scores if s >= 75]),
-            "mid_quality_count": len([s for s in quality_scores if 50 <= s < 75]),
-            "low_quality_count": len([s for s in quality_scores if s < 50]),
+            "avg_score": round(sum(quality_scores_for_algo) / len(quality_scores_for_algo), 2) if quality_scores_for_algo else 0,
+            "high_quality_count": len([s for s in quality_scores_for_algo if s >= 75]),
+            "mid_quality_count": len([s for s in quality_scores_for_algo if 50 <= s < 75]),
+            "low_quality_count": len([s for s in quality_scores_for_algo if s < 50]),
         },
         "llm_results": [
             {
