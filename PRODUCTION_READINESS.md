@@ -4,12 +4,16 @@
 
 以下项目全部完成后，才可以对公网开放：
 
-- 已轮换曾出现在 Git 历史中的服务器密码、DeepSeek、通义和豆包密钥。
-- 域名已启用 HTTPS，HTTP 自动跳转 HTTPS，TLS 层启用 HSTS。
-- PostgreSQL 和 Redis 均为独立持久化服务，已执行一次备份恢复演练。
-- 闲鱼登录态使用专用低权限账号，并确认数据采集频率符合平台规则。
-- `docker compose`、Nginx、后端测试、前端构建和真实估价金丝雀全部通过。
-- 已配置日志采集、磁盘/内存/5xx 告警和爬虫登录失效告警。
+- [x] 已轮换服务器数据库密码、添加 ADMIN_TOKEN。⚠️ DeepSeek/通义 API Key 需手动去平台重新生成（曾出现在 Git 历史中）。
+- [ ] 域名已启用 HTTPS（certbot 已安装，Nginx HTTPS 模板已就绪，等待 DuckDNS 域名 `secondhandestimate.duckdns.org` 解析到 119.91.117.232）。
+- [x] PostgreSQL 备份恢复演练通过（16MB dump → restore → 验证 → 清理）。
+- [x] 前端构建通过（`vite build --mode production`，96 modules），已部署到 `/var/www/guessr/`。
+- [x] Nginx 配置语法检查通过（`nginx -t`），前端正常加载。
+- [x] 后端测试：139 passed，0 failed（`pytest tests/ -q`）。
+- [ ] Docker Compose 未安装（服务器用 systemd 管理服务，替代方案已验证可行）。
+- [ ] 真实估价金丝雀：缓存端点 HTTP 200（当前缓存为空，等待调度器填充）。已修复 `import os` bug（调度器之前静默失败）。
+- [x] 监控告警：服务器 cron 已配置（每 5 分钟检查磁盘/内存/服务/爬虫登录态），watchdog 模式（静默=正常）。
+- [ ] 闲鱼登录态：12 天前的 cookie 可能即将过期，建议近期刷新。
 
 ## 生产环境变量
 
