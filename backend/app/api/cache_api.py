@@ -13,10 +13,12 @@ from app.services.cache import (
     get_cache_status,
 )
 from app.models.item import BargainAlert, CrawledItem
+from app.models.auth import AppUser
 from app.models.global_bargain import GlobalBargain
 from app.models.cache import CCDPriceCache
 from app.config import settings
 from app.api.valuate import require_admin_token
+from app.services.auth import get_current_user
 from app.crawler.xianyu import XianyuItem
 from app.services.bargain import filter_target_items
 from sqlalchemy import or_, select, func as sql_func
@@ -165,6 +167,7 @@ class GlobalBargainItem(BaseModel):
 @router.get("/valuate/cached", response_model=CachedValuationResponse)
 async def valuate_cached(
     keyword: str = Query(..., min_length=1),
+    _current_user: AppUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -232,7 +235,10 @@ async def valuate_cached(
 
 
 @router.get("/cache/status")
-async def cache_status(db: AsyncSession = Depends(get_db)):
+async def cache_status(
+    _current_user: AppUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """返回缓存系统整体状态。"""
     return await get_cache_status(db)
 
@@ -243,6 +249,7 @@ async def get_global_bargains(
     xd_card: bool = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
+    _current_user: AppUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -281,6 +288,7 @@ async def get_global_bargains(
 async def get_global_bargains_count(
     brand: str = Query(None),
     xd_card: bool = Query(None),
+    _current_user: AppUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """全局捡漏总数。"""
@@ -311,7 +319,10 @@ class CrawlerStatusResponse(BaseModel):
 
 
 @router.get("/crawler/status", response_model=CrawlerStatusResponse)
-async def crawler_status(run_canary: bool = Query(False)):
+async def crawler_status(
+    run_canary: bool = Query(False),
+    _admin=Depends(require_admin_token),
+):
     """
     爬虫健康状态检查：登录态、金丝雀预检结果、分层关键词数。
     前端可轮询此接口判断是否需要提示用户重新登录。
@@ -348,7 +359,7 @@ async def crawler_status(run_canary: bool = Query(False)):
 
 
 @router.get("/crawler/tiers")
-async def crawler_tiers():
+async def crawler_tiers(_admin=Depends(require_admin_token)):
     """返回各层级关键词统计信息。"""
     from app.services.keyword_tier import (
         get_tier_counts,
@@ -375,14 +386,13 @@ async def crawler_tiers():
 
 
 @router.get("/crawler/login-check")
-async def crawler_login_check():
+async def crawler_login_check(_admin=Depends(require_admin_token)):
     """轻量登录态检查：不爬取，只检查 storage state 是否存在。"""
     from app.crawler.xianyu import get_crawler, STORAGE_STATE_FILE
     crawler = get_crawler()
     has_state = crawler.has_storage_state()
     return {
         "has_storage_state": has_state,
-        "storage_state_file": str(STORAGE_STATE_FILE),
         "needs_login": not has_state,
     }
 
@@ -422,6 +432,7 @@ async def trigger_crawl(req: TriggerCrawlRequest, _admin=Depends(require_admin_t
 @router.get("/bargains/by-keyword")
 async def get_bargains_by_keyword(
     keyword: str = Query(..., min_length=1),
+    current_user: AppUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -434,7 +445,10 @@ async def get_bargains_by_keyword(
 
     result = await db.execute(
         select(BargainAlert)
-        .where(BargainAlert.keyword == canonical)
+        .where(
+            BargainAlert.keyword == canonical,
+            BargainAlert.user_id == current_user.id,
+        )
         .order_by(BargainAlert.profit_estimate.desc())
         .limit(5)
     )
@@ -442,7 +456,10 @@ async def get_bargains_by_keyword(
     if not alerts:
         result2 = await db.execute(
             select(BargainAlert)
-            .where(BargainAlert.keyword.like(f"%{canonical}%"))
+            .where(
+                BargainAlert.keyword.like(f"%{canonical}%"),
+                BargainAlert.user_id == current_user.id,
+            )
             .order_by(BargainAlert.profit_estimate.desc())
             .limit(5)
         )

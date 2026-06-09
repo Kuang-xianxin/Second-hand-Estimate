@@ -3,6 +3,7 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
+    environment: str = "development"
     deepseek_api_key: Optional[str] = None
     qwen_api_key: Optional[str] = None
     doubao_api_key: Optional[str] = None
@@ -29,7 +30,16 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     backend_port: int = 8001
     frontend_url: str = "http://localhost:5173"
+    cors_origins: str = ""
+    trusted_hosts: str = "*"
     site_auth_required: bool = False
+    password_reset_enabled: bool = False
+    smtp_host: Optional[str] = None
+    smtp_port: int = 587
+    smtp_username: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_from_email: Optional[str] = None
+    smtp_use_tls: bool = True
     app_session_ttl_seconds: int = 604800  # 站内登录态 7 天
     xianyu_auth_verify_ttl_seconds: int = 1800  # 闲鱼授权健康检查缓存 30 分钟
     xianyu_auth_soft_expire_hours: int = 12  # 超过此时间未验证则要求重新校验
@@ -68,6 +78,44 @@ class Settings(BaseSettings):
     crawl_canary_keywords: str = "佳能ixus130,索尼t700"  # canary 预检关键词（逗号分隔）
 
     bargain_threshold: float = 120.0
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment.strip().lower() == "production"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        raw = self.cors_origins or self.frontend_url
+        return [value.strip().rstrip("/") for value in raw.split(",") if value.strip()]
+
+    @property
+    def trusted_host_list(self) -> list[str]:
+        return [value.strip() for value in self.trusted_hosts.split(",") if value.strip()]
+
+    def validate_production(self) -> None:
+        if not self.is_production:
+            return
+
+        errors = []
+        if not self.database_url.startswith(("postgresql://", "postgresql+asyncpg://")):
+            errors.append("DATABASE_URL must use PostgreSQL")
+        if not self.redis_url:
+            errors.append("REDIS_URL is required")
+        if not self.admin_token or len(self.admin_token) < 32:
+            errors.append("ADMIN_TOKEN must be at least 32 characters")
+        if not self.site_auth_required:
+            errors.append("SITE_AUTH_REQUIRED must be true")
+        if not self.cors_origin_list or "*" in self.cors_origin_list:
+            errors.append("CORS_ORIGINS/FRONTEND_URL must list explicit origins")
+        if self.trusted_host_list == ["*"]:
+            errors.append("TRUSTED_HOSTS must list explicit hosts")
+        if self.password_reset_enabled and not all(
+            [self.smtp_host, self.smtp_from_email]
+        ):
+            errors.append("SMTP_HOST and SMTP_FROM_EMAIL are required when password reset is enabled")
+
+        if errors:
+            raise RuntimeError("Invalid production configuration: " + "; ".join(errors))
 
     model_config = SettingsConfigDict(
         env_file=".env",

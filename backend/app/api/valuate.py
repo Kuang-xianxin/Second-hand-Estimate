@@ -39,9 +39,15 @@ STORAGE_STATE_FILE = BASE_DIR / "xianyu_storage_state.json"
 
 def require_admin_token(x_admin_token: Optional[str] = Header(default=None)):
     if not settings.admin_token:
-        return
+        raise HTTPException(status_code=503, detail="管理员接口未配置")
     if x_admin_token != settings.admin_token:
         raise HTTPException(status_code=403, detail="管理员令牌无效")
+
+
+def _public_exception_detail(message: str, exc: Exception) -> str:
+    if settings.is_production:
+        return message
+    return f"{message}: {repr(exc)}"
 
 
 class ValuateRequest(BaseModel):
@@ -324,7 +330,7 @@ def _debug_not_enough_items(crawler, keyword: str):
     return {
         "status_code": status_code,
         "detail": detail,
-        "debug": {
+        "debug": {} if settings.is_production else {
             "keyword": keyword,
             **summary,
         },
@@ -612,7 +618,7 @@ async def valuate(
                         break
     except Exception as e:
         logger.exception("爬取失败")
-        raise HTTPException(status_code=502, detail=f"爬取失败: {repr(e)}")
+        raise HTTPException(status_code=502, detail=_public_exception_detail("爬取服务暂不可用，请稍后重试", e))
 
     if len(items) < 3:
         # 优先给出“被严格筛选掉”的明确原因
@@ -628,7 +634,7 @@ async def valuate(
                         "rule_filtered_count": locals().get("rule_filtered_count", 0),
                         "llm_filtered_count": locals().get("llm_filtered_count", 0),
                         "query_variants": query_variants,
-                        "crawler": getattr(crawler, '_last_debug_summary', {}) or {},
+                        "crawler": {} if settings.is_production else (getattr(crawler, '_last_debug_summary', {}) or {}),
                     },
                 },
             )
@@ -755,6 +761,7 @@ async def valuate(
 
     # 9. 存储估价记录
     record = ValuationRecord(
+        user_id=current_user.id,
         keyword=keyword,
         base_price=pricing.base_price,
         price_min=pricing.price_min,
@@ -793,11 +800,15 @@ async def valuate(
 
     for b in bargains:
         existing = await db.execute(
-            select(BargainAlert).where(BargainAlert.item_id == b.item_id)
+            select(BargainAlert).where(
+                BargainAlert.item_id == b.item_id,
+                BargainAlert.user_id == current_user.id,
+            )
         )
         exists_alert = existing.scalar_one_or_none()
         if exists_alert is None:
             db.add(BargainAlert(
+                user_id=current_user.id,
                 valuation_record_id=record.id,
                 item_id=b.item_id,
                 keyword=keyword,
@@ -887,10 +898,14 @@ async def valuate(
     }
 
 
-def _register_stream_task(task_id: str):
+def _register_stream_task(task_id: str, user_id: int):
+    existing = stream_task_controls.get(task_id)
+    if existing and not existing.get("finished", False):
+        raise HTTPException(status_code=409, detail="估价任务 ID 已在使用")
     stream_task_controls[task_id] = {
         "stop": asyncio.Event(),
         "finished": False,
+        "user_id": user_id,
     }
 
 
@@ -909,9 +924,12 @@ def _mark_stream_task_finished(task_id: str):
 
 
 @router.post("/valuate/stop/{task_id}")
-async def stop_valuate_task(task_id: str):
+async def stop_valuate_task(
+    task_id: str,
+    current_user: AppUser = Depends(get_current_user),
+):
     state = stream_task_controls.get(task_id)
-    if not state:
+    if not state or state.get("user_id") != current_user.id:
         raise HTTPException(status_code=404, detail="估价任务不存在")
     stop_event = state.get("stop")
     if isinstance(stop_event, asyncio.Event):
@@ -920,7 +938,7 @@ async def stop_valuate_task(task_id: str):
 
 
 @router.get("/valuate/tasks")
-async def get_valuate_tasks():
+async def get_valuate_tasks(current_user: AppUser = Depends(get_current_user)):
     return [
         {
             "task_id": task_id,
@@ -928,6 +946,7 @@ async def get_valuate_tasks():
             "stopped": bool(isinstance(state.get("stop"), asyncio.Event) and state["stop"].is_set()),
         }
         for task_id, state in stream_task_controls.items()
+        if state.get("user_id") == current_user.id
     ]
 
 
@@ -940,7 +959,7 @@ async def valuate_stream(
 ):
     """SSE 流式估价：爬取完立即推送基础数据，大模型结果谁先完成先推送谁。"""
     task_id = (task_id or str(uuid.uuid4())).strip()
-    _register_stream_task(task_id)
+    _register_stream_task(task_id, current_user.id)
     original_keyword = req.keyword.strip()
     keyword = _canonicalize_keyword(original_keyword)
     if not keyword:
@@ -1119,6 +1138,12 @@ async def valuate_stream(
                         cookie_override=req.cookies, filter_keyword=keyword,
                         storage_state_override=storage_state_override,
                     )
+                    if not batch:
+                        failure = _debug_not_enough_items(crawler, q)
+                        if failure["status_code"] in (401, 429, 502):
+                            _mark_stream_task_finished(task_id)
+                            yield f"event: error\ndata: {json.dumps({'detail': failure['detail'], 'debug': failure['debug']}, ensure_ascii=False)}\n\n"
+                            return
                     for it in batch:
                         if it.item_id not in seen_ids:
                             seen_ids.add(it.item_id)
@@ -1147,7 +1172,8 @@ async def valuate_stream(
 
         except Exception as e:
             _mark_stream_task_finished(task_id)
-            yield f"event: error\ndata: {json.dumps({'detail': repr(e)}, ensure_ascii=False)}\n\n"
+            detail = _public_exception_detail("估价服务暂不可用，请稍后重试", e)
+            yield f"event: error\ndata: {json.dumps({'detail': detail}, ensure_ascii=False)}\n\n"
             return
 
         if len(items) < 3:
@@ -1367,6 +1393,7 @@ async def valuate_stream(
             r1 = next((x for x in llm_results_collected if x["model"] == settings.qwen_model), {})
             r2 = next((x for x in llm_results_collected if x["model"] == settings.doubao_model), {})
             record = ValuationRecord(
+                user_id=current_user.id,
                 keyword=keyword,
                 base_price=pricing.base_price, price_min=pricing.price_min, price_max=pricing.price_max,
                 sample_count=pricing.sample_count, raw_prices=json.dumps(pricing.raw_prices),
@@ -1376,10 +1403,16 @@ async def valuate_stream(
             db.add(record)
             await db.flush()
             for b in bargains:
-                ex = await db.execute(select(BargainAlert).where(BargainAlert.item_id == b.item_id))
+                ex = await db.execute(
+                    select(BargainAlert).where(
+                        BargainAlert.item_id == b.item_id,
+                        BargainAlert.user_id == current_user.id,
+                    )
+                )
                 ex_alert = ex.scalar_one_or_none()
                 if ex_alert is None:
                     db.add(BargainAlert(
+                        user_id=current_user.id,
                         valuation_record_id=record.id,
                         item_id=b.item_id,
                         keyword=keyword,
@@ -1406,10 +1439,12 @@ async def valuate_stream(
 @router.get("/history")
 async def get_history(
     limit: int = Query(20, ge=1, le=100),
+    current_user: AppUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(
         select(ValuationRecord)
+        .where(ValuationRecord.user_id == current_user.id)
         .order_by(ValuationRecord.created_at.desc())
         .limit(limit)
     )
@@ -1433,9 +1468,15 @@ async def get_history(
 @router.get("/history/{record_id}")
 async def get_history_detail(
     record_id: int,
+    current_user: AppUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    result = await db.execute(select(ValuationRecord).where(ValuationRecord.id == record_id))
+    result = await db.execute(
+        select(ValuationRecord).where(
+            ValuationRecord.id == record_id,
+            ValuationRecord.user_id == current_user.id,
+        )
+    )
     r = result.scalar_one_or_none()
     if r is None:
         raise HTTPException(status_code=404, detail="记录不存在")
@@ -1459,7 +1500,10 @@ async def get_history_detail(
         pass
     bargain_result = await db.execute(
         select(BargainAlert)
-        .where(BargainAlert.valuation_record_id == r.id)
+        .where(
+            BargainAlert.valuation_record_id == r.id,
+            BargainAlert.user_id == current_user.id,
+        )
         .order_by(BargainAlert.created_at.asc())
         .limit(20)
     )
@@ -1489,9 +1533,15 @@ async def get_history_detail(
 @router.get("/bargains")
 async def get_bargains(
     unread_only: bool = Query(False),
+    current_user: AppUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    query = select(BargainAlert).order_by(BargainAlert.created_at.desc()).limit(50)
+    query = (
+        select(BargainAlert)
+        .where(BargainAlert.user_id == current_user.id)
+        .order_by(BargainAlert.created_at.desc())
+        .limit(50)
+    )
     if unread_only:
         query = query.where(BargainAlert.is_read == False)
     result = await db.execute(query)
@@ -1515,9 +1565,16 @@ async def get_bargains(
 
 
 @router.patch("/bargains/{alert_id}/read")
-async def mark_read(alert_id: int, db: AsyncSession = Depends(get_db)):
+async def mark_read(
+    alert_id: int,
+    current_user: AppUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     result = await db.execute(
-        select(BargainAlert).where(BargainAlert.id == alert_id)
+        select(BargainAlert).where(
+            BargainAlert.id == alert_id,
+            BargainAlert.user_id == current_user.id,
+        )
     )
     alert = result.scalar_one_or_none()
     if not alert:
@@ -1550,14 +1607,12 @@ async def get_login_state(
                 'last_verified_at': binding.last_verified_at.isoformat() if binding and binding.last_verified_at else None,
                 'failure_reason': binding.failure_reason if binding else None,
             },
-            'storage_state_file': binding.storage_state_path if binding else '',
         }
 
     logged_in = STORAGE_STATE_FILE.exists() and STORAGE_STATE_FILE.stat().st_size > 0
     return {
         'logged_in': logged_in,
         'app_logged_in': False,
-        'storage_state_file': str(STORAGE_STATE_FILE),
     }
 
 

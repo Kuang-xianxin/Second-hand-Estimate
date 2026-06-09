@@ -621,10 +621,16 @@ class XianyuCrawler:
                         logger.debug(f"翻页失败（关键词={keyword}，第{page_num}页）: {e}")
                         break
 
+                ret_text = " | ".join(response_ret_samples)
+                if any(k in ret_text for k in ["SESSION", "LOGIN", "FAIL_SYS_SESSION_EXPIRED", "FAIL_SYS_TOKEN_EXOIRED"]):
+                    login_page_hint = True
+                if any(k in ret_text for k in ["FAIL_SYS_USER_VALIDATE", "RGV587", "验证码", "风控"]):
+                    risk_page_hint = True
+
                 if not response_urls:
                     page_text = page.content().lower()
-                    login_page_hint = ("登录" in page_text or "login" in page_text or "请先登录" in page_text)
-                    risk_page_hint = ("验证码" in page_text or "verify" in page_text or "安全验证" in page_text or "风控" in page_text)
+                    login_page_hint = login_page_hint or ("登录" in page_text or "login" in page_text or "请先登录" in page_text)
+                    risk_page_hint = risk_page_hint or ("验证码" in page_text or "verify" in page_text or "安全验证" in page_text or "风控" in page_text)
 
                 effective_filter_keyword = filter_keyword or keyword
                 for raw in collected:

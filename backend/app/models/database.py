@@ -38,7 +38,14 @@ async def init_db():
         if not _is_postgres:
             # SQLite migration: add missing columns (ignore errors if already exist)
             for table, cols, create_sql in [
+                ("app_users", [
+                    ("display_name", "VARCHAR(128)"),
+                    ("email", "VARCHAR(256)"),
+                    ("is_active", "BOOLEAN DEFAULT 1"),
+                    ("last_login_at", "TIMESTAMP"),
+                ], None),
                 ("bargain_alerts", [
+                    ("user_id", "INTEGER"),
                     ("keyword", "VARCHAR(256)"),
                     ("current_price", "DOUBLE PRECISION"),
                     ("base_price", "DOUBLE PRECISION"),
@@ -58,6 +65,7 @@ async def init_db():
                     ("is_valid", "BOOLEAN DEFAULT 1"),
                 ], None),
                 ("valuation_records", [
+                    ("user_id", "INTEGER"),
                     ("openai_result", "TEXT"),
                 ], None),
                 ("crawl_status", [], """CREATE TABLE IF NOT EXISTS crawl_status (
@@ -106,6 +114,9 @@ async def init_db():
                             logger.info(f"SQLite: added column {table}.{col_name}")
                         except Exception as e:
                             logger.warning(f"SQLite: failed to add {table}.{col_name}: {e}")
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_valuation_records_user_id ON valuation_records(user_id)"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_bargain_alerts_user_id ON bargain_alerts(user_id)"))
+            await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_email ON app_users(email)"))
             return
 
         # PostgreSQL：补充 crawled_items 新增字段（幂等，IF NOT EXISTS 等效写法）
@@ -124,6 +135,7 @@ async def init_db():
         # valuation_records 新增字段
         existing_vr_cols = await _pg_get_columns(conn, "valuation_records")
         vr_new_cols = [
+            ("user_id", "BIGINT"),
             ("openai_result", "TEXT"),
         ]
         for col_name, col_def in vr_new_cols:
@@ -133,6 +145,17 @@ async def init_db():
                 except Exception:
                     pass
 
+        existing_user_cols = await _pg_get_columns(conn, "app_users")
+        user_new_cols = [
+            ("display_name", "VARCHAR(128)"),
+            ("email", "VARCHAR(256)"),
+            ("is_active", "BOOLEAN DEFAULT TRUE"),
+            ("last_login_at", "TIMESTAMP"),
+        ]
+        for col_name, col_def in user_new_cols:
+            if col_name not in existing_user_cols:
+                await conn.execute(text(f"ALTER TABLE app_users ADD COLUMN {col_name} {col_def}"))
+
         # crawled_items 新增索引
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_crawled_items_keyword ON crawled_items(keyword)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_crawled_items_price ON crawled_items(price)"))
@@ -141,6 +164,7 @@ async def init_db():
         # bargain_alerts 新增字段
         existing_bargain_cols = await _pg_get_columns(conn, "bargain_alerts")
         bargain_new_cols = [
+            ("user_id", "BIGINT"),
             ("valuation_record_id", "BIGINT"),
             ("brand", "VARCHAR(64)"),
             ("current_price", "DOUBLE PRECISION"),
@@ -158,6 +182,10 @@ async def init_db():
                     await conn.execute(text(f"ALTER TABLE bargain_alerts ADD COLUMN {col_name} {col_def}"))
                 except Exception:
                     pass
+
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_valuation_records_user_id ON valuation_records(user_id)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_bargain_alerts_user_id ON bargain_alerts(user_id)"))
+        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_email ON app_users(email)"))
 
         logger.info("数据库初始化完成（PostgreSQL 模式）")
 

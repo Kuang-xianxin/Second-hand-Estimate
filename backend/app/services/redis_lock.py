@@ -3,6 +3,7 @@ import uuid
 from typing import Optional
 
 from app.models.redis_client import get_redis, LOCK_CRAWL_KEY
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,8 @@ class RedisLock:
         """尝试获取锁，成功返回 True（获取失败或 Redis 不可用返回 False）。"""
         r = await get_redis()
         if r is None:
-            logger.warning("Redis 不可用，跳过分布式锁")
-            return True  # 降级：不加锁继续执行
+            logger.warning("Redis 不可用，生产环境拒绝无锁执行")
+            return not settings.is_production
         try:
             ok = await r.set(self.key, self.token, nx=True, ex=self.ttl)
             self._held = bool(ok)
@@ -32,7 +33,7 @@ class RedisLock:
             return self._held
         except Exception as e:
             logger.warning(f"分布式锁获取失败: {e}")
-            return True
+            return not settings.is_production
 
     async def release(self) -> bool:
         """释放锁（仅释放自己持有的锁，防止误删他人锁）。"""

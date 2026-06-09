@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build:
@@ -7,18 +5,29 @@ services:
       dockerfile: Dockerfile.cloud
     container_name: guessr-backend
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
+      - ENVIRONMENT=production
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - QWEN_API_KEY=${QWEN_API_KEY}
       - DOUBAO_API_KEY=${DOUBAO_API_KEY}
-      - ADMIN_TOKEN=${ADMIN_TOKEN}
-      - DATABASE_URL=${DATABASE_URL}
-      - REDIS_URL=${REDIS_URL}
+      - ADMIN_TOKEN=${ADMIN_TOKEN:?ADMIN_TOKEN is required}
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL is required}
+      - REDIS_URL=${REDIS_URL:?REDIS_URL is required}
       - BACKEND_PORT=8000
-      - FRONTEND_URL=${FRONTEND_URL}
+      - FRONTEND_URL=${FRONTEND_URL:?FRONTEND_URL is required}
+      - CORS_ORIGINS=${CORS_ORIGINS:?CORS_ORIGINS is required}
+      - TRUSTED_HOSTS=${TRUSTED_HOSTS:?TRUSTED_HOSTS is required}
+      - SITE_AUTH_REQUIRED=true
+      - PASSWORD_RESET_ENABLED=${PASSWORD_RESET_ENABLED:-false}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
       - CRAWL_ENABLED=${CRAWL_ENABLED:-true}
       - INITIAL_CRAWL_ENABLED=${INITIAL_CRAWL_ENABLED:-false}
       - CRAWL_INTERVAL_SECONDS=${CRAWL_INTERVAL_SECONDS:-5400}
@@ -27,10 +36,18 @@ services:
       - CRAWL_CONCURRENCY=${CRAWL_CONCURRENCY:-1}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    shm_size: "512mb"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     volumes:
       - ./backend/data:/app/data

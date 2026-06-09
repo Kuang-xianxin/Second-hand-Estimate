@@ -33,6 +33,7 @@ class ValuationRecord(Base):
     __tablename__ = "valuation_records"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("app_users.id"), nullable=True, index=True)
     keyword = Column(String(256))
     base_price = Column(Float)          # 算法基准价
     price_min = Column(Float)           # 合理区间下限
@@ -50,6 +51,7 @@ class BargainAlert(Base):
     __tablename__ = "bargain_alerts"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("app_users.id"), nullable=True, index=True)
     valuation_record_id = Column(Integer, ForeignKey("valuation_records.id"), index=True, nullable=True)
     item_id = Column(String(64), index=True)
     keyword = Column(String(256), nullable=True)          # 新增：关联型号

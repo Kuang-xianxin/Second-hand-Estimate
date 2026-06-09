@@ -16,6 +16,8 @@ from app.models.global_bargain import GlobalBargain
 from app.models.crawl_status import CrawlStatus
 from app.models.price_history import PriceHistory
 from app.models.item import CrawledItem
+from app.models.auth import AppUser
+from app.services.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +76,7 @@ _STAGE_LABELS = {
 
 
 @router.get("/crawl/progress", response_model=CrawlProgress | None)
-async def get_crawl_progress():
+async def get_crawl_progress(_current_user: AppUser = Depends(get_current_user)):
     """
     返回当前爬取任务的实时进度。
     若无正在进行的任务，返回 None（前端据此判断"空闲"状态）。
@@ -107,7 +109,10 @@ async def get_crawl_progress():
 
 
 @router.get("/stats/overview", response_model=SystemStats)
-async def get_stats_overview(db: AsyncSession = Depends(get_db)):
+async def get_stats_overview(
+    _current_user: AppUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """
     返回系统统计概览：
     - 缓存覆盖的型号数
@@ -168,7 +173,7 @@ async def get_stats_overview(db: AsyncSession = Depends(get_db)):
             "bargains_found": r.bargains_found,
             "started_at": r.started_at.isoformat() if r.started_at else None,
             "finished_at": r.finished_at.isoformat() if r.finished_at else None,
-            "error_message": r.error_message,
+            "error_message": "后台任务失败，请联系管理员" if r.error_message else None,
         }
         for r in batches_result.scalars().all()
     ]

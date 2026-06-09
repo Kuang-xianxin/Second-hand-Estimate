@@ -13,6 +13,8 @@ backend/data/
 # ===== Secrets =====
 .env
 backend/.env
+.env.deploy
+.env.cloud
 xianyu_cookies.txt
 backend/xianyu_*.json
 

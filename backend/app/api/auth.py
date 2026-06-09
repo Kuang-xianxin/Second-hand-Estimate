@@ -1,14 +1,22 @@
+import asyncio
 from datetime import datetime
+from email.message import EmailMessage
+import hashlib
+import hmac
 import json
+import logging
 import re
+import smtplib
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, Field
-from sqlalchemy import select
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.auth import AppUser
+from app.config import settings
+from app.models.auth import AppSession, AppUser
 from app.models.database import get_db
 from app.services.auth import (
     create_session,
@@ -27,6 +35,7 @@ from app.services.xianyu_auth import (
 )
 
 router = APIRouter(prefix="/api", tags=["账号"])
+logger = logging.getLogger(__name__)
 
 
 class AuthRequest(BaseModel):
@@ -35,7 +44,8 @@ class AuthRequest(BaseModel):
 
 
 class RegisterRequest(AuthRequest):
-    email: str = Field(default="", max_length=256)
+    password: str = Field(..., min_length=8, max_length=128)
+    email: EmailStr
     display_name: Optional[str] = Field(default=None, max_length=128)
 
 class XianyuAuthState(BaseModel):
@@ -120,21 +130,76 @@ def _extract_token(authorization: Optional[str]) -> Optional[str]:
     return None
 
 
+def _auth_rate_key(action: str, identifier: str) -> str:
+    digest = hashlib.sha256(identifier.strip().lower().encode("utf-8")).hexdigest()
+    return f"auth:rate:{action}:{digest}"
+
+
+async def _enforce_auth_rate_limit(
+    action: str,
+    identifier: str,
+    limit: int,
+    window_seconds: int,
+) -> None:
+    from app.models.redis_client import get_redis
+
+    try:
+        redis_client = await get_redis()
+        if redis_client is None:
+            if settings.is_production:
+                raise HTTPException(status_code=503, detail="认证服务暂不可用")
+            return
+
+        key = _auth_rate_key(action, identifier)
+        attempts = await redis_client.incr(key)
+        if attempts == 1:
+            await redis_client.expire(key, window_seconds)
+        if attempts > limit:
+            raise HTTPException(status_code=429, detail="尝试次数过多，请稍后再试")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Authentication rate limiter unavailable: %s", exc)
+        if settings.is_production:
+            raise HTTPException(status_code=503, detail="认证服务暂不可用") from exc
+
+
+async def _clear_auth_rate_limit(action: str, identifier: str) -> None:
+    from app.models.redis_client import get_redis
+
+    try:
+        redis_client = await get_redis()
+        if redis_client is not None:
+            await redis_client.delete(_auth_rate_key(action, identifier))
+    except Exception:
+        logger.warning("Failed to clear authentication rate limit", exc_info=True)
+
+
 @router.post("/auth/register", response_model=AuthResponse)
 async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     username = _validate_username(req.username)
-    result = await db.execute(select(AppUser).where(AppUser.username == username))
+    email = str(req.email).strip().lower()
+    await _enforce_auth_rate_limit("register", f"{username}:{email}", limit=5, window_seconds=3600)
+    result = await db.execute(
+        select(AppUser).where(
+            (AppUser.username == username) | (AppUser.email == email)
+        )
+    )
     if result.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail="用户名已存在")
+        raise HTTPException(status_code=409, detail="用户名或邮箱已注册")
 
     user = AppUser(
         username=username,
         password_hash=hash_password(req.password),
-        email=req.email.strip().lower() or None,
+        email=email,
         display_name=(req.display_name or username).strip(),
     )
     db.add(user)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="用户名或邮箱已注册") from exc
     await db.refresh(user)
     token, _ = await create_session(user, db)
     return AuthResponse(token=token, user=_user_payload(user), xianyu=await _xianyu_state(user, db))
@@ -143,6 +208,7 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
 @router.post("/auth/login", response_model=AuthResponse)
 async def login(req: AuthRequest, db: AsyncSession = Depends(get_db)):
     username = _validate_username(req.username)
+    await _enforce_auth_rate_limit("login", username, limit=10, window_seconds=300)
     result = await db.execute(select(AppUser).where(AppUser.username == username))
     user = result.scalar_one_or_none()
     if user is None or not verify_password(req.password, user.password_hash):
@@ -150,6 +216,7 @@ async def login(req: AuthRequest, db: AsyncSession = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(status_code=403, detail="账号已停用")
 
+    await _clear_auth_rate_limit("login", username)
     token, _ = await create_session(user, db)
     xianyu = await _xianyu_state(user, db, verify_if_present=True)
     return AuthResponse(token=token, user=_user_payload(user), xianyu=xianyu)
@@ -230,75 +297,117 @@ async def xianyu_auth_start(
 # ============================================================
 
 class ResetRequest(BaseModel):
-    email: str
+    email: str = Field(..., min_length=3, max_length=256)
 
 class ResetConfirm(BaseModel):
-    email: str
-    code: str
-    new_password: str
+    email: str = Field(..., min_length=3, max_length=256)
+    code: str = Field(..., min_length=6, max_length=6)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+async def _send_password_reset_email(email: str, code: str) -> None:
+    def send() -> None:
+        message = EmailMessage()
+        message["Subject"] = "估二手密码重置验证码"
+        message["From"] = settings.smtp_from_email
+        message["To"] = email
+        message.set_content(f"你的密码重置验证码是：{code}\n\n验证码 10 分钟内有效。")
+
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as smtp:
+            if settings.smtp_use_tls:
+                smtp.starttls()
+            if settings.smtp_username:
+                smtp.login(settings.smtp_username, settings.smtp_password or "")
+            smtp.send_message(message)
+
+    await asyncio.to_thread(send)
+
+
+def _password_reset_message() -> dict:
+    return {"ok": True, "message": "如邮箱已注册，验证码将发送至该邮箱"}
+
+
+async def _get_required_reset_redis():
+    from app.models.redis_client import get_redis
+
+    redis_client = await get_redis()
+    if redis_client is None:
+        raise HTTPException(status_code=503, detail="密码重置服务暂不可用")
+    return redis_client
 
 
 @router.post("/reset-password")
 async def request_reset(req: ResetRequest, db: AsyncSession = Depends(get_db)):
-    """发送密码重置验证码。验证码通过 print 日志输出（后续配 SMTP 发送邮件）。"""
-    import secrets, time
-    from app.models.redis_client import get_redis as _get_redis
+    """发送密码重置验证码。"""
+    import secrets
 
+    if not settings.password_reset_enabled:
+        raise HTTPException(status_code=503, detail="密码重置服务未启用")
     email = req.email.strip().lower()
     if not email:
         raise HTTPException(400, "邮箱不能为空")
 
-    # 检查邮箱是否存在
+    redis_client = await _get_required_reset_redis()
+    rate_key = f"reset:request:{email}"
+    if not await redis_client.set(rate_key, "1", nx=True, ex=60):
+        return _password_reset_message()
+
     result = await db.execute(select(AppUser).where(AppUser.email == email))
     user = result.scalar_one_or_none()
     if not user:
-        # 不泄露用户是否存在，统一返回成功
-        return {"ok": True, "message": "如邮箱已注册，验证码将发送至管理员邮箱 2764905233@qq.com"}
+        return _password_reset_message()
 
-    code = secrets.token_hex(3)[:6]
-    r = await _get_redis()
-    if r:
-        await r.setex(f"reset:code:{email}", 600, code)
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    code_key = f"reset:code:{email}"
+    await redis_client.setex(code_key, 600, code)
+    try:
+        await _send_password_reset_email(email, code)
+    except Exception as exc:
+        await redis_client.delete(code_key)
+        logger.exception("Password reset email delivery failed for user_id=%s", user.id)
+        raise HTTPException(status_code=503, detail="密码重置邮件发送失败，请稍后重试") from exc
 
-    # 日志代替发邮件
-    logger.info(f"[密码重置] 用户={user.username} email={email} code={code}")
-    sep = chr(61) * 50; print(f"\n{sep}\n密码重置验证码\n邮箱: {email}\n验证码: {code}\n有效期: 10分钟\n管理员: 2764905233@qq.com\n{sep}\n")
-
-    return {"ok": True, "message": "如邮箱已注册，验证码将发送至管理员邮箱 2764905233@qq.com"}
+    logger.info("Password reset email queued for user_id=%s", user.id)
+    return _password_reset_message()
 
 
 @router.post("/reset-password/confirm")
 async def confirm_reset(req: ResetConfirm, db: AsyncSession = Depends(get_db)):
     """验证验证码并重置密码"""
-    from app.models.redis_client import get_redis as _get_redis
-
+    if not settings.password_reset_enabled:
+        raise HTTPException(status_code=503, detail="密码重置服务未启用")
     email = req.email.strip().lower()
-    code = (req.code or "").strip().lower()
+    code = (req.code or "").strip()
     new_pw = (req.new_password or "").strip()
 
     if not email or not code or not new_pw:
         raise HTTPException(400, "邮箱、验证码、新密码不能为空")
-    if len(new_pw) < 4:
-        raise HTTPException(400, "新密码至少4位")
 
-    r = await _get_redis()
-    if r:
-        stored = await r.get(f"reset:code:{email}")
-        if not stored or stored.decode().lower() != code:
-            raise HTTPException(400, "验证码错误或已过期")
+    redis_client = await _get_required_reset_redis()
+    attempts_key = f"reset:attempts:{email}"
+    attempts = await redis_client.incr(attempts_key)
+    if attempts == 1:
+        await redis_client.expire(attempts_key, 600)
+    if attempts > 5:
+        await redis_client.delete(f"reset:code:{email}")
+        raise HTTPException(status_code=429, detail="验证码尝试次数过多，请重新申请")
+
+    stored = await redis_client.get(f"reset:code:{email}")
+    if not stored or not hmac.compare_digest(str(stored), code):
+        raise HTTPException(400, "验证码错误或已过期")
 
     result = await db.execute(select(AppUser).where(AppUser.email == email))
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(404, "用户不存在")
+        raise HTTPException(400, "验证码错误或已过期")
 
-    from app.services.auth import hash_password
-    user.hashed_password = hash_password(new_pw)
+    user.password_hash = hash_password(new_pw)
+    await db.execute(
+        update(AppSession)
+        .where(AppSession.user_id == user.id, AppSession.revoked_at.is_(None))
+        .values(revoked_at=datetime.utcnow())
+    )
     await db.commit()
-
-    if r:
-        await r.delete(f"reset:code:{email}")
-
-    logger.info(f"[密码重置] 密码已重置 user={user.username}")
+    await redis_client.delete(f"reset:code:{email}", attempts_key)
+    logger.info("Password reset completed for user_id=%s", user.id)
     return {"ok": True, "message": "密码已重置，请使用新密码登录"}
-

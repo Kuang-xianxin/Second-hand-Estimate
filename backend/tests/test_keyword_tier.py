@@ -73,9 +73,12 @@ class TestKeywordTierFunctions:
         all_kw = set(kw.strip().lower() for kw in get_all_keywords())
         t0 = set(kw.strip().lower() for kw in get_keywords_by_tier(KeywordTier.T0_HOT))
         t1 = set(kw.strip().lower() for kw in get_keywords_by_tier(KeywordTier.T1_WARM))
+        t2 = set(kw.strip().lower() for kw in get_keywords_by_tier(KeywordTier.T2_COLD))
         assert t0.issubset(all_kw)
         assert t1.issubset(all_kw)
-        assert len(all_kw) == len(t0) + len(t1)
+        assert t2.issubset(all_kw)
+        assert not (t0 & t1 or t0 & t2 or t1 & t2)
+        assert len(all_kw) == len(t0) + len(t1) + len(t2)
 
 
 class TestHotModelExamples:

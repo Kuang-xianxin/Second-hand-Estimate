@@ -4,9 +4,23 @@ Tests for crawl_worker safety controls, canary, and dynamic concurrency.
 import asyncio
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock
+
+import pytest
 
 backend_root = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_root))
+
+
+@pytest.fixture(autouse=True)
+def disable_real_crawl_delays(monkeypatch):
+    from app.services import crawl_worker
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(crawl_worker.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(crawl_worker, "_pick_storage_state", AsyncMock(return_value=None))
 
 
 class FakeItem:

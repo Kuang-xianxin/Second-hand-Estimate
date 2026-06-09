@@ -13,6 +13,7 @@ from app.api.valuate import (
     _condition_bucket,
     _price_bucket,
     _bucket_fill_items,
+    _debug_not_enough_items,
 )
 
 
@@ -100,6 +101,40 @@ class TestBucketFillItems:
         result = _bucket_fill_items(base, candidates, target_count=10)
         item_ids = [item.item_id for item in result]
         assert len(item_ids) == len(set(item_ids)), "Duplicates found in result"
+
+
+class TestDebugNotEnoughItems:
+    def test_rgv587_is_reported_as_risk_control(self):
+        crawler = type("Crawler", (), {
+            "_last_debug_summary": {
+                "response_count": 2,
+                "response_statuses": [{"status": 200}],
+                "response_ret_samples": ["RGV587_ERROR::SM::被挤爆啦,请稍后重试!"],
+                "raw_item_count": 0,
+                "final_count": 0,
+            }
+        })()
+
+        result = _debug_not_enough_items(crawler, "尼康s6300")
+
+        assert result["status_code"] == 429
+        assert "风控" in result["detail"]
+
+    def test_successful_empty_response_remains_keyword_empty(self):
+        crawler = type("Crawler", (), {
+            "_last_debug_summary": {
+                "response_count": 2,
+                "response_statuses": [{"status": 200}],
+                "response_ret_samples": ["SUCCESS::调用成功"],
+                "raw_item_count": 0,
+                "final_count": 0,
+            }
+        })()
+
+        result = _debug_not_enough_items(crawler, "不存在的型号")
+
+        assert result["status_code"] == 422
+        assert "未抓到可用商品数据" in result["detail"]
 
 
 if __name__ == "__main__":

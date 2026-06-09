@@ -147,7 +147,7 @@ async def require_user_xianyu_state(
     if _state_has_cookies(STORAGE_STATE_FILE):
         return str(STORAGE_STATE_FILE)
 
-    raise HTTPException(status_code=401, detail="闲鱼授权不可用：请先绑定闲鱼账号或导入全局登录态")
+    raise HTTPException(status_code=428, detail="闲鱼授权不可用：请先绑定闲鱼账号或导入全局登录态")
 
 
 async def choose_scheduler_storage_state(db: AsyncSession) -> Optional[str]:

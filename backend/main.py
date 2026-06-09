@@ -1,9 +1,13 @@
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from sqlalchemy import text
 
-from app.models.database import init_db, AsyncSessionLocal
+from app.models.database import init_db, AsyncSessionLocal, engine
+from app.models.redis_client import close_redis, get_redis
 from app.api.valuate import router as valuate_router
 from app.api.cache_api import router as cache_router
 from app.api.stats_api import router as stats_router
@@ -20,10 +24,15 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings.validate_production()
     await init_db()
     setup_scheduler()
-    yield
-    shutdown_scheduler()
+    try:
+        yield
+    finally:
+        shutdown_scheduler()
+        await close_redis()
+        await engine.dispose()
 
 
 def setup_scheduler():
@@ -71,14 +80,21 @@ app = FastAPI(
     description="二手商品智能估价平台后端",
     version="1.0.0",
     lifespan=lifespan,
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+)
+
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=settings.trusted_host_list or ["*"],
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Admin-Token"],
 )
 
 app.include_router(valuate_router)
@@ -90,6 +106,29 @@ app.include_router(auth_router)
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "估二手"}
+
+
+@app.get("/ready")
+async def ready():
+    checks = {"database": False, "redis": False}
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+        checks["database"] = True
+    except Exception:
+        logger.exception("Readiness database check failed")
+
+    try:
+        redis_client = await get_redis()
+        checks["redis"] = bool(redis_client and await redis_client.ping())
+    except Exception:
+        logger.exception("Readiness Redis check failed")
+
+    status_code = 200 if all(checks.values()) else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={"status": "ready" if status_code == 200 else "not_ready", "checks": checks},
+    )
 
 
 if __name__ == "__main__":

@@ -52,8 +52,19 @@ http.interceptors.request.use((config) => {
   return config
 })
 
-export async function registerAccount(username: string, password: string): Promise<AuthResponse> {
-  const res = await http.post<AuthResponse>('/auth/register', { username, password })
+http.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401 && getAuthToken()) {
+      setAuthToken('')
+      window.location.assign('/')
+    }
+    return Promise.reject(error)
+  },
+)
+
+export async function registerAccount(username: string, password: string, email: string): Promise<AuthResponse> {
+  const res = await http.post<AuthResponse>('/auth/register', { username, password, email })
   setAuthToken(res.data.token)
   return res.data
 }

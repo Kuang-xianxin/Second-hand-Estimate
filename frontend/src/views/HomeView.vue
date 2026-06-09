@@ -254,11 +254,19 @@ async function checkLoginState() {
 
 async function submitAccountAuth() {
   if (!state.authUsername.trim() || !state.authPassword.trim()) return
+  if (state.authMode === 'register' && !state.authEmail.trim()) {
+    state.authMessage = '注册时请填写邮箱'
+    return
+  }
+  if (state.authMode === 'register' && state.authPassword.length < 8) {
+    state.authMessage = '注册密码至少需要 8 位'
+    return
+  }
   state.authLoading = true
   state.authMessage = ''
   try {
     const resp = state.authMode === 'register'
-      ? await registerAccount(state.authUsername.trim(), state.authPassword)
+      ? await registerAccount(state.authUsername.trim(), state.authPassword, state.authEmail.trim())
       : await loginAccount(state.authUsername.trim(), state.authPassword)
     state.appLoggedIn = true
     state.appUser = resp.user
@@ -850,6 +858,7 @@ onMounted(() => {
             </div>
             <input v-model="state.authUsername" class="auth-input" placeholder="用户名" autocomplete="username" />
             <input v-model="state.authPassword" class="auth-input" placeholder="密码" type="password" autocomplete="current-password" @keydown.enter="submitAccountAuth" />
+            <input v-if="state.authMode === 'register'" v-model="state.authEmail" class="auth-input" placeholder="邮箱（用于密码找回）" type="email" autocomplete="email" />
             <button class="modal-btn primary wide" @click="submitAccountAuth" :disabled="state.authLoading">
               {{ state.authLoading ? '处理中...' : (state.authMode === 'login' ? '登录' : '注册并登录') }}
             </button>
