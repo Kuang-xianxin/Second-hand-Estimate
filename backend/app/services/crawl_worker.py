@@ -184,6 +184,16 @@ async def crawl_canary(storage_state_override: Optional[str] = None) -> Tuple[bo
                     logger.info(f"Canary 预检通过：「{kw}」正常，获取 {len(items)} 条商品")
                     return True, "canary keyword ok", debug
 
+                # 失败时输出完整 debug 信息
+                logger.warning(
+                    f"canary「{kw}」失败 debug: "
+                    f"login={login_hint} risk={risk_hint} "
+                    f"responses={response_count} raw={debug.get('raw_item_count', 0)} "
+                    f"normalized={debug.get('normalized_count', 0)} "
+                    f"urls={debug.get('response_urls', [])[:2]} "
+                    f"ret_samples={debug.get('response_ret_samples', [])[:2]}"
+                )
+
                 if login_hint:
                     reason = f"canary「{kw}」检测到登录页面，cookie 可能已过期"
                 elif risk_hint:
