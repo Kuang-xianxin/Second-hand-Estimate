@@ -155,17 +155,10 @@ async def crawl_canary(storage_state_override: Optional[str] = None) -> Tuple[bo
 
     crawler = get_crawler()
 
-    # 预热：冷启动后 Playwright 首次 launch 可能超时，先做个轻量请求
-    try:
-        await crawler.search(canary_keywords[0], max_items=1)
-        await asyncio.sleep(0.5)
-    except Exception:
-        pass
-
     async def _check_one(kw: str) -> Tuple[bool, str, dict]:
         for attempt in range(2):
             if attempt > 0:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(5)  # 等 5 秒再重试，避免连续请求触发风控
             search_kwargs = {
                 "max_items": min(5, settings.max_items_per_query_t0),
                 "filter_keyword": kw,
