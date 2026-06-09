@@ -1,14 +1,14 @@
 """
 APScheduler 定时任务——分层爬取 + 缓存更新 + 全局捡漏检测。
 
-T0 热门型号：每 1.5h 高频爬取，少量样本够用即停
-import os
+T0 热门型号：每 5min 高频爬取，少量样本够用即停
 T1 普通型号：每 12h 爬取一次
 T2 长尾型号：每 3d 或按需爬取
 """
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
