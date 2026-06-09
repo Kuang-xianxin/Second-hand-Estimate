@@ -17,6 +17,7 @@ backend/.env
 .env.cloud
 xianyu_cookies.txt
 backend/xianyu_*.json
+xianyu_storage_state.json
 
 # ===== Local databases / debug artifacts =====
 *.db

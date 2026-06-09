@@ -26,6 +26,7 @@ from app.services.auth import (
     verify_password,
 )
 from app.services.xianyu_auth import (
+    binding_effective_status,
     bind_from_global_state,
     get_binding,
     start_local_auth_flow,
@@ -103,7 +104,7 @@ async def _xianyu_state(user: AppUser, db: AsyncSession, verify_if_present: bool
         binding = await get_binding(user.id, db)
     return XianyuAuthState(
         bound=True,
-        status=binding.status,
+        status=binding_effective_status(binding),
         provider=binding.provider,
         account_label=binding.xianyu_account_label,
         last_verified_at=_dt(binding.last_verified_at),

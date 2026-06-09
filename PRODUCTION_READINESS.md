@@ -9,11 +9,13 @@
 - [x] PostgreSQL 备份恢复演练通过（16MB dump → restore → 验证 → 清理）。
 - [x] 前端构建通过（`vite build --mode production`，96 modules），已部署到 `/var/www/guessr/`。
 - [x] Nginx 配置语法检查通过（`nginx -t`），前端正常加载。
-- [x] 后端测试：139 passed，0 failed（`pytest tests/ -q`）。
+- [x] 后端测试：159 passed，0 failed（`pytest -q`）。
 - [ ] Docker Compose 未安装（服务器用 systemd 管理服务，替代方案已验证可行）。
 - [ ] 真实估价金丝雀：缓存端点 HTTP 200（当前缓存为空，等待调度器填充）。已修复 `import os` bug（调度器之前静默失败）。
+- [ ] 独立爬虫 worker 金丝雀成功：生产 Web 进程不再运行 Playwright，`guessr-crawl@t0.service` 成功完成并写入数据库。
 - [x] 监控告警：服务器 cron 已配置（每 5 分钟检查磁盘/内存/服务/爬虫登录态），watchdog 模式（静默=正常）。
-- [ ] 闲鱼登录态：12 天前的 cookie 可能即将过期，建议近期刷新。
+- [ ] 闲鱼登录态：本地用户绑定和新导出的全局状态均未通过真实金丝雀，启用生产 timer 前必须重新登录并验证。
+- [ ] 服务器连通性：2026-06-09 公网健康检查返回空响应，SSH 在密钥交换前被关闭；需先从腾讯云控制台恢复实例/SSH。
 
 ## 生产环境变量
 
@@ -62,6 +64,42 @@ sudo systemctl reload nginx
 ```
 
 `/health` 只表示进程存活；`/ready` 会检查 PostgreSQL 和 Redis，只有两者都正常才返回 200。
+
+## 独立爬虫 Worker
+
+生产环境必须设置：
+
+```bash
+CRAWL_ENABLED=true
+CRAWL_SCHEDULER_MODE=external
+CRAWL_CANARY_ENABLED=true
+CRAWL_STOP_ON_RISK=true
+CRAWL_CONCURRENCY=1
+CRAWL_CONCURRENCY_MAX=1
+```
+
+安装 systemd service 和 timer：
+
+```bash
+cd /opt/guessr
+bash deploy/install-crawl-timers.sh
+systemctl list-timers 'guessr-crawl-*'
+journalctl -u 'guessr-crawl@t0.service' -n 100 --no-pager
+```
+
+不要使用每 5 分钟启动一次完整爬虫的普通 cron。T0 全量任务本身可能运行一小时以上；
+systemd timer 使用 `OnUnitInactiveSec=90min`，会在上一轮结束后再计时，并由 Redis 锁提供第二层防重。
+
+验证数据库确实更新：
+
+```bash
+sudo -u postgres psql -d ccd_db -c \
+  "SELECT batch_id,status,success_count,fail_count,total_items,finished_at,error_message FROM crawl_status ORDER BY started_at DESC LIMIT 5;"
+sudo -u postgres psql -d ccd_db -c \
+  "SELECT count(*) AS total,max(crawled_at) AS latest FROM crawled_items;"
+sudo -u postgres psql -d ccd_db -c \
+  "SELECT count(*) AS total,max(crawled_at) AS latest FROM ccd_price_cache;"
+```
 
 ## HTTPS
 

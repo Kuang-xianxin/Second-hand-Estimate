@@ -29,13 +29,17 @@ async def _pick_storage_state() -> Optional[str]:
     try:
         from app.models.database import AsyncSessionLocal
         from app.models.auth import XianyuAuthBinding
+        from datetime import datetime
         from sqlalchemy import select, func
-        import random as _random
 
         async with AsyncSessionLocal() as db:
             result = await db.execute(
                 select(XianyuAuthBinding.storage_state_path)
-                .where(XianyuAuthBinding.status == "valid")
+                .where(
+                    XianyuAuthBinding.status == "valid",
+                    XianyuAuthBinding.expires_at.is_not(None),
+                    XianyuAuthBinding.expires_at > datetime.utcnow(),
+                )
                 .order_by(func.random())
                 .limit(1)
             )
@@ -271,21 +275,28 @@ async def crawl_single_keyword(
             }
             if storage_state_override:
                 search_kwargs["storage_state_override"] = storage_state_override
+            debug = {}
             try:
-                # 随机延迟 3-8 秒，避免触发闲鱼风控
-                await asyncio.sleep(random.uniform(15, 30))
                 if sem:
                     async with sem:
+                        # Delay must be inside the semaphore. Otherwise every
+                        # queued task sleeps together and requests arrive in a burst.
+                        await asyncio.sleep(random.uniform(15, 30))
                         await asyncio.sleep(random.uniform(0.3, 1.0))
                         items = await crawler.search(keyword, **search_kwargs)
+                        # The crawler is shared across tasks. Capture its debug
+                        # state before releasing the semaphore so another search
+                        # cannot overwrite this keyword's result classification.
+                        debug = dict(getattr(crawler, "_last_debug_summary", {}) or {})
                 else:
+                    await asyncio.sleep(random.uniform(15, 30))
                     await asyncio.sleep(random.uniform(0.3, 1.0))
                     items = await crawler.search(keyword, **search_kwargs)
+                    debug = dict(getattr(crawler, "_last_debug_summary", {}) or {})
             finally:
                 _kill_stale_chromium_processes()
 
             # 检查爬虫调试摘要中的登录/风控状态。
-            debug = getattr(crawler, "_last_debug_summary", {}) or {}
             login_required = debug.get("login_page_hint", False)
             risk_detected = debug.get("risk_page_hint", False)
             if (login_required or risk_detected) and not items:

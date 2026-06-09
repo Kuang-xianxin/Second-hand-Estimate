@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -373,6 +373,7 @@ async def crawler_tiers(_admin=Depends(require_admin_token)):
         "t0_keyword_count": len(get_keywords_by_tier(KeywordTier.T0_HOT)),
         "t1_keyword_count": len(get_keywords_by_tier(KeywordTier.T1_WARM)),
         "config": {
+            "scheduler_mode": settings.crawl_scheduler_mode,
             "t0_enabled": settings.crawl_t0_enabled,
             "t1_enabled": settings.crawl_t1_enabled,
             "t2_enabled": settings.crawl_t2_enabled,
@@ -408,6 +409,12 @@ class TriggerCrawlRequest(BaseModel):
 @router.post("/crawler/trigger")
 async def trigger_crawl(req: TriggerCrawlRequest, _admin=Depends(require_admin_token)):
     """手动触发分层爬取+入库全流程。"""
+    if settings.crawl_scheduler_mode.strip().lower() == "external":
+        raise HTTPException(
+            status_code=409,
+            detail="生产爬虫使用独立 worker，请通过 systemd 启动 guessr-crawl@<tier>.service",
+        )
+
     from app.scheduler import _run_tier_crawl
     from app.models.database import AsyncSessionLocal
     from app.services.keyword_tier import KeywordTier
@@ -419,7 +426,7 @@ async def trigger_crawl(req: TriggerCrawlRequest, _admin=Depends(require_admin_t
     asyncio.create_task(_run_tier_crawl(
         tier=tier,
         db_session_factory=AsyncSessionLocal,
-        skip_lock=True,
+        skip_lock=False,
         max_items_per_kw=req.max_items_per_kw or 40,
         skip_canary=req.skip_canary,
         concurrency=req.concurrency or settings.crawl_concurrency,

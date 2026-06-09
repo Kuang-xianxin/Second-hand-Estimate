@@ -1590,9 +1590,10 @@ async def get_login_state(
     db: AsyncSession = Depends(get_db),
 ):
     if current_user is not None:
-        from app.services.xianyu_auth import get_binding
+        from app.services.xianyu_auth import binding_effective_status, get_binding
         binding = await get_binding(current_user.id, db)
-        logged_in = bool(binding and binding.status == "valid")
+        effective_status = binding_effective_status(binding)
+        logged_in = effective_status == "valid"
         return {
             'logged_in': logged_in,
             'app_logged_in': True,
@@ -1603,7 +1604,7 @@ async def get_login_state(
             },
             'xianyu': {
                 'bound': bool(binding),
-                'status': binding.status if binding else 'missing',
+                'status': effective_status,
                 'last_verified_at': binding.last_verified_at.isoformat() if binding and binding.last_verified_at else None,
                 'failure_reason': binding.failure_reason if binding else None,
             },

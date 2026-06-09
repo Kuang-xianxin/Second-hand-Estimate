@@ -46,6 +46,31 @@ async def get_binding(user_id: int, db: AsyncSession) -> Optional[XianyuAuthBind
     return result.scalar_one_or_none()
 
 
+def binding_effective_status(
+    binding: Optional[XianyuAuthBinding],
+    *,
+    now: Optional[datetime] = None,
+) -> str:
+    """Return a status that also accounts for expiry and missing state files."""
+    if binding is None:
+        return "missing"
+    if binding.status != "valid":
+        return binding.status
+    if binding.expires_at is None or binding.expires_at <= (now or datetime.utcnow()):
+        return "expired"
+    if not _state_has_cookies(Path(binding.storage_state_path)):
+        return "missing"
+    return "valid"
+
+
+def binding_is_usable(
+    binding: Optional[XianyuAuthBinding],
+    *,
+    now: Optional[datetime] = None,
+) -> bool:
+    return binding_effective_status(binding, now=now) == "valid"
+
+
 async def upsert_binding(
     user: AppUser,
     db: AsyncSession,
@@ -105,7 +130,7 @@ async def verify_binding(
     now = datetime.utcnow()
     if (
         not force
-        and binding.status == "valid"
+        and binding_is_usable(binding, now=now)
         and binding.last_verified_at
         and (now - binding.last_verified_at).total_seconds() < settings.xianyu_auth_verify_ttl_seconds
     ):
@@ -119,6 +144,8 @@ async def verify_binding(
     binding.failure_reason = "" if ok else reason
     if ok:
         binding.expires_at = now + timedelta(hours=settings.xianyu_auth_soft_expire_hours)
+    else:
+        binding.expires_at = now
     await db.commit()
     return ok, reason, debug
 
@@ -138,7 +165,7 @@ async def require_user_xianyu_state(
 
     # 先检查用户是否有个人绑定
     binding = await get_binding(user.id, db)
-    if binding and _state_has_cookies(Path(binding.storage_state_path)):
+    if binding_is_usable(binding):
         binding.last_used_at = datetime.utcnow()
         await db.commit()
         return binding.storage_state_path
@@ -158,7 +185,11 @@ async def choose_scheduler_storage_state(db: AsyncSession) -> Optional[str]:
     now = datetime.utcnow()
     result = await db.execute(
         select(XianyuAuthBinding)
-        .where(XianyuAuthBinding.status == "valid")
+        .where(
+            XianyuAuthBinding.status == "valid",
+            XianyuAuthBinding.expires_at.is_not(None),
+            XianyuAuthBinding.expires_at > now,
+        )
         .order_by(XianyuAuthBinding.last_used_at.asc())
         .limit(1)
     )
@@ -168,6 +199,41 @@ async def choose_scheduler_storage_state(db: AsyncSession) -> Optional[str]:
         await db.commit()
         return binding.storage_state_path
     return str(STORAGE_STATE_FILE) if _state_has_cookies(STORAGE_STATE_FILE) else None
+
+
+async def update_scheduler_storage_state_health(
+    db: AsyncSession,
+    storage_state_path: Optional[str],
+    *,
+    ok: bool,
+    reason: str = "",
+    risk_limited: bool = False,
+) -> None:
+    """Persist scheduler-observed auth health so stale bindings are not reused."""
+    if not storage_state_path:
+        return
+
+    result = await db.execute(
+        select(XianyuAuthBinding).where(
+            XianyuAuthBinding.storage_state_path == storage_state_path
+        )
+    )
+    binding = result.scalar_one_or_none()
+    if binding is None:
+        return
+
+    now = datetime.utcnow()
+    binding.last_verified_at = now
+    binding.last_used_at = now
+    if ok:
+        binding.status = "valid"
+        binding.failure_reason = ""
+        binding.expires_at = now + timedelta(hours=settings.xianyu_auth_soft_expire_hours)
+    else:
+        binding.status = "risk_limited" if risk_limited else "invalid"
+        binding.failure_reason = reason
+        binding.expires_at = now
+    await db.commit()
 
 
 def start_local_auth_flow(user_id: int, label: str = "") -> bool:

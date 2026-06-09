@@ -39,6 +39,11 @@ def setup_scheduler():
     from app.scheduler import setup_scheduler as _setup, run_full_crawl_task
     import asyncio
 
+    scheduler_mode = settings.crawl_scheduler_mode.strip().lower()
+    if scheduler_mode == "external":
+        logger.info("External crawl scheduler enabled; Web process will not run background crawls")
+        return
+
     if settings.crawl_enabled:
         _setup(AsyncSessionLocal)
     else:

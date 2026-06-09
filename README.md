@@ -6,7 +6,7 @@
 
 - 前端：Vue 3、TypeScript、Vite、Axios、Vue Router、SSE
 - 后端：FastAPI、SQLAlchemy async、PostgreSQL、Redis、Playwright
-- 后台任务：APScheduler、Redis 分布式锁
+- 后台任务：开发环境 APScheduler；生产环境 systemd 独立 worker + Redis 分布式锁
 - 部署：Docker Compose、Nginx、GitHub Actions
 
 ## 本地开发
@@ -39,6 +39,18 @@ npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org
 ## 生产部署
 
 生产上线前必须阅读 [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)。生产配置会强制检查 PostgreSQL、Redis、管理员令牌、站内鉴权、CORS 和可信 Host；配置不安全时后端拒绝启动。
+
+生产爬虫使用独立短命进程，不在 Uvicorn Web 进程内运行 Playwright：
+
+```bash
+cd /opt/guessr
+bash deploy/install-crawl-timers.sh
+systemctl list-timers 'guessr-crawl-*'
+journalctl -u 'guessr-crawl@t0.service' -n 100 --no-pager
+```
+
+安装脚本会先运行一个关键词的真实金丝雀。只有金丝雀成功写入
+`crawl_status` 后，才会启用完整 T0 定时任务。
 
 ```bash
 cp .env.cloud.example .env.cloud

@@ -1,0 +1,24 @@
+[Unit]
+Description=Guessr independent crawl worker (%i)
+After=network-online.target postgresql.service pgbouncer.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/guessr/backend
+EnvironmentFile=/opt/guessr/backend/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/guessr/backend/venv/bin/python -m app.crawl_runner --tier %i
+TimeoutStartSec=3h
+KillMode=mixed
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

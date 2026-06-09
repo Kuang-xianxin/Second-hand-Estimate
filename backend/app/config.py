@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     crawl_interval_seconds: int = 5400  # T0 热门型号爬取间隔（1.5 小时）
     crawl_enabled: bool = False         # 是否启用定时爬取（开发默认关闭，生产 .env 开启）
     initial_crawl_enabled: bool = False # 首次启动是否自动触发全量爬取（仅缓存表为空时；开发默认关闭）
+    crawl_scheduler_mode: str = "embedded"  # embedded=Web 进程内 APScheduler，external=独立短命 worker
 
     # 分层爬取间隔
     crawl_interval_t1_seconds: int = 43200   # T1 普通型号间隔（12 小时）
@@ -93,6 +94,10 @@ class Settings(BaseSettings):
         return [value.strip() for value in self.trusted_hosts.split(",") if value.strip()]
 
     def validate_production(self) -> None:
+        scheduler_mode = self.crawl_scheduler_mode.strip().lower()
+        if scheduler_mode not in {"embedded", "external"}:
+            raise RuntimeError("Invalid configuration: CRAWL_SCHEDULER_MODE must be embedded or external")
+
         if not self.is_production:
             return
 
@@ -113,6 +118,19 @@ class Settings(BaseSettings):
             [self.smtp_host, self.smtp_from_email]
         ):
             errors.append("SMTP_HOST and SMTP_FROM_EMAIL are required when password reset is enabled")
+        if self.crawl_enabled and scheduler_mode != "external":
+            errors.append("CRAWL_SCHEDULER_MODE must be external when production crawling is enabled")
+        if self.crawl_enabled and not self.crawl_canary_enabled:
+            errors.append("CRAWL_CANARY_ENABLED must be true when production crawling is enabled")
+        if self.crawl_enabled and not self.crawl_stop_on_risk:
+            errors.append("CRAWL_STOP_ON_RISK must be true when production crawling is enabled")
+        if self.crawl_enabled and (
+            self.crawl_concurrency != 1 or self.crawl_concurrency_max != 1
+        ):
+            errors.append(
+                "CRAWL_CONCURRENCY and CRAWL_CONCURRENCY_MAX must both be 1 "
+                "when production crawling is enabled"
+            )
 
         if errors:
             raise RuntimeError("Invalid production configuration: " + "; ".join(errors))

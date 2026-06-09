@@ -29,11 +29,15 @@ services:
       - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
       - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
       - CRAWL_ENABLED=${CRAWL_ENABLED:-true}
+      - CRAWL_SCHEDULER_MODE=${CRAWL_SCHEDULER_MODE:-external}
       - INITIAL_CRAWL_ENABLED=${INITIAL_CRAWL_ENABLED:-false}
       - CRAWL_INTERVAL_SECONDS=${CRAWL_INTERVAL_SECONDS:-5400}
+      - CRAWL_CANARY_ENABLED=${CRAWL_CANARY_ENABLED:-true}
+      - CRAWL_STOP_ON_RISK=${CRAWL_STOP_ON_RISK:-true}
       - MAX_ITEMS_PER_QUERY=${MAX_ITEMS_PER_QUERY:-200}
       - MAX_PAGES_PER_QUERY=${MAX_PAGES_PER_QUERY:-2}
       - CRAWL_CONCURRENCY=${CRAWL_CONCURRENCY:-1}
+      - CRAWL_CONCURRENCY_MAX=${CRAWL_CONCURRENCY_MAX:-1}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=5)"]

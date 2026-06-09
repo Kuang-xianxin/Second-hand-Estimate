@@ -131,12 +131,13 @@ async def _run_tier_crawl(
     concurrency: int = None,
     keyword_limit: int = 0,
     storage_state_override: str = None,
+    batch_id_override: str = None,
 ):
     """
     执行单层爬取任务：爬取 → 写入原始商品 → 算法估价 → 全局捡漏 → 缓存更新。
     每个 tier 的爬取任务结构相同，只是关键词列表和频率不同。
     """
-    batch_id = _make_batch_id(tier.value)
+    batch_id = batch_id_override or _make_batch_id(tier.value)
     started_at = datetime.utcnow().isoformat()
     r = await get_redis()
 
@@ -226,6 +227,37 @@ async def _run_tier_crawl(
             skip_canary=skip_canary,
             storage_state_override=storage_state_override,
         )
+
+        try:
+            from app.services.xianyu_auth import update_scheduler_storage_state_health
+
+            auth_ok = (
+                crawl_report.canary_ok
+                and crawl_report.login_required_count == 0
+                and crawl_report.risk_detected_count == 0
+                and crawl_report.success_count > 0
+            )
+            auth_failed = (
+                not crawl_report.canary_ok
+                or crawl_report.login_required_count > 0
+                or crawl_report.risk_detected_count > 0
+            )
+            if auth_ok or auth_failed:
+                reason = crawl_report.canary_reason or crawl_report.abort_reason
+                if not reason and crawl_report.login_required_count > 0:
+                    reason = "后台爬取检测到登录态失效"
+                if not reason and crawl_report.risk_detected_count > 0:
+                    reason = "后台爬取检测到风控限制"
+                async with db_session_factory() as session:
+                    await update_scheduler_storage_state_health(
+                        session,
+                        storage_state_override,
+                        ok=auth_ok,
+                        reason=reason,
+                        risk_limited=crawl_report.risk_detected_count > 0,
+                    )
+        except Exception:
+            logger.exception("[%s] 更新闲鱼授权健康状态失败", tier.value)
 
         logger.info(f"[{tier.value}] 批次 {batch_id} 爬取完成：{crawl_report.success_count} 成功，{crawl_report.fail_count} 失败，{len(crawl_report.all_items)} 条商品")
         if crawl_report.login_required_count > 0:

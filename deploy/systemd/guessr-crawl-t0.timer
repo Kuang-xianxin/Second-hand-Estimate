@@ -1,0 +1,12 @@
+[Unit]
+Description=Schedule Guessr T0 crawl worker
+
+[Timer]
+OnBootSec=15min
+OnUnitInactiveSec=90min
+RandomizedDelaySec=10min
+Persistent=true
+Unit=guessr-crawl@t0.service
+
+[Install]
+WantedBy=timers.target

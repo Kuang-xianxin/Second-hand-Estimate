@@ -110,6 +110,33 @@ def test_crawl_all_tier_and_max_items(monkeypatch):
     assert len(report.all_items) == 6
 
 
+def test_single_keyword_delay_and_debug_capture_are_inside_semaphore(monkeypatch):
+    from app.services import crawl_worker
+
+    async def run():
+        sem = asyncio.Semaphore(1)
+        sleep_lock_states = []
+
+        async def inspect_sleep(_seconds):
+            sleep_lock_states.append(sem.locked())
+
+        monkeypatch.setattr(crawl_worker.asyncio, "sleep", inspect_sleep)
+        crawler = FakeCrawler()
+        result = await crawl_worker.crawl_single_keyword(
+            "ok1",
+            sem=sem,
+            crawler=crawler,
+            max_retries=0,
+        )
+        return result, sleep_lock_states
+
+    result, sleep_lock_states = asyncio.run(run())
+
+    assert result.success is True
+    assert sleep_lock_states
+    assert all(sleep_lock_states)
+
+
 def test_tier_in_report(monkeypatch):
     from app.services import crawl_worker
 

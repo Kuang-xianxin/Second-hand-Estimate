@@ -4,6 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api import auth as auth_api
+from app.api import cache_api
 from app.api import valuate as valuate_api
 from app.api.valuate import require_admin_token
 from app.config import Settings, settings
@@ -30,6 +31,17 @@ def test_valid_production_settings_pass_validation():
     _production_settings().validate_production()
 
 
+def test_production_crawl_requires_external_safe_worker():
+    _production_settings(
+        crawl_enabled=True,
+        crawl_scheduler_mode="external",
+        crawl_canary_enabled=True,
+        crawl_stop_on_risk=True,
+        crawl_concurrency=1,
+        crawl_concurrency_max=1,
+    ).validate_production()
+
+
 @pytest.mark.parametrize(
     "override",
     [
@@ -38,6 +50,22 @@ def test_valid_production_settings_pass_validation():
         {"site_auth_required": False},
         {"cors_origins": "*"},
         {"trusted_hosts": "*"},
+        {"crawl_scheduler_mode": "unknown"},
+        {"crawl_enabled": True, "crawl_scheduler_mode": "embedded"},
+        {"crawl_enabled": True, "crawl_scheduler_mode": "external", "crawl_canary_enabled": False},
+        {"crawl_enabled": True, "crawl_scheduler_mode": "external", "crawl_stop_on_risk": False},
+        {
+            "crawl_enabled": True,
+            "crawl_scheduler_mode": "external",
+            "crawl_concurrency": 2,
+            "crawl_concurrency_max": 1,
+        },
+        {
+            "crawl_enabled": True,
+            "crawl_scheduler_mode": "external",
+            "crawl_concurrency": 1,
+            "crawl_concurrency_max": 2,
+        },
     ],
 )
 def test_invalid_production_settings_fail_validation(override):
@@ -132,3 +160,26 @@ async def test_auth_rate_limiter_fails_closed_in_production(monkeypatch):
         await auth_api._enforce_auth_rate_limit("login", "alice", 10, 300)
 
     assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_external_scheduler_mode_rejects_in_process_admin_crawl(monkeypatch):
+    monkeypatch.setattr(settings, "crawl_scheduler_mode", "external")
+
+    with pytest.raises(HTTPException) as exc:
+        await cache_api.trigger_crawl(cache_api.TriggerCrawlRequest(), _admin=None)
+
+    assert exc.value.status_code == 409
+
+
+def test_external_scheduler_mode_skips_embedded_scheduler(monkeypatch):
+    import main
+
+    embedded_setup = MagicMock()
+    monkeypatch.setattr(settings, "crawl_scheduler_mode", "external")
+    monkeypatch.setattr(settings, "crawl_enabled", True)
+    monkeypatch.setattr("app.scheduler.setup_scheduler", embedded_setup)
+
+    main.setup_scheduler()
+
+    embedded_setup.assert_not_called()
