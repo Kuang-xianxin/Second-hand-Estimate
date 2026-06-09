@@ -172,10 +172,15 @@ async def crawl_canary(storage_state_override: Optional[str] = None) -> Tuple[bo
                 risk_hint = debug.get("risk_page_hint", False)
                 response_count = debug.get("response_count", 0)
 
+                # 有商品就是有效 — risk_hint 可能来自首页瞬态响应，不算数
+                if items:
+                    logger.info(f"Canary 预检通过：「{kw}」正常，获取 {len(items)} 条商品")
+                    return True, "canary keyword ok", debug
+
                 if login_hint:
                     reason = f"canary「{kw}」检测到登录页面，cookie 可能已过期"
                 elif risk_hint:
-                    reason = f"canary「{kw}」触发风控验证页，暂停爬取"
+                    reason = f"canary「{kw}」触发风控验证页且无商品，暂停爬取"
                 elif not items:
                     if response_count == 0:
                         reason = f"canary「{kw}」无响应数据，可能被屏蔽"
