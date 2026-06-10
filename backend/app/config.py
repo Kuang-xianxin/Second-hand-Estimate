@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     crawl_enabled: bool = False         # 是否启用定时爬取（开发默认关闭，生产 .env 开启）
     initial_crawl_enabled: bool = False # 首次启动是否自动触发全量爬取（仅缓存表为空时；开发默认关闭）
     crawl_scheduler_mode: str = "embedded"  # embedded=Web 进程内 APScheduler，external=独立短命 worker
+    crawl_stability_mode: bool = False  # production: one request per run with hard Redis cooldown
+    crawl_keywords_per_run: int = 1
+    crawl_min_interval_seconds: int = 180
+    crawl_coverage_target_seconds: int = 172800
+    crawl_failure_cooldown_seconds: int = 1800
+    crawl_risk_cooldown_seconds: int = 604800
+    crawl_max_cooldown_seconds: int = 2592000
 
     # 分层爬取间隔
     crawl_interval_t1_seconds: int = 43200   # T1 普通型号间隔（12 小时）
@@ -120,8 +127,6 @@ class Settings(BaseSettings):
             errors.append("SMTP_HOST and SMTP_FROM_EMAIL are required when password reset is enabled")
         if self.crawl_enabled and scheduler_mode != "external":
             errors.append("CRAWL_SCHEDULER_MODE must be external when production crawling is enabled")
-        if self.crawl_enabled and not self.crawl_canary_enabled:
-            errors.append("CRAWL_CANARY_ENABLED must be true when production crawling is enabled")
         if self.crawl_enabled and not self.crawl_stop_on_risk:
             errors.append("CRAWL_STOP_ON_RISK must be true when production crawling is enabled")
         if self.crawl_enabled and (
@@ -131,6 +136,30 @@ class Settings(BaseSettings):
                 "CRAWL_CONCURRENCY and CRAWL_CONCURRENCY_MAX must both be 1 "
                 "when production crawling is enabled"
             )
+        if self.crawl_enabled and not self.crawl_stability_mode:
+            errors.append("CRAWL_STABILITY_MODE must be true when production crawling is enabled")
+        if self.crawl_enabled and self.crawl_keywords_per_run != 1:
+            errors.append("CRAWL_KEYWORDS_PER_RUN must be 1 when production crawling is enabled")
+        if self.crawl_enabled and self.max_pages_per_query != 1:
+            errors.append("MAX_PAGES_PER_QUERY must be 1 when production crawling is enabled")
+        if self.crawl_enabled and self.max_items_per_query_t0 > 20:
+            errors.append("MAX_ITEMS_PER_QUERY_T0 must be <= 20 when production crawling is enabled")
+        if self.crawl_enabled and self.crawl_dynamic_concurrency:
+            errors.append("CRAWL_DYNAMIC_CONCURRENCY must be false when production crawling is enabled")
+        if self.crawl_enabled and self.crawl_min_interval_seconds < 180:
+            errors.append("CRAWL_MIN_INTERVAL_SECONDS must be >= 180 in production")
+        if self.crawl_enabled:
+            from app.services.keyword_tier import get_all_model_ids
+
+            model_count = len(get_all_model_ids())
+            request_budget = self.crawl_min_interval_seconds * model_count
+            if request_budget > int(self.crawl_coverage_target_seconds * 0.75):
+                errors.append(
+                    "CRAWL_MIN_INTERVAL_SECONDS leaves insufficient runtime margin "
+                    f"to attempt {model_count} models within CRAWL_COVERAGE_TARGET_SECONDS"
+                )
+        if self.crawl_enabled and self.crawl_risk_cooldown_seconds < 604800:
+            errors.append("CRAWL_RISK_COOLDOWN_SECONDS must be >= 604800 in production")
 
         if errors:
             raise RuntimeError("Invalid production configuration: " + "; ".join(errors))

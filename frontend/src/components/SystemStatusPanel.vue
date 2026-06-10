@@ -81,12 +81,12 @@ function brandColor(key: string): string {
   return BRAND_COLORS[key] || '#888'
 }
 
-const t0Percent = computed(() => Math.min(100, Math.round((stats.value?.cached_models || 0) / 200 * 100)))
-const t1Percent = computed(() => Math.min(100, Math.round(((stats.value?.cached_models || 0) - 52) / 1012 * 100)))
-const t2Percent = computed(() => 0)
-const t0Count = computed(() => stats.value?.cached_models || 0)
-const t1Count = computed(() => Math.max(0, (stats.value?.cached_models || 0) - 52))
-const t2Count = computed(() => 0)
+const freshPercent = computed(() => {
+  const expected = stats.value?.crawl_expected_models || 0
+  return expected
+    ? Math.min(100, Math.round((stats.value?.crawl_fresh_models_48h || 0) / expected * 100))
+    : 0
+})
 
 onMounted(() => startPolling(30000))
 onUnmounted(stopPolling)
@@ -133,24 +133,17 @@ defineExpose({ refresh: load })
         </div>
       </div>
 
-      <!-- 分层覆盖进度 -->
+      <!-- 48 小时更新目标 -->
       <div class="section">
-        <div class="section-title">📊 数据覆盖</div>
+        <div class="section-title">48 小时更新覆盖</div>
         <div class="tier-bars">
           <div class="tier-row">
-            <span class="tier-label t0">T0 热门</span>
-            <div class="tier-bar-track"><div class="tier-bar-fill t0-fill" :style="{ width: t0Percent + '%' }"></div></div>
-            <span class="tier-num">{{ t0Count }} / 200</span>
+            <span class="tier-label t0">已更新</span>
+            <div class="tier-bar-track"><div class="tier-bar-fill t0-fill" :style="{ width: freshPercent + '%' }"></div></div>
+            <span class="tier-num">{{ stats.crawl_fresh_models_48h }} / {{ stats.crawl_expected_models }}</span>
           </div>
-          <div class="tier-row">
-            <span class="tier-label t1">T1 普通</span>
-            <div class="tier-bar-track"><div class="tier-bar-fill t1-fill" :style="{ width: t1Percent + '%' }"></div></div>
-            <span class="tier-num">{{ t1Count }} / 1012</span>
-          </div>
-          <div class="tier-row">
-            <span class="tier-label t2">T2 长尾</span>
-            <div class="tier-bar-track"><div class="tier-bar-fill t2-fill" :style="{ width: t2Percent + '%' }"></div></div>
-            <span class="tier-num">{{ t2Count }} / 779</span>
+          <div class="sla-note" :class="{ warning: stats.crawl_stale_models_48h > 0 }">
+            超过 48 小时或尚未成功覆盖：{{ stats.crawl_stale_models_48h }} 个型号
           </div>
         </div>
       </div>
@@ -399,6 +392,8 @@ defineExpose({ refresh: load })
 .t1-fill { background: linear-gradient(90deg, #3498DB, #1ABC9C); }
 .t2-fill { background: #888; }
 .tier-num { font-size: 10px; color: var(--text2); font-family: var(--font-mono); width: 70px; text-align: right; }
+.sla-note { font-size: 11px; color: var(--green); }
+.sla-note.warning { color: var(--red); }
 
 /* 捡漏标签 */
 .bargain-chip { background: rgba(92,184,122,0.08) !important; }

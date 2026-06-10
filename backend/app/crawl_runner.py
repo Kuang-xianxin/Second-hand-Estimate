@@ -18,7 +18,14 @@ from app.config import settings
 from app.models.crawl_status import CrawlStatus
 from app.models.database import AsyncSessionLocal, engine, init_db
 from app.models.redis_client import close_redis
-from app.services.keyword_tier import KeywordTier
+from app.services.crawl_guard import (
+    advance_keyword_offset,
+    claim_run_slot,
+    classify_failure,
+    current_keyword_offset,
+    record_run_result,
+)
+from app.services.keyword_tier import KeywordTier, get_keywords_by_tier
 
 logger = logging.getLogger("crawl_runner")
 
@@ -48,11 +55,21 @@ def status_exit_code(status: str | None) -> int:
 
 
 def tier_is_enabled(tier: str) -> bool:
+    if tier == "sweep":
+        return settings.crawl_t0_enabled or settings.crawl_t1_enabled or settings.crawl_t2_enabled
     return {
         "t0": settings.crawl_t0_enabled,
         "t1": settings.crawl_t1_enabled,
         "t2": settings.crawl_t2_enabled,
     }[tier]
+
+
+def build_sweep_schedule() -> list[tuple[KeywordTier, int]]:
+    schedule: list[tuple[KeywordTier, int]] = []
+    for tier in (KeywordTier.T0_HOT, KeywordTier.T1_WARM, KeywordTier.T2_COLD):
+        for offset, _keyword in enumerate(get_keywords_by_tier(tier)):
+            schedule.append((tier, offset))
+    return schedule
 
 
 async def read_batch_status(batch_id: str) -> CrawlStatus | None:
@@ -80,8 +97,27 @@ async def run_once(
         logger.info("Tier %s is disabled; nothing to do", tier_name)
         return EXIT_OK
 
-    tier = TIER_MAP[tier_name]
+    tier = TIER_MAP.get(tier_name)
+    guard = await claim_run_slot(tier_name)
+    if not guard.allowed:
+        logger.warning(
+            "Crawl guard blocked tier=%s remaining=%ss reason=%s",
+            tier_name,
+            guard.remaining_seconds,
+            guard.reason,
+        )
+        return EXIT_OK
+
     batch_id = build_batch_id(tier_name)
+    keyword_offset = 0
+    if tier_name == "sweep":
+        schedule = build_sweep_schedule()
+        if not schedule:
+            logger.error("No representative model keywords are configured")
+            return EXIT_CONFIG
+        schedule_offset = await current_keyword_offset(tier_name, len(schedule))
+        tier, keyword_offset = schedule[schedule_offset]
+        batch_id = build_batch_id(f"sweep_{tier.value}")
     if max_items_per_keyword is None:
         max_items_per_keyword = (
             settings.max_items_per_query_t0
@@ -90,12 +126,26 @@ async def run_once(
         )
     if concurrency is None:
         concurrency = settings.crawl_concurrency
+    skip_canary = False
+    if settings.crawl_stability_mode:
+        keyword_limit = settings.crawl_keywords_per_run
+        max_items_per_keyword = min(max_items_per_keyword, settings.max_items_per_query_t0)
+        concurrency = 1
+        if tier_name != "sweep":
+            keyword_offset = await current_keyword_offset(
+                tier_name,
+                len(get_keywords_by_tier(tier)),
+            )
+        # The single workload request is the probe. A separate canary would
+        # double request volume and repeat the same automated access pattern.
+        skip_canary = True
 
     logger.info(
-        "Starting external crawl batch=%s tier=%s keyword_limit=%s max_items=%s concurrency=%s",
+        "Starting external crawl batch=%s tier=%s keyword_limit=%s offset=%s max_items=%s concurrency=%s",
         batch_id,
         tier_name,
         keyword_limit or "all",
+        keyword_offset,
         max_items_per_keyword,
         concurrency,
     )
@@ -107,6 +157,8 @@ async def run_once(
         max_items_per_kw=max_items_per_keyword,
         concurrency=concurrency,
         keyword_limit=keyword_limit,
+        keyword_offset=keyword_offset,
+        skip_canary=skip_canary,
         batch_id_override=batch_id,
     )
 
@@ -118,6 +170,12 @@ async def run_once(
         )
         return EXIT_TEMPORARY
 
+    failure_kind = classify_failure(record.error_message or "")
+    await record_run_result(tier_name, record.status, record.error_message or "")
+    if tier_name == "sweep" and (
+        record.status == "completed" or failure_kind == "empty"
+    ):
+        await advance_keyword_offset(tier_name)
     exit_code = status_exit_code(record.status)
     log = logger.info if exit_code == EXIT_OK else logger.error
     log(
@@ -153,7 +211,7 @@ async def async_main(args: argparse.Namespace) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tier", choices=sorted(TIER_MAP), required=True)
+    parser.add_argument("--tier", choices=sorted([*TIER_MAP, "sweep"]), required=True)
     parser.add_argument(
         "--keyword-limit",
         type=int,

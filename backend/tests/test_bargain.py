@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, List
+from unittest.mock import AsyncMock, MagicMock
 
 backend_root = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_root))
@@ -182,6 +183,27 @@ class TestCcdSampleFiltering:
 
         assert [item.item_id for item in kept] == ["2"]
         assert filtered_out[0]["reason"] == "非相机商品"
+
+
+@pytest.mark.asyncio
+async def test_incremental_bargain_refresh_only_deletes_affected_model():
+    from app.services.bargain_detector import replace_global_bargains_for_keywords
+
+    session = AsyncMock()
+    session.add = MagicMock()
+
+    written = await replace_global_bargains_for_keywords(
+        records=[],
+        batch_id="sweep-test",
+        keywords=["sony t700", "dsc-t700"],
+        session=session,
+    )
+
+    assert written == 0
+    session.execute.assert_awaited_once()
+    statement = str(session.execute.await_args.args[0])
+    assert "WHERE global_bargains.keyword IN" in statement
+    session.commit.assert_awaited_once()
 
 
 if __name__ == "__main__":

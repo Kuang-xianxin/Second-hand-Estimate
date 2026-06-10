@@ -83,9 +83,9 @@ class RedisLock:
             return False
 
 
-async def acquire_crawl_lock(worker_id: str = "default") -> RedisLock:
+async def acquire_crawl_lock(worker_id: str = "default", ttl: int = 7200) -> RedisLock:
     """获取定时任务分布式锁，确保多 Worker 环境下只有一个人物运行。"""
-    lock = RedisLock(f"{LOCK_CRAWL_KEY}:{worker_id}", ttl=7200)
+    lock = RedisLock(f"{LOCK_CRAWL_KEY}:{worker_id}", ttl=ttl)
     if not await lock.acquire():
         raise RuntimeError(f"无法获取定时任务锁，任务可能正在其他节点运行: {worker_id}")
     return lock

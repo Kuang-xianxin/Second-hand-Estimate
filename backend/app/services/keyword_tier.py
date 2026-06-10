@@ -282,52 +282,104 @@ _tier_keywords: Dict[KeywordTier, List[str]] = {t: [] for t in KeywordTier}
 
 
 def _build_indices():
-    from app.services.ccd_keywords import ALL_CCD_KEYWORDS
+    from app.services.ccd_keywords import get_model_keyword_groups
 
-    # Step 1: register T0 models
+    groups = get_model_keyword_groups()
+    group_aliases = [
+        {keyword.strip().lower() for keyword in group}
+        for group in groups
+    ]
+
+    _keyword_to_model.clear()
+    _model_by_id.clear()
+    for tier in KeywordTier:
+        _tier_keywords[tier] = []
+
+    # Match explicit T0 definitions to generated groups before mutating either
+    # index. Sorting by overlap keeps similarly named models such as IXUS 300
+    # and IXUS 300 HS distinct.
+    candidates = []
+    for model_index, model in enumerate(T0_CANONICAL_MODELS):
+        aliases = {keyword.strip().lower() for keyword in model.keywords}
+        for group_index, group_set in enumerate(group_aliases):
+            overlap = len(aliases & group_set)
+            if overlap >= 2:
+                candidates.append((overlap, model_index, group_index))
+    candidates.sort(key=lambda candidate: (-candidate[0], candidate[1], candidate[2]))
+
+    group_to_t0: Dict[int, CanonicalModel] = {}
+    assigned_models = set()
+    for _overlap, model_index, group_index in candidates:
+        if model_index in assigned_models or group_index in group_to_t0:
+            continue
+        assigned_models.add(model_index)
+        group_to_t0[group_index] = T0_CANONICAL_MODELS[model_index]
+
+    if len(assigned_models) != len(T0_CANONICAL_MODELS):
+        missing = [
+            model.model_id
+            for index, model in enumerate(T0_CANONICAL_MODELS)
+            if index not in assigned_models
+        ]
+        raise RuntimeError(f"T0 models missing generated keyword groups: {missing}")
+
+    # Register T0 models first so ambiguous aliases keep their curated mapping.
+    used_representatives = set()
     for model in T0_CANONICAL_MODELS:
         _model_by_id[model.model_id] = model
         for kw in model.keywords:
-            _keyword_to_model[kw.strip().lower()] = model
-            _tier_keywords[KeywordTier.T0_HOT].append(kw.strip())
+            _keyword_to_model.setdefault(kw.strip().lower(), model)
+        representative = model.keywords[0].strip()
+        _tier_keywords[KeywordTier.T0_HOT].append(representative)
+        used_representatives.add(representative.lower())
 
-    t0_set = {kw.strip().lower() for kw in _tier_keywords[KeywordTier.T0_HOT]}
-
-    # Step 2: split remaining keywords into T1 vs T2
-    t1_models: Dict[str, CanonicalModel] = {}  # brand:model_id -> model
-
-    for kw in ALL_CCD_KEYWORDS:
-        norm = kw.strip().lower()
-        if norm in t0_set:
+    # Map every generated alias group to exactly one model and one unique
+    # representative search keyword.
+    for group_index, group in enumerate(groups):
+        overlap = group_to_t0.get(group_index)
+        if overlap is not None:
+            for kw in group:
+                norm = kw.strip().lower()
+                _keyword_to_model.setdefault(norm, overlap)
+                if kw.strip() not in overlap.keywords:
+                    overlap.keywords.append(kw.strip())
             continue
-        if norm in _keyword_to_model:
-            continue  # already mapped
 
+        representative = next(
+            (
+                keyword.strip()
+                for keyword in group
+                if keyword.strip().lower() not in used_representatives
+                and keyword.strip().lower() not in _keyword_to_model
+            ),
+            None,
+        )
+        if representative is None:
+            raise RuntimeError(f"Model group has no unique representative: {group}")
+
+        norm = representative.lower()
         brand = _infer_brand(norm)
-        is_t1 = _matches_t1(norm)
+        is_t1 = any(_matches_t1(kw.strip().lower()) for kw in group)
         tier = KeywordTier.T1_WARM if is_t1 else KeywordTier.T2_COLD
 
-        # Group by brand for cleaner model_id
-        model_id = f"tier:{brand}:{norm[:40]}"
+        model_id = f"tier:{brand}:{group_index:04d}"
         model = CanonicalModel(
-            model_id=model_id, display_name=kw.strip(),
+            model_id=model_id, display_name=representative,
             brand=brand, series="",
-            keywords=[kw.strip()], tier=tier,
+            keywords=[kw.strip() for kw in group], tier=tier,
         )
         _model_by_id[model_id] = model
-        _keyword_to_model[norm] = model
-        _tier_keywords[tier].append(kw.strip())
+        for kw in group:
+            _keyword_to_model.setdefault(kw.strip().lower(), model)
+        _tier_keywords[tier].append(representative)
+        used_representatives.add(norm)
 
-    # Step 3: deduplicate keywords per tier
-    for tier in KeywordTier:
-        seen = set()
-        unique = []
-        for kw in _tier_keywords[tier]:
-            n = kw.strip().lower()
-            if n not in seen:
-                seen.add(n)
-                unique.append(kw.strip())
-        _tier_keywords[tier] = unique
+    representative_count = sum(len(keywords) for keywords in _tier_keywords.values())
+    if representative_count != len(groups):
+        raise RuntimeError(
+            "Representative model schedule does not match normalized model groups: "
+            f"{representative_count} != {len(groups)}"
+        )
 
 
 _build_indices()
@@ -338,7 +390,8 @@ _build_indices()
 # ============================================================
 
 def get_canonical_model(keyword: str) -> Optional[CanonicalModel]:
-    return _keyword_to_model.get(keyword.strip().lower())
+    value = keyword.strip().lower()
+    return _keyword_to_model.get(value) or _model_by_id.get(value)
 
 
 def get_model_by_id(model_id: str) -> Optional[CanonicalModel]:
@@ -356,7 +409,7 @@ def get_tier(keyword: str) -> KeywordTier:
 
 def get_canonical_keyword(keyword: str) -> str:
     model = get_canonical_model(keyword)
-    if model and model.tier == KeywordTier.T0_HOT:
+    if model:
         return model.model_id
     return keyword.strip().lower()
 
@@ -380,7 +433,7 @@ def get_tier_counts() -> Dict[str, int]:
 
 def get_model_keywords_for_pricing(keyword: str) -> List[str]:
     model = get_canonical_model(keyword)
-    if model and model.tier == KeywordTier.T0_HOT:
+    if model:
         return list(model.keywords)
     return [keyword.strip()]
 

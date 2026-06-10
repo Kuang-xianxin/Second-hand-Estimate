@@ -12,6 +12,7 @@ from app.services.keyword_tier import (
     get_tier_counts, get_t0_model_ids, get_model_keywords_for_pricing,
     get_all_keywords,
 )
+from app.services.ccd_keywords import get_model_keyword_groups
 
 
 class TestKeywordTierIndices:
@@ -20,6 +21,14 @@ class TestKeywordTierIndices:
         counts = get_tier_counts()
         assert counts["t0"] > 0
         assert counts["t1"] > 0
+        assert len(get_all_keywords()) == len(get_model_keyword_groups()) == 673
+
+    def test_similar_models_stay_distinct_while_duplicates_are_removed(self):
+        groups = get_model_keyword_groups()
+        assert len(groups) == 673
+        assert sum("ixus300" in [keyword.lower() for keyword in group] for group in groups) == 1
+        assert sum("ixus300hs" in [keyword.lower() for keyword in group] for group in groups) == 1
+        assert get_canonical_model("ixus300").model_id != get_canonical_model("ixus300hs").model_id
 
     def test_t0_models_defined(self):
         model_ids = get_t0_model_ids()
@@ -51,6 +60,16 @@ class TestCanonicalModelMapping:
     def test_canonical_keyword(self):
         assert get_canonical_keyword("佳能ixus130") == "canon-ixus-130"
         assert get_canonical_keyword("sd1400is") == "canon-ixus-130"
+        assert get_canonical_model("canon-ixus-130").model_id == "canon-ixus-130"
+
+    def test_non_hot_aliases_share_one_model(self):
+        group = next(
+            group
+            for group in get_model_keyword_groups()
+            if "canon a5" in [keyword.lower() for keyword in group]
+        )
+        model_ids = {get_canonical_model(keyword).model_id for keyword in group}
+        assert len(model_ids) == 1
 
     def test_unknown_keyword_tier(self):
         assert get_tier("不存在的关键词xyz123") == KeywordTier.T2_COLD

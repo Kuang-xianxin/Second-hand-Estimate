@@ -4,6 +4,7 @@
 """
 import json
 import logging
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +19,7 @@ from app.models.price_history import PriceHistory
 from app.models.item import CrawledItem
 from app.models.auth import AppUser
 from app.services.auth import get_current_user
+from app.services.keyword_tier import get_all_model_ids
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,9 @@ class SystemStats(BaseModel):
     # 缓存覆盖
     cached_models: int
     latest_crawl: str | None
+    crawl_expected_models: int
+    crawl_fresh_models_48h: int
+    crawl_stale_models_48h: int
     # 商品数据
     total_items: int
     # 捡漏数据
@@ -134,6 +139,16 @@ async def get_stats_overview(
     cached_models = l2_row[0] or 0 if l2_row else 0
     latest_crawl = l2_row[1].isoformat() if l2_row and l2_row[1] else None
 
+    model_ids = get_all_model_ids()
+    fresh_result = await db.execute(
+        select(sql_func.count(CCDPriceCache.id)).where(
+            CCDPriceCache.keyword.in_(model_ids),
+            CCDPriceCache.crawled_at >= datetime.utcnow() - timedelta(hours=48),
+        )
+    )
+    fresh_models_48h = fresh_result.scalar() or 0
+    stale_models_48h = max(0, len(model_ids) - fresh_models_48h)
+
     # 总商品数
     total_items_result = await db.execute(
         select(sql_func.count(CrawledItem.id))
@@ -191,6 +206,9 @@ async def get_stats_overview(
     return SystemStats(
         cached_models=cached_models,
         latest_crawl=latest_crawl,
+        crawl_expected_models=len(model_ids),
+        crawl_fresh_models_48h=fresh_models_48h,
+        crawl_stale_models_48h=stale_models_48h,
         total_items=total_items,
         total_bargains=total_bargains,
         bargains_by_brand=bargains_by_brand,

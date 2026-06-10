@@ -25,7 +25,11 @@ from app.services.keyword_tier import (
 )
 from app.services.crawl_worker import crawl_all_ccd_models, crawl_canary
 from app.services.cache_updater import compute_price_for_keyword, batch_update_cache, warm_l1_cache, write_crawled_items
-from app.services.bargain_detector import detect_global_bargains, replace_global_bargains
+from app.services.bargain_detector import (
+    detect_global_bargains,
+    replace_global_bargains,
+    replace_global_bargains_for_keywords,
+)
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -132,6 +136,7 @@ async def _run_tier_crawl(
     keyword_limit: int = 0,
     storage_state_override: str = None,
     batch_id_override: str = None,
+    keyword_offset: int = 0,
 ):
     """
     执行单层爬取任务：爬取 → 写入原始商品 → 算法估价 → 全局捡漏 → 缓存更新。
@@ -144,7 +149,9 @@ async def _run_tier_crawl(
     logger.info(f"[{tier.value}] 批次 {batch_id} 开始执行")
 
     # 分布式锁
-    lock_id = f"crawl-{tier.value}"
+    # Stability mode uses one global lock across all tiers. This prevents a
+    # manual tier worker from overlapping the all-model sweep.
+    lock_id = "crawl-global" if settings.crawl_stability_mode else f"crawl-{tier.value}"
 
     # CPU 保护：负载过高时延迟或跳过
     cpu_load = os.getloadavg()[0] if hasattr(os, 'getloadavg') else 0
@@ -159,7 +166,10 @@ async def _run_tier_crawl(
         await asyncio.sleep(wait_sec)
     if not skip_lock:
         try:
-            lock = await acquire_crawl_lock(worker_id=lock_id)
+            lock = await acquire_crawl_lock(
+                worker_id=lock_id,
+                ttl=300 if settings.crawl_stability_mode else 7200,
+            )
         except RuntimeError as e:
             logger.warning(f"[{tier.value}] {e}")
             return
@@ -194,6 +204,9 @@ async def _run_tier_crawl(
 
         # 获取该层关键词
         keywords = get_keywords_by_tier(tier)
+        if keywords and keyword_offset:
+            offset = keyword_offset % len(keywords)
+            keywords = keywords[offset:] + keywords[:offset]
         if keyword_limit and keyword_limit > 0:
             keywords = keywords[:keyword_limit]
         total_kw = len(keywords)
@@ -401,8 +414,19 @@ async def _run_tier_crawl(
             await batch_update_cache(keyword_prices, list(keyword_prices.keys()),
                                      crawl_report.all_items, session)
             if tier in (KeywordTier.T0_HOT, KeywordTier.T1_WARM):
-                # 成功爬取但没有捡漏时也要清空旧结果，避免捡漏广场展示过期机会。
-                await replace_global_bargains(bargains, batch_id, session)
+                if settings.crawl_stability_mode:
+                    affected_keywords = []
+                    for canonical in keyword_prices:
+                        affected_keywords.extend(get_model_keywords_for_pricing(canonical))
+                    await replace_global_bargains_for_keywords(
+                        bargains,
+                        batch_id,
+                        affected_keywords,
+                        session,
+                    )
+                else:
+                    # 成功爬取但没有捡漏时也要清空旧结果，避免捡漏广场展示过期机会。
+                    await replace_global_bargains(bargains, batch_id, session)
 
             from sqlalchemy import select
             result = await session.execute(

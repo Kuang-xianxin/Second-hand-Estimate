@@ -12,9 +12,9 @@
 - [x] 后端测试：159 passed，0 failed（`pytest -q`）。
 - [ ] Docker Compose 未安装（服务器用 systemd 管理服务，替代方案已验证可行）。
 - [ ] 真实估价金丝雀：缓存端点 HTTP 200（当前缓存为空，等待调度器填充）。已修复 `import os` bug（调度器之前静默失败）。
-- [ ] 独立爬虫 worker 金丝雀成功：生产 Web 进程不再运行 Playwright，`guessr-crawl@t0.service` 成功完成并写入数据库。
+- [ ] 独立爬虫稳定轮转成功：生产 Web 进程不再运行 Playwright，`guessr-crawl@sweep.service` 单型号任务成功完成并写入数据库。
 - [x] 监控告警：服务器 cron 已配置（每 5 分钟检查磁盘/内存/服务/爬虫登录态），watchdog 模式（静默=正常）。
-- [ ] 闲鱼登录态：本地用户绑定和新导出的全局状态均未通过真实金丝雀，启用生产 timer 前必须重新登录并验证。
+- [ ] 闲鱼登录态：当前会话已触发风控；保持静默冷却，冷却结束后由单型号 sweep 请求验证，禁止额外真实金丝雀。
 - [ ] 服务器连通性：2026-06-09 公网健康检查返回空响应，SSH 在密钥交换前被关闭；需先从腾讯云控制台恢复实例/SSH。
 
 ## 生产环境变量
@@ -72,10 +72,17 @@ sudo systemctl reload nginx
 ```bash
 CRAWL_ENABLED=true
 CRAWL_SCHEDULER_MODE=external
-CRAWL_CANARY_ENABLED=true
+CRAWL_CANARY_ENABLED=false
 CRAWL_STOP_ON_RISK=true
 CRAWL_CONCURRENCY=1
 CRAWL_CONCURRENCY_MAX=1
+CRAWL_STABILITY_MODE=true
+CRAWL_KEYWORDS_PER_RUN=1
+CRAWL_MIN_INTERVAL_SECONDS=180
+CRAWL_COVERAGE_TARGET_SECONDS=172800
+CRAWL_RISK_COOLDOWN_SECONDS=604800
+MAX_ITEMS_PER_QUERY_T0=20
+MAX_PAGES_PER_QUERY=1
 ```
 
 安装 systemd service 和 timer：
@@ -84,11 +91,18 @@ CRAWL_CONCURRENCY_MAX=1
 cd /opt/guessr
 bash deploy/install-crawl-timers.sh
 systemctl list-timers 'guessr-crawl-*'
-journalctl -u 'guessr-crawl@t0.service' -n 100 --no-pager
+journalctl -u 'guessr-crawl@sweep.service' -n 100 --no-pager
 ```
 
-不要使用每 5 分钟启动一次完整爬虫的普通 cron。T0 全量任务本身可能运行一小时以上；
-systemd timer 使用 `OnUnitInactiveSec=90min`，会在上一轮结束后再计时，并由 Redis 锁提供第二层防重。
+不要使用高频完整爬虫或并行 tier timer。稳定模式把 673 个去重型号拆成独立短命进程，
+每次只访问一个型号。`guessr-crawl-sweep.timer` 在上一个 worker 退出后再调度，
+Redis 全局门禁强制至少间隔 180 秒，全局分布式锁防止任何层级重叠。
+单型号 worker 硬超时为 3 分钟；无失败冷却时，加上下一次调度等待，一轮尝试上限约 45 小时。
+普通网络或内部故障会先冷却 30 分钟，再重试同一型号；空结果会保留旧缓存并继续轮转。
+
+稳定模式不运行额外 canary，因为 canary 会让每轮请求量翻倍；当前单型号请求本身就是探针。
+登录失效、`RGV587` 或其他风控信号会立刻熔断并进入至少 7 天冷却。此时安全优先，
+48 小时更新目标会暂停，不能通过继续重试来强行满足。
 
 验证数据库确实更新：
 
@@ -99,7 +113,12 @@ sudo -u postgres psql -d ccd_db -c \
   "SELECT count(*) AS total,max(crawled_at) AS latest FROM crawled_items;"
 sudo -u postgres psql -d ccd_db -c \
   "SELECT count(*) AS total,max(crawled_at) AS latest FROM ccd_price_cache;"
+sudo -u postgres psql -d ccd_db -c \
+  "SELECT count(*) AS stale_over_48h FROM ccd_price_cache WHERE crawled_at < now() - interval '48 hours';"
 ```
+
+网页系统状态面板还会显示 673 个标准型号中，48 小时内成功更新和过期/未覆盖的数量。
+上游没有挂牌数据、登录失效或风控期间无法保证成功写入，但失败批次不会覆盖旧缓存。
 
 ## HTTPS
 

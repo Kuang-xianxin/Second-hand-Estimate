@@ -1,6 +1,6 @@
 """
 CCD 全型号关键词生成器——从 reference.md 自动生成
-覆盖: 676 型号, 2003 关键词
+覆盖: 673 个去重型号组, 1991 个唯一关键词
 """
 from typing import List
 
@@ -2095,6 +2095,88 @@ ALL_CCD_KEYWORDS = _dedup([
     *PENTAX_KEYWORDS,
     *KODAK_KEYWORDS,
 ])
+
+
+def _group_model_aliases(keywords: List[str]) -> List[List[str]]:
+    """Split generated series lists into model groups.
+
+    Each generated model starts with its Chinese brand keyword, followed by
+    English and regional aliases until the next Chinese brand keyword.
+    """
+    groups: List[List[str]] = []
+    current: List[str] = []
+    for keyword in keywords:
+        value = keyword.strip()
+        starts_model = bool(value and ord(value[0]) > 127)
+        if starts_model and current:
+            groups.append(_dedup(current))
+            current = []
+        current.append(value)
+    if current:
+        groups.append(_dedup(current))
+    return groups
+
+
+def _normalize_model_groups(groups: List[List[str]]) -> List[List[str]]:
+    """Merge duplicate generated groups without merging similar models.
+
+    Some source series contain the same model twice, with one occurrence
+    missing an alias. Only equal/subset groups are merged; partially
+    overlapping groups such as IXUS 300 and IXUS 300 HS stay separate.
+    """
+    normalized: List[List[str]] = []
+    normalized_sets: List[set[str]] = []
+    for group in groups:
+        aliases = {keyword.strip().lower() for keyword in group}
+        duplicate_index = next(
+            (
+                index
+                for index, existing in enumerate(normalized_sets)
+                if aliases <= existing or existing <= aliases
+            ),
+            None,
+        )
+        if duplicate_index is None:
+            normalized.append(_dedup(group))
+            normalized_sets.append(aliases)
+            continue
+
+        normalized[duplicate_index] = _dedup(
+            [*normalized[duplicate_index], *group]
+        )
+        normalized_sets[duplicate_index] = {
+            keyword.strip().lower()
+            for keyword in normalized[duplicate_index]
+        }
+    return normalized
+
+
+_RAW_MODEL_KEYWORD_GROUPS: List[List[str]] = []
+for _series_keywords in (
+    CANON_IXUS_KEYWORDS,
+    CANON_PS_A_KEYWORDS,
+    CANON_PS_SX_KEYWORDS,
+    SONY_T_TX_KEYWORDS,
+    SONY_W_WX_KEYWORDS,
+    SONY_H_KEYWORDS,
+    NIKON_COOLPIX_S_KEYWORDS,
+    NIKON_COOLPIX_L_KEYWORDS,
+    PANASONIC_FX_KEYWORDS,
+    CASIO_EXILIM_KEYWORDS,
+    SAMSUNG_KEYWORDS,
+    FUJIFILM_KEYWORDS,
+    OLYMPUS_KEYWORDS,
+    PENTAX_KEYWORDS,
+    KODAK_KEYWORDS,
+):
+    _RAW_MODEL_KEYWORD_GROUPS.extend(_group_model_aliases(_series_keywords))
+
+CCD_MODEL_KEYWORD_GROUPS = _normalize_model_groups(_RAW_MODEL_KEYWORD_GROUPS)
+
+
+def get_model_keyword_groups() -> List[List[str]]:
+    return [list(group) for group in CCD_MODEL_KEYWORD_GROUPS]
+
 
 def get_all_keywords() -> List[str]:
     """返回全量 CCD 关键词列表。"""

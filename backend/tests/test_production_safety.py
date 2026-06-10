@@ -35,10 +35,16 @@ def test_production_crawl_requires_external_safe_worker():
     _production_settings(
         crawl_enabled=True,
         crawl_scheduler_mode="external",
-        crawl_canary_enabled=True,
+        crawl_canary_enabled=False,
         crawl_stop_on_risk=True,
         crawl_concurrency=1,
         crawl_concurrency_max=1,
+        crawl_stability_mode=True,
+        max_pages_per_query=1,
+        max_items_per_query_t0=20,
+        crawl_dynamic_concurrency=False,
+        crawl_min_interval_seconds=180,
+        crawl_risk_cooldown_seconds=604800,
     ).validate_production()
 
 
@@ -52,7 +58,6 @@ def test_production_crawl_requires_external_safe_worker():
         {"trusted_hosts": "*"},
         {"crawl_scheduler_mode": "unknown"},
         {"crawl_enabled": True, "crawl_scheduler_mode": "embedded"},
-        {"crawl_enabled": True, "crawl_scheduler_mode": "external", "crawl_canary_enabled": False},
         {"crawl_enabled": True, "crawl_scheduler_mode": "external", "crawl_stop_on_risk": False},
         {
             "crawl_enabled": True,
@@ -65,6 +70,12 @@ def test_production_crawl_requires_external_safe_worker():
             "crawl_scheduler_mode": "external",
             "crawl_concurrency": 1,
             "crawl_concurrency_max": 2,
+        },
+        {
+            "crawl_enabled": True,
+            "crawl_scheduler_mode": "external",
+            "crawl_stability_mode": True,
+            "crawl_min_interval_seconds": 600,
         },
     ],
 )
@@ -130,6 +141,18 @@ async def test_production_redis_lock_fails_closed(monkeypatch):
     lock = redis_lock.RedisLock("test-lock")
 
     assert await lock.acquire() is False
+
+
+@pytest.mark.asyncio
+async def test_crawl_lock_accepts_short_stability_ttl(monkeypatch):
+    client = AsyncMock()
+    client.set.return_value = True
+    monkeypatch.setattr(redis_lock, "get_redis", AsyncMock(return_value=client))
+
+    lock = await redis_lock.acquire_crawl_lock("crawl-global", ttl=300)
+
+    assert lock.ttl == 300
+    assert client.set.await_args.kwargs["ex"] == 300
 
 
 @pytest.mark.asyncio

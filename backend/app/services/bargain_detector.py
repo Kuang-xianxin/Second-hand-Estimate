@@ -182,3 +182,54 @@ async def replace_global_bargains(
         logger.error(f"全局捡漏表替换失败: {e}")
         await session.rollback()
         return 0
+
+
+async def replace_global_bargains_for_keywords(
+    records: list[GlobalBargainRecord],
+    batch_id: str,
+    keywords: list[str],
+    session,
+) -> int:
+    """Replace bargains only for the model updated by a stable sweep worker."""
+    from sqlalchemy import delete
+
+    normalized = list({keyword.strip() for keyword in keywords if keyword.strip()})
+    item_ids = list({record.item_id for record in records if record.item_id})
+    try:
+        if normalized:
+            await session.execute(
+                delete(GlobalBargain).where(GlobalBargain.keyword.in_(normalized))
+            )
+            await session.flush()
+        if item_ids:
+            await session.execute(
+                delete(GlobalBargain).where(GlobalBargain.item_id.in_(item_ids))
+            )
+            await session.flush()
+
+        for record in records:
+            session.add(GlobalBargain(
+                item_id=record.item_id,
+                keyword=record.keyword,
+                brand=record.brand,
+                title=record.title,
+                current_price=record.current_price,
+                base_price=record.base_price,
+                profit_estimate=record.profit_estimate,
+                discount_rate=record.discount_rate,
+                condition=record.condition,
+                quality_score=record.quality_score,
+                is_xd_card=record.is_xd_card,
+                xd_card_size=record.xd_card_size,
+                xd_card_value=record.xd_card_value,
+                url=record.url,
+                image_url=record.image_url,
+                refresh_batch=batch_id,
+            ))
+
+        await session.commit()
+        return len(records)
+    except Exception as exc:
+        logger.error("Incremental global bargain replacement failed: %s", exc)
+        await session.rollback()
+        return 0

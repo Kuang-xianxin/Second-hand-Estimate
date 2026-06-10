@@ -33,11 +33,13 @@ fi
 sudo systemctl disable --now \
   guessr-crawl-t0.timer \
   guessr-crawl-t1.timer \
-  guessr-crawl-t2.timer 2>/dev/null || true
+  guessr-crawl-t2.timer \
+  guessr-crawl-sweep.timer 2>/dev/null || true
 sudo systemctl stop \
   guessr-crawl@t0.service \
   guessr-crawl@t1.service \
-  guessr-crawl@t2.service 2>/dev/null || true
+  guessr-crawl@t2.service \
+  guessr-crawl@sweep.service 2>/dev/null || true
 sudo systemctl stop guessr
 
 set_env() {
@@ -53,10 +55,21 @@ set_env() {
 # The Web process must never launch Playwright in production.
 set_env CRAWL_ENABLED true
 set_env CRAWL_SCHEDULER_MODE external
-set_env CRAWL_CANARY_ENABLED true
+set_env CRAWL_CANARY_ENABLED false
 set_env CRAWL_STOP_ON_RISK true
 set_env CRAWL_CONCURRENCY 1
 set_env CRAWL_CONCURRENCY_MAX 1
+set_env CRAWL_STABILITY_MODE true
+set_env CRAWL_KEYWORDS_PER_RUN 1
+set_env CRAWL_MIN_INTERVAL_SECONDS 180
+set_env CRAWL_COVERAGE_TARGET_SECONDS 172800
+set_env CRAWL_FAILURE_COOLDOWN_SECONDS 1800
+set_env CRAWL_RISK_COOLDOWN_SECONDS 604800
+set_env CRAWL_MAX_COOLDOWN_SECONDS 2592000
+set_env CRAWL_DYNAMIC_CONCURRENCY false
+set_env MAX_ITEMS_PER_QUERY_T0 20
+set_env MAX_PAGES_PER_QUERY 1
+set_env CRAWL_BATCH_SIZE 1
 
 # A killed embedded scheduler cannot release its Redis lock. At this point both
 # the Web service and all external workers are stopped, so these keys are stale.
@@ -72,7 +85,10 @@ async def main():
     client = await get_redis()
     if client is None:
         raise RuntimeError("Redis is unavailable; refusing to clear crawl locks")
-    keys = [f"{LOCK_CRAWL_KEY}:crawl-{tier}" for tier in ("t0", "t1", "t2")]
+    keys = [
+        f"{LOCK_CRAWL_KEY}:crawl-{tier}"
+        for tier in ("t0", "t1", "t2", "sweep", "global")
+    ]
     deleted = await client.delete(*keys)
     print(f"Cleared {deleted} stale crawl lock(s)")
     await close_redis()
@@ -86,6 +102,7 @@ sudo install -m 0644 "${UNIT_SOURCE}/guessr-crawl@.service" /etc/systemd/system/
 sudo install -m 0644 "${UNIT_SOURCE}/guessr-crawl-t0.timer" /etc/systemd/system/
 sudo install -m 0644 "${UNIT_SOURCE}/guessr-crawl-t1.timer" /etc/systemd/system/
 sudo install -m 0644 "${UNIT_SOURCE}/guessr-crawl-t2.timer" /etc/systemd/system/
+sudo install -m 0644 "${UNIT_SOURCE}/guessr-crawl-sweep.timer" /etc/systemd/system/
 
 sudo systemctl daemon-reload
 sudo systemctl start guessr
@@ -98,16 +115,32 @@ for _ in $(seq 1 30); do
 done
 curl -fsS http://127.0.0.1:8000/ready
 
-echo "Running one-keyword external worker canary..."
+# The account is currently risk-limited. Installation must not probe Xianyu.
+# Persist a seven-day quiet period before the first single-keyword request.
 (
   cd "${BACKEND_DIR}"
-  sudo -u ubuntu ./venv/bin/python -m app.crawl_runner \
-    --tier t0 \
-    --keyword-limit 1
+  sudo -u ubuntu ./venv/bin/python - <<'PY'
+import asyncio
+
+from app.config import settings
+from app.models.redis_client import close_redis
+from app.services.crawl_guard import ensure_cooldown
+
+
+async def main():
+    remaining = await ensure_cooldown(
+        "all",
+        settings.crawl_risk_cooldown_seconds,
+        "initial quiet period after confirmed Xianyu risk control",
+    )
+    print(f"Global crawl cooldown remaining: {remaining}s")
+    await close_redis()
+
+
+asyncio.run(main())
+PY
 )
 
-sudo systemctl enable --now guessr-crawl-t0.timer
+sudo systemctl enable --now guessr-crawl-sweep.timer
 
-echo "External worker canary passed; installed independent T0 crawl timer."
-echo "Enable slower tiers when required:"
-echo "  sudo systemctl enable --now guessr-crawl-t1.timer guessr-crawl-t2.timer"
+echo "Installed stable all-model sweep timer with an initial risk cooldown; no Xianyu request was sent."

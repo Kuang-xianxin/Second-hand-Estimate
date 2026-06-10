@@ -11,7 +11,7 @@ WorkingDirectory=/opt/guessr/backend
 EnvironmentFile=/opt/guessr/backend/.env
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/guessr/backend/venv/bin/python -m app.crawl_runner --tier %i
-TimeoutStartSec=3h
+TimeoutStartSec=3min
 KillMode=mixed
 Nice=10
 NoNewPrivileges=true

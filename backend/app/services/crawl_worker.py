@@ -256,13 +256,15 @@ async def crawl_single_keyword(
     keyword: str,
     sem: Optional[asyncio.Semaphore] = None,
     crawler=None,
-    max_retries: int = 2,
+    max_retries: Optional[int] = None,
     max_items: int = None,
     storage_state_override: Optional[str] = None,
 ) -> CrawlResult:
     """爬取单个关键词，带指数退避重试。semaphore 包住 sleep + search 保证并发控制有效。"""
     if max_items is None:
         max_items = settings.max_items_per_query
+    if max_retries is None:
+        max_retries = 0 if settings.crawl_stability_mode else 2
 
     for attempt in range(max_retries + 1):
         try:
@@ -556,7 +558,7 @@ async def crawl_all_ccd_models(
             await asyncio.sleep(base_delay)
 
     # 重试失败关键词
-    if failed_keywords and not aborted:
+    if failed_keywords and not aborted and not settings.crawl_stability_mode:
         logger.info(f"重试 {len(failed_keywords)} 个失败关键词...")
         retry_sem = asyncio.Semaphore(max(1, dyn_concurrency.current // 2))
         tasks = [

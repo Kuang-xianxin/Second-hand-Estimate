@@ -1,0 +1,12 @@
+[Unit]
+Description=Schedule one Guessr model crawl at a time
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=1min
+AccuracySec=15s
+Persistent=true
+Unit=guessr-crawl@sweep.service
+
+[Install]
+WantedBy=timers.target

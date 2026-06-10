@@ -347,6 +347,9 @@ export interface CrawlBatch {
 export interface SystemStats {
   cached_models: number
   latest_crawl: string | null
+  crawl_expected_models: number
+  crawl_fresh_models_48h: number
+  crawl_stale_models_48h: number
   total_items: number
   total_bargains: number
   bargains_by_brand: Record<string, number>

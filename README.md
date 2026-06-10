@@ -46,11 +46,14 @@ npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org
 cd /opt/guessr
 bash deploy/install-crawl-timers.sh
 systemctl list-timers 'guessr-crawl-*'
-journalctl -u 'guessr-crawl@t0.service' -n 100 --no-pager
+journalctl -u 'guessr-crawl@sweep.service' -n 100 --no-pager
 ```
 
-安装脚本会先运行一个关键词的真实金丝雀。只有金丝雀成功写入
-`crawl_status` 后，才会启用完整 T0 定时任务。
+生产稳定模式每个短命 worker 只爬取一个型号、只取一页、并发固定为 1。
+673 个去重型号按轮转顺序逐个更新，正常情况下约 45 小时完成一轮。
+Redis 全局请求门禁保证不同层级或手工任务也不能并行；检测到登录失效或风控后立即停止并进入长冷却。
+普通故障冷却后重试当前型号，空结果保留旧缓存并继续轮转。
+安装过程不会请求闲鱼，并会保留已经存在的冷却时间。
 
 ```bash
 cp .env.cloud.example .env.cloud
