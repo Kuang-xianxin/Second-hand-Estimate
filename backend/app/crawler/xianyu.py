@@ -118,6 +118,7 @@ class XianyuItem:
     url: str
     sold: bool
     sold_at: Optional[datetime]
+    query_keyword: str = ""
     quality_score: float = 50.0
     quality_flags: List[str] = field(default_factory=list)
     images: List[str] = field(default_factory=list)
