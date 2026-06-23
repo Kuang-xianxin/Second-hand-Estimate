@@ -314,6 +314,7 @@ class XianyuCrawler:
                 url=f"https://www.goofish.com/item?id={item_id}",
                 sold=sold,
                 sold_at=datetime.now() if sold else None,
+                query_keyword=keyword,
                 quality_score=quality_score,
                 quality_flags=quality_flags,
                 images=images,

@@ -17,6 +17,7 @@ class CrawledItem(Base):
     category = Column(String(128), nullable=True)
     seller_id = Column(String(64), nullable=True)
     sold = Column(Boolean, default=False)  # 是否已售出
+    is_valid = Column(Boolean, default=True)  # 是否为有效样本
     query_keyword = Column(String(256))    # 搜索关键词
     keyword = Column(String(256))           # 搜索关键词（别名）
 
