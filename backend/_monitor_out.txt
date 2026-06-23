@@ -1,0 +1,26 @@
+1. 检查服务健康状态...
+   {'error': '<urlopen error [WinError 10061] 由于目标计算机积极拒绝，无法连接。>'}
+   服务未启动，正在启动...
+   服务已启动
+
+2. 关键词分层统计...
+   {'t0': 200, 't1': 1791, 't2': 0}
+
+3. 登录态检查...
+   storage_state: True
+   needs_login: False
+
+4. Canary 预检...
+   canary_ok: None
+   canary_message: 
+
+5. 触发 T0 爬取（5 个关键词）...
+   {'status': 'started', 'tier': 't0', 'message': '已触发 t0 爬取任务'}
+
+6. 监控爬取进度...
+   [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [失败] 0/0 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 0/200 | items=0 | bargains=0 |    [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 100/200 | items=0 | bargains=0 | ====================   [爬取中] 100/200 | items=0 | bargains=0 | ====================   [爬取中] 100/200 | items=0 | bargains=0 | ====================   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 50/200 | items=0 | bargains=0 | ==========   [爬取中] 150/200 | items=0 | bargains=0 | ==============================   [爬取中] 150/200 | items=0 | bargains=0 | ==============================   [爬取中] 150/200 | items=0 | bargains=0 | ==============================
+   监控超时
+
+8. 缓存状态...
+
+Done!

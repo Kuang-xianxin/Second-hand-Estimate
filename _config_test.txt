@@ -1,0 +1,3 @@
+Port: 8001
+DB: sqlite+aiosqlite:///./guessr.db
+Redis: redis://localhost:6379/0

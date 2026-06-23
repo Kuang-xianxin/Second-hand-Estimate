@@ -1,0 +1,35 @@
+At line:1 char:128
++ ... ble Id, ProcessName, StartTime, @{N='MemMB';E={[math]::Round(extglob. ...
++                                                                  ~
+Missing ')' in method call.
+At line:1 char:128
++ ... StartTime, @{N='MemMB';E={[math]::Round(extglob.WorkingSet64/1MB,2)}}
++                                             ~~~~~~~~~~~~~~~~~~~~~~~~
+Unexpected token 'extglob.WorkingSet64/1MB' in expression or statement.
+At line:1 char:152
++ ... StartTime, @{N='MemMB';E={[math]::Round(extglob.WorkingSet64/1MB,2)}}
++                                                                     ~
+Missing argument in parameter list.
+At line:1 char:113
++ ... ue | Format-Table Id, ProcessName, StartTime, @{N='MemMB';E={[math]:: ...
++                                                                 ~
+Missing closing '}' in statement block or type definition.
+At line:1 char:154
++ ... StartTime, @{N='MemMB';E={[math]::Round(extglob.WorkingSet64/1MB,2)}}
++                                                                       ~
+The hash literal was incomplete.
+At line:1 char:154
++ ... StartTime, @{N='MemMB';E={[math]::Round(extglob.WorkingSet64/1MB,2)}}
++                                                                       ~
+Unexpected token ')' in expression or statement.
+At line:1 char:155
++ ... StartTime, @{N='MemMB';E={[math]::Round(extglob.WorkingSet64/1MB,2)}}
++                                                                        ~
+Unexpected token '}' in expression or statement.
+At line:1 char:156
++ ... StartTime, @{N='MemMB';E={[math]::Round(extglob.WorkingSet64/1MB,2)}}
++                                                                         ~
+Unexpected token '}' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingEndParenthesisInMethodCall
+ 

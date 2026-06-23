@@ -1,0 +1,8 @@
+PASS keyword_tier: T0=200, T1=1791
+PASS canonical mapping: 佳能ixus130 -> canon-ixus-130
+PASS crawl_worker: DynamicConcurrency init=2
+PASS cache_updater: all imports OK
+PASS scheduler: all imports OK
+PASS cache_api: router imported
+
+DONE

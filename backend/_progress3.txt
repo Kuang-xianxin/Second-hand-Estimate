@@ -1,0 +1,30 @@
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 100/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 100/200 | items=0 | t10...尼康s7000
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+[爬取中] 50/200 | items=0 | canon ixus 240...dsc-t10
+Error: 'NoneType' object has no attribute 'get'
+Error: 'NoneType' object has no attribute 'get'
+Error: 'NoneType' object has no attribute 'get'
+Error: 'NoneType' object has no attribute 'get'
+Error: 'NoneType' object has no attribute 'get'
+Error: 'NoneType' object has no attribute 'get'
+Error: 'NoneType' object has no attribute 'get'
+Error: 'NoneType' object has no attribute 'get'
+Error: 'NoneType' object has no attribute 'get'
+Error: 'NoneType' object has no attribute 'get'
+Error: 'NoneType' object has no attribute 'get'
+Error: 'NoneType' object has no attribute 'get'

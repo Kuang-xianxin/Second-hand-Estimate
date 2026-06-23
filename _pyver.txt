@@ -1,0 +1,4 @@
+bash: /c/Users/QQ276/AppData/Local/Programs/Python/Python313/python.exe: No such file or directory
+bash: /c/Users/QQ276/AppData/Local/Programs/Python/Python312/python.exe: No such file or directory
+bash: /c/Users/QQ276/AppData/Local/Programs/Python/Python311/python.exe: No such file or directory
+Python 3.14.2

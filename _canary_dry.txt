@@ -1,0 +1,17 @@
+动态并发：失败率 50% >= 30%，降至 2
+=== Config ===
+  canary_enabled: True
+  canary_keywords: 佳能ixus130,索尼t700
+  dynamic_concurrency: True
+  concurrency_max: 3
+  failure_threshold: 0.3
+  slowdown_delay: 10.0
+  tier counts: T0=200, T1=1791, T2=0
+
+[Dry run - no crawling]
+
+=== DynamicConcurrency Unit ===
+  initial: 3
+  failure_rate: 0.50
+  after adjust: 2
+  PASS

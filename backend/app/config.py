@@ -71,9 +71,11 @@ class Settings(BaseSettings):
     # ── Items / Tier Config ──
     max_items_per_query: int = 60
     max_items_per_query_t0: int = 20
+    max_items_per_query_t0: int = 20
     max_items_per_query_t1: int = 20
     max_items_per_query_t2: int = 20
     max_pages_per_query: int = 1
+    crawl_t0_enabled: bool = True
     crawl_t1_enabled: bool = False
     crawl_t2_enabled: bool = False
 
@@ -93,6 +95,14 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = ""
     smtp_use_tls: bool = True
+
+    def validate_production(self) -> None:
+        """确保生产环境关键配置已设置（external 爬虫模式必需）。"""
+        if not self.crawl_enabled:
+            return
+        if self.crawl_scheduler_mode == "external":
+            if self.crawl_min_interval_seconds < 30:
+                raise ValueError("crawl_min_interval_seconds 过小（<30s）")
 
     class Config:
         env_file = ".env"

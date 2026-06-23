@@ -1,0 +1,2 @@
+Port: 8000
+DB: sqlite+aiosqlite:///./guessr.db

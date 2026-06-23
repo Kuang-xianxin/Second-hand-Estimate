@@ -1,0 +1,9 @@
+ccd_price_cache: 104 rows
+crawled_items: 3337 rows
+global_bargains: 325 rows
+crawl_status: 18 rows
+crawl_keyword_status: 252 rows
+bargain_alerts: 250 rows
+price_history: 104 rows
+
+Storage state: 253711 bytes, modified 2026-04-24 10:31:44

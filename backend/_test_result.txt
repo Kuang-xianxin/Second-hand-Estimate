@@ -1,0 +1,40 @@
+FAIL keyword_tier: No module named 'app'
+Traceback (most recent call last):
+  File "D:\my progect\估二手\_test_imports.py", line 8, in <module>
+    from app.services.keyword_tier import (
+    ...<3 lines>...
+    )
+ModuleNotFoundError: No module named 'app'
+
+FAIL crawl_worker: No module named 'app'
+Traceback (most recent call last):
+  File "D:\my progect\估二手\_test_imports.py", line 23, in <module>
+    from app.services.crawl_worker import (
+    ...<2 lines>...
+    )
+ModuleNotFoundError: No module named 'app'
+
+FAIL cache_updater: No module named 'app'
+Traceback (most recent call last):
+  File "D:\my progect\估二手\_test_imports.py", line 35, in <module>
+    from app.services.cache_updater import (
+    ...<2 lines>...
+    )
+ModuleNotFoundError: No module named 'app'
+
+FAIL scheduler: No module named 'app'
+Traceback (most recent call last):
+  File "D:\my progect\估二手\_test_imports.py", line 45, in <module>
+    from app.scheduler import (
+        setup_scheduler, run_full_crawl_task, run_t0_crawl, run_t1_crawl, run_t2_crawl, shutdown_scheduler,
+    )
+ModuleNotFoundError: No module named 'app'
+
+FAIL cache_api: No module named 'app'
+Traceback (most recent call last):
+  File "D:\my progect\估二手\_test_imports.py", line 54, in <module>
+    from app.api.cache_api import router, CrawlerStatusResponse
+ModuleNotFoundError: No module named 'app'
+
+
+DONE

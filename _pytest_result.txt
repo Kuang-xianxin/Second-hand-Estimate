@@ -1,0 +1,24 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0 -- C:\Python314\python.exe
+cachedir: .pytest_cache
+rootdir: D:\my progect\¹À¶þÊÖ\backend
+plugins: anyio-4.13.0, asyncio-1.3.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 14 items
+
+tests/test_crawl_worker.py::test_crawl_all_aborts_on_risk PASSED         [  7%]
+tests/test_crawl_worker.py::test_crawl_all_aborts_on_login PASSED        [ 14%]
+tests/test_crawl_worker.py::test_crawl_all_tier_and_max_items PASSED     [ 21%]
+tests/test_crawl_worker.py::test_tier_in_report PASSED                   [ 28%]
+tests/test_crawl_worker.py::test_canary_failure_aborts_batch PASSED      [ 35%]
+tests/test_crawl_worker.py::test_skip_canary PASSED                      [ 42%]
+tests/test_crawl_worker.py::TestDynamicConcurrency::test_initial_value PASSED [ 50%]
+tests/test_crawl_worker.py::TestDynamicConcurrency::test_all_success_recovery PASSED [ 57%]
+tests/test_crawl_worker.py::TestDynamicConcurrency::test_high_failure_drops PASSED [ 64%]
+tests/test_crawl_worker.py::TestDynamicConcurrency::test_never_below_one PASSED [ 71%]
+tests/test_crawl_worker.py::TestCanaryFunction::test_canary_disabled PASSED [ 78%]
+tests/test_crawl_worker.py::TestCanaryFunction::test_no_keywords_configured PASSED [ 85%]
+tests/test_crawl_worker.py::TestCanaryFunction::test_canary_risk_detected PASSED [ 92%]
+tests/test_crawl_worker.py::TestCanaryFunction::test_canary_login_required PASSED [100%]
+
+============================= 14 passed in 4.82s ==============================

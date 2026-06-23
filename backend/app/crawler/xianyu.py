@@ -415,7 +415,8 @@ class XianyuCrawler:
             "viewport": {"width": 1280, "height": 800},
         }
         if self.has_storage_state():
-            context_kwargs["storage_state"] = str(STORAGE_STATE_FILE)
+            state_file = getattr(self, '_storage_state_path', None) or STORAGE_STATE_FILE
+            context_kwargs["storage_state"] = str(state_file)
             return playwright_browser.new_context(**context_kwargs)
 
         context = playwright_browser.new_context(**context_kwargs)
@@ -565,7 +566,10 @@ class XianyuCrawler:
         max_items: int = 20,
         cookie_override: Optional[str] = None,
         filter_keyword: Optional[str] = None,
+        storage_state_override: Optional[str] = None,
     ) -> List[XianyuItem]:
+        if storage_state_override:
+            self._storage_state_path = pathlib.Path(storage_state_override)
         if cookie_override and cookie_override.strip():
             self.save_cookie(cookie_override.strip())
 

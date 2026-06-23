@@ -1,0 +1,6 @@
+INFO:     Started server process [24284]
+INFO:     Waiting for application startup.
+2026-05-24 21:49:22,780 [INFO] main: 定时爬取已禁用（crawl_enabled=False），跳过调度器初始化
+2026-05-24 21:49:22,780 [INFO] main: 定时爬取已禁用，跳过首次全量爬取
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)

@@ -1,0 +1,8 @@
+crawled_items: ['id', 'item_id', 'keyword', 'query_keyword', 'title', 'price', 'original_price', 'condition', 'description', 'category', 'seller_id', 'sold', 'images', 'quality_score', 'quality_flags', 'is_valid', 'crawled_at', 'sold_at']
+valuation_records: ['id', 'keyword', 'base_price', 'price_min', 'price_max', 'sample_count', 'raw_prices', 'deepseek_result', 'qwen_result', 'created_at']
+bargain_alerts: ['id', 'valuation_record_id', 'item_id', 'keyword', 'title', 'price', 'current_price', 'estimated_price', 'base_price', 'profit_estimate', 'discount_rate', 'condition', 'quality_score', 'is_xd_card', 'xd_card_size', 'xd_card_value', 'url', 'image_url', 'is_read', 'created_at', 'updated_at']
+ccd_price_cache: ['id', 'keyword', 'display_name', 'brand', 'series', 'base_price', 'price_min', 'price_max', 'median_price', 'sample_count', 'avg_price', 'is_xd_card', 'xd_card_bundle_count', 'crawled_at', 'updated_at']
+crawl_status: ['id', 'batch_id', 'started_at', 'finished_at', 'total_keywords', 'success_count', 'fail_count', 'total_items', 'bargains_found', 'status', 'error_message']
+global_bargains: ['id', 'item_id', 'keyword', 'brand', 'title', 'current_price', 'base_price', 'profit_estimate', 'discount_rate', 'condition', 'quality_score', 'is_xd_card', 'xd_card_size', 'xd_card_value', 'url', 'image_url', 'refresh_batch', 'created_at']
+price_history: ['id', 'keyword', 'base_price', 'median_price', 'price_min', 'price_max', 'sample_count', 'trend', 'crawled_at']
+---TABLES: ['crawled_items', 'valuation_records', 'bargain_alerts', 'ccd_price_cache', 'crawl_status', 'global_bargains', 'price_history']

@@ -1,0 +1,55 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.2, pytest-9.0.3, pluggy-1.6.0 -- C:\Python314\python.exe
+cachedir: .pytest_cache
+rootdir: D:\my progect\¹À¶þÊÖ\backend
+plugins: anyio-4.13.0, asyncio-1.3.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 45 items
+
+tests/test_keyword_tier.py::TestKeywordTierIndices::test_indices_built PASSED [  2%]
+tests/test_keyword_tier.py::TestKeywordTierIndices::test_t0_models_defined PASSED [  4%]
+tests/test_keyword_tier.py::TestKeywordTierIndices::test_t0_keywords_have_canonical PASSED [  6%]
+tests/test_keyword_tier.py::TestCanonicalModelMapping::test_ixus130_mapping PASSED [  8%]
+tests/test_keyword_tier.py::TestCanonicalModelMapping::test_ixus130_pricing_keywords PASSED [ 11%]
+tests/test_keyword_tier.py::TestCanonicalModelMapping::test_canonical_keyword PASSED [ 13%]
+tests/test_keyword_tier.py::TestCanonicalModelMapping::test_unknown_keyword_tier PASSED [ 15%]
+tests/test_keyword_tier.py::TestKeywordTierFunctions::test_t0_not_empty PASSED [ 17%]
+tests/test_keyword_tier.py::TestKeywordTierFunctions::test_t1_not_empty PASSED [ 20%]
+tests/test_keyword_tier.py::TestKeywordTierFunctions::test_no_duplicates_between_tiers PASSED [ 22%]
+tests/test_keyword_tier.py::TestKeywordTierFunctions::test_all_keywords_coverage PASSED [ 24%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[\u4f73\u80fdixus130-canon-ixus-130] PASSED [ 26%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[canon ixus 130-canon-ixus-130] PASSED [ 28%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[ixus130-canon-ixus-130] PASSED [ 31%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[sd1400is-canon-ixus-130] PASSED [ 33%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[\u7d22\u5c3ct700-sony-t700] PASSED [ 35%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[sony t700-sony-t700] PASSED [ 37%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[dsc-t700-sony-t700] PASSED [ 40%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[t700-sony-t700] PASSED [ 42%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[\u5bcc\u58ebf100-fuji-f100fd] PASSED [ 44%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[f100fd-fuji-f100fd] PASSED [ 46%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[\u5c3c\u5eb7s7000-nikon-s7000] PASSED [ 48%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[\u7d22\u5c3cw800-sony-w800] PASSED [ 51%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[\u5965\u6797\u5df4\u65af\u03bc300-olympus-mu300] PASSED [ 53%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[mu300-olympus-mu300] PASSED [ 55%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[\u677e\u4e0bfx01-panasonic-fx01] PASSED [ 57%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[dmc-fx01-panasonic-fx01] PASSED [ 60%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[\u5361\u897f\u6b27z3-casio-z3] PASSED [ 62%]
+tests/test_keyword_tier.py::TestHotModelExamples::test_hot_model_mapping[ex-z3-casio-z3] PASSED [ 64%]
+tests/test_keyword_tier.py::TestBackwardCompatibility::test_get_all_keywords_returns_list PASSED [ 66%]
+tests/test_keyword_tier.py::TestBackwardCompatibility::test_ccd_keywords_still_works PASSED [ 68%]
+tests/test_crawl_worker.py::test_crawl_all_aborts_on_risk PASSED         [ 71%]
+tests/test_crawl_worker.py::test_crawl_all_aborts_on_login PASSED        [ 73%]
+tests/test_crawl_worker.py::test_crawl_all_tier_and_max_items PASSED     [ 75%]
+tests/test_crawl_worker.py::test_tier_in_report PASSED                   [ 77%]
+tests/test_crawl_worker.py::test_canary_failure_aborts_batch PASSED      [ 80%]
+tests/test_crawl_worker.py::test_skip_canary PASSED                      [ 82%]
+tests/test_crawl_worker.py::TestDynamicConcurrency::test_initial_value PASSED [ 84%]
+tests/test_crawl_worker.py::TestDynamicConcurrency::test_all_success_recovery PASSED [ 86%]
+tests/test_crawl_worker.py::TestDynamicConcurrency::test_high_failure_drops PASSED [ 88%]
+tests/test_crawl_worker.py::TestDynamicConcurrency::test_never_below_one PASSED [ 91%]
+tests/test_crawl_worker.py::TestCanaryFunction::test_canary_disabled PASSED [ 93%]
+tests/test_crawl_worker.py::TestCanaryFunction::test_no_keywords_configured PASSED [ 95%]
+tests/test_crawl_worker.py::TestCanaryFunction::test_canary_risk_detected PASSED [ 97%]
+tests/test_crawl_worker.py::TestCanaryFunction::test_canary_login_required PASSED [100%]
+
+============================= 45 passed in 4.59s ==============================
