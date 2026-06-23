@@ -21,6 +21,9 @@ class CrawledItem(Base):
     keyword = Column(String(256))           # 搜索关键词（别名）
 
     images = Column(Text, nullable=True)   # JSON 存储图片URL列表
+    url = Column(String(1024), nullable=True)  # 闲鱼商品链接
+    quality_score = Column(Float, nullable=True)  # 质量评分
+    quality_flags = Column(Text, nullable=True)   # 质量标记 JSON
     crawled_at = Column(DateTime, server_default=func.now())
     sold_at = Column(DateTime, nullable=True)  # 出售时间（已售）
 
