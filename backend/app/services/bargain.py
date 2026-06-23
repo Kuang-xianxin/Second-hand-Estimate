@@ -260,8 +260,17 @@ def _is_risky_by_category(item, category: Literal["phone", "ccd", "other"]) -> b
 
 
 def filter_target_items(items: list, query_keyword: str) -> list:
-    """仅按型号一致性过滤样本（估价主流程），配件/故障判断交给LLM"""
-    kept, _ = filter_target_items_with_reasons(items, query_keyword)
+    """仅按型号一致性过滤样本（估价主流程），配件/故障判断交给LLM。
+    
+    WHY: 估价需要尽可能多的价格样本做统计，过度过滤会杀死 cache 回填。
+    配件/出租过滤仅用于捡漏展示（filter_target_items_with_reasons）。
+    """
+    category = _infer_category(query_keyword)
+    kept = []
+    for item in items:
+        if _is_model_mismatch(query_keyword, item.title, category):
+            continue
+        kept.append(item)
     return kept
 
 
