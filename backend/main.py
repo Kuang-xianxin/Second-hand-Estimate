@@ -5,6 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.models.database import init_db
 from app.api.valuate import router
+from app.api.auth import router as auth_router
+from app.api.cache_api import router as cache_router
+from app.api.stats_api import router as stats_router
 from app.config import settings
 
 logging.basicConfig(
@@ -35,6 +38,9 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(auth_router)
+app.include_router(cache_router)
+app.include_router(stats_router)
 
 
 @app.get("/health")
