@@ -27,13 +27,45 @@ CCD_RISK_KEYWORDS = [
     "进灰", "霉", "霉斑", "镜片划伤", "镜头划伤", "快门故障", "快门异常",
     "对焦故障", "对焦异常", "不开机", "死机", "电池仓腐蚀", "维修", "拆修",
     "漏光", "暗角严重", "传感器坏点", "屏幕坏", "闪光灯坏", "仅机身无配件",
+    "进水", "锈迹", "破损", "镜头坏", "故障", "不能开机", "无法开机",
+    "坏了", "当废品", "废品", "有问题", "用不了", "不能用", "找人修",
+]
+
+CCD_DECOY_PRICE_KEYWORDS = [
+    # WHY: 出租/咨询/占位价通常标 1-几十元，会把“捡漏利润”虚高到离谱。
+    "勿直拍", "勿拍", "不要拍", "别拍", "请勿直接拍", "拍前联系", "拍前咨询",
+    "先联系", "先咨询", "联系改价", "改价", "标价不实", "价格不实", "随便标价",
+    "展示价", "展示用", "仅展示", "占位", "定金", "订金", "补差价", "补邮费",
+    "邮费链接", "运费链接", "专拍链接", "补款链接", "非卖品", "价格面议",
+    "免押出租", "免押租", "出租", "租赁", "租相机", "起租", "续租", "日租",
+    "单天", "芝麻免押", "芝麻信用", "档期", "跑腿到付", "闪送跑腿",
+    "咨询辨真假", "辨别ccd真假", "辨真假", "鉴别真假", "帮忙推荐", "推荐ccd",
+    "推荐机型", "回答关于ccd", "回答问题", "拍下链接", "有问题直接拍",
+    "拍下后即可", "价格合不合适", "拍照技巧", "问问题",
 ]
 
 CCD_ACCESSORY_KEYWORDS = [
+    # WHY: 配件/耗材/资料不是可估价整机，不能参与基准价或捡漏判断。
     "说明书", "电子版", "pdf", "外屏", "内屏", "液晶屏", "显示屏", "屏幕总成",
     "电池", "充电器", "充电线", "数据线", "镜头盖", "镜头组", "转接环", "滤镜", "遮光罩",
     "读卡器", "内存卡", "存储卡", "相机包", "保护套", "贴膜", "背带", "三脚架", "快装板", "热靴",
-    "拆机", "零件", "主板", "排线",
+    "拆机", "零件", "主板", "排线", "usb盖", "usb 盖", "数据盖", "hdmi盖", "hdmi 盖",
+    "背盖", "后盖", "前盖", "外壳", "机身壳", "按键", "快门按钮", "传感器", "底座",
+    "仓盖", "手册", "电路图", "资料", "软件安装", "滤光片", "低通滤镜",
+]
+
+CCD_SOFT_ACCESSORY_KEYWORDS = [
+    "电池", "充电器", "充电线", "数据线", "内存卡", "存储卡", "读卡器", "相机包", "保护套", "背带",
+]
+
+CCD_STANDALONE_ACCESSORY_HINTS = [
+    "适用", "适用于", "适配", "专用", "型号众多", "单电池", "座充", "充电底座", "充电座",
+    "电池专拍", "充电器专拍",
+]
+
+# WHY: “带电池/充电器”常见于整机描述，只有配合“适用/专用/单电池”等语境才按配件过滤。
+CCD_HARD_ACCESSORY_KEYWORDS = [
+    kw for kw in CCD_ACCESSORY_KEYWORDS if kw not in CCD_SOFT_ACCESSORY_KEYWORDS
 ]
 
 CCD_BRANDS = {
@@ -119,6 +151,10 @@ def _item_text(item) -> str:
     return f"{getattr(item, 'title', '')} {getattr(item, 'description', '')}".lower()
 
 
+def _contains_any(text: str, keywords: list[str]) -> bool:
+    return any(kw.lower() in text for kw in keywords)
+
+
 def _extract_iphone_generation(text: str) -> str:
     m = re.search(r"iphone\s*([0-9]{2})", text, flags=re.IGNORECASE)
     if m:
@@ -188,13 +224,36 @@ def _ccd_model_mismatch(keyword: str, title: str) -> bool:
     return False
 
 
+def _ccd_invalid_sample_reason(item) -> str:
+    text = _item_text(item)
+    if _contains_any(text, CCD_DECOY_PRICE_KEYWORDS):
+        return "低价引流/非实价"
+    if _contains_any(text, CCD_HARD_ACCESSORY_KEYWORDS):
+        if "配件齐全" not in text:
+            return "配件/耗材/资料"
+    if _contains_any(text, CCD_SOFT_ACCESSORY_KEYWORDS):
+        if _contains_any(text, CCD_STANDALONE_ACCESSORY_HINTS):
+            return "配件/耗材/资料"
+    if "当配件" in text or "配件机" in text or "零件机" in text:
+        return "故障/维修/零件机"
+    for kw in CCD_RISK_KEYWORDS:
+        if kw.lower() in text:
+            return "故障/维修/零件机"
+    return ""
+
+
+def ccd_invalid_bargain_reason(item) -> str:
+    """WHY: 历史 BargainAlert 里可能已有脏数据，接口展示前也要复用同一套拦截规则。"""
+    return _ccd_invalid_sample_reason(item)
+
+
 def _is_risky_by_category(item, category: Literal["phone", "ccd", "other"]) -> bool:
     text = _item_text(item)
     category_risk = []
     if category == "phone":
         category_risk = PHONE_RISK_KEYWORDS
     elif category == "ccd":
-        category_risk = CCD_RISK_KEYWORDS + CCD_ACCESSORY_KEYWORDS
+        category_risk = CCD_RISK_KEYWORDS + CCD_HARD_ACCESSORY_KEYWORDS + CCD_DECOY_PRICE_KEYWORDS
 
     risk_keywords = COMMON_RISK_KEYWORDS + category_risk
     return any(kw.lower() in text for kw in risk_keywords)
@@ -219,6 +278,15 @@ def filter_target_items_with_reasons(items: list, query_keyword: str):
                 "reason": "型号不符",
             })
             continue
+        if category == "ccd":
+            reason = _ccd_invalid_sample_reason(item)
+            if reason:
+                filtered_out.append({
+                    "title": item.title,
+                    "price": item.price,
+                    "reason": reason,
+                })
+                continue
         kept.append(item)
     return kept, filtered_out
 
@@ -451,7 +519,11 @@ def detect_bargains(
     for item in items:
         if item.sold:
             continue
-        if _is_risky_by_category(item, category):
+        if category == "ccd":
+            # WHY: 捡漏入口必须和样本入口共用 CCD 整机过滤，避免出租/咨询/配件以低价进榜。
+            if _ccd_invalid_sample_reason(item):
+                continue
+        elif _is_risky_by_category(item, category):
             continue
         if _is_model_mismatch(query_keyword, item.title, category):
             continue

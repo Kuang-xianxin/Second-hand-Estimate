@@ -18,7 +18,7 @@ from app.models.item import CrawledItem, ValuationRecord, BargainAlert
 from app.crawler.xianyu import get_crawler
 from app.services.pricing import calculate_price
 from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, analyze_item_images, check_xd_card_from_images, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
-from app.services.bargain import detect_bargains, filter_target_items, filter_target_items_with_reasons, detect_xd_card_model_from_items, strip_xd_card_prices, merge_xd_bundle_with_vision
+from app.services.bargain import detect_bargains, filter_target_items, filter_target_items_with_reasons, detect_xd_card_model_from_items, strip_xd_card_prices, merge_xd_bundle_with_vision, ccd_invalid_bargain_reason
 from app.services.xd_card_models import is_masd1_compatible_model
 from app.config import settings
 
@@ -1181,7 +1181,11 @@ async def get_history_detail(
         .order_by(BargainAlert.created_at.asc())
         .limit(20)
     )
-    bargains = bargain_result.scalars().all()
+    # WHY: 老数据里可能已经写入出租/咨询/配件低价项，详情页返回前也要拦掉。
+    bargains = [
+        b for b in bargain_result.scalars().all()
+        if not ccd_invalid_bargain_reason(b)
+    ]
     return {
         "id": r.id,
         "keyword": r.keyword,
@@ -1213,7 +1217,11 @@ async def get_bargains(
     if unread_only:
         query = query.where(BargainAlert.is_read == False)
     result = await db.execute(query)
-    alerts = result.scalars().all()
+    # WHY: 不强制清库也能立刻净化捡漏广场展示，后续新写入由 detect_bargains 拦截。
+    alerts = [
+        a for a in result.scalars().all()
+        if not ccd_invalid_bargain_reason(a)
+    ]
     return [
         {
             "id": a.id,
