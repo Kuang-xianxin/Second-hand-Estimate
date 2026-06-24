@@ -426,6 +426,46 @@ class XianyuCrawler:
             context.add_cookies(cookies)
         return context
 
+    def _collect_more_search_results(self, page, collected: List[dict], max_items: int) -> dict:
+        max_scrolls = 8 if max_items > 30 else 5
+        attempts = 0
+        no_growth_streak = 0
+
+        # WHY: Goofish often returns about 30 items first, then appends the next
+        # lazy batch after a scroll/wait. One no-growth wait is too aggressive.
+        while len(collected) < max_items and attempts < max_scrolls and no_growth_streak < 2:
+            prev = len(collected)
+            page.evaluate("""
+                (() => {
+                    const root = document.scrollingElement || document.documentElement || document.body;
+                    if (root) {
+                        root.scrollTop = Math.min(root.scrollTop + 1800, root.scrollHeight);
+                    }
+                    window.scrollBy(0, 1800);
+                    window.dispatchEvent(new Event('scroll'));
+                })();
+            """)
+            attempts += 1
+            page.wait_for_timeout(2500)
+
+            current = len(collected)
+            if current <= prev:
+                no_growth_streak += 1
+                if no_growth_streak < 2 and len(collected) < max_items:
+                    page.wait_for_timeout(1500)
+                    if len(collected) > current:
+                        no_growth_streak = 0
+                continue
+
+            no_growth_streak = 0
+
+        return {
+            "attempts": attempts,
+            "no_growth_streak": no_growth_streak,
+            "raw_count_after_scroll": len(collected),
+            "reached_requested_count": len(collected) >= max_items,
+        }
+
     def _scrape_sync(self, keyword: str, max_items: int, filter_keyword: Optional[str] = None) -> List[XianyuItem]:
         from playwright.sync_api import sync_playwright
 
@@ -433,6 +473,13 @@ class XianyuCrawler:
         collected: List[dict] = []
         normalized_count = 0
         filtered_bad_function_count = 0
+        duplicate_item_count = 0
+        scroll_stats = {
+            "attempts": 0,
+            "no_growth_streak": 0,
+            "raw_count_after_scroll": 0,
+            "reached_requested_count": False,
+        }
         response_urls: List[str] = []
         response_statuses: List[dict] = []
         response_ret_samples: List[str] = []
@@ -494,20 +541,7 @@ class XianyuCrawler:
             # 等待足够长让闲鱼两批数据（共60条）都到达
             page.wait_for_timeout(6000)
 
-            # 滚动 HTML 元素（闲鱼真实滚动容器）触发更多数据加载
-            for _scroll_i in range(5):
-                prev = len(collected)
-                page.evaluate("""
-                    (() => {
-                        // 闲鱼滚动容器是 HTML.page-search
-                        const html = document.documentElement;
-                        html.scrollTop += 1200;
-                        window.scrollBy(0, 1200);
-                    })();
-                """)
-                page.wait_for_timeout(3000)
-                if len(collected) == prev:
-                    break  # 没有新数据，停止滚动
+            scroll_stats = self._collect_more_search_results(page, collected, max_items)
 
             if not response_urls:
                 page_text = page.content().lower()
@@ -515,11 +549,16 @@ class XianyuCrawler:
                 risk_page_hint = ("验证码" in page_text or "verify" in page_text or "安全验证" in page_text or "风控" in page_text)
 
             effective_filter_keyword = filter_keyword or keyword
+            seen_item_ids = set()
             for raw in collected:
                 item = self._normalize_item(raw, keyword=effective_filter_keyword)
                 if not item:
                     filtered_bad_function_count += 1
                     continue
+                if item.item_id in seen_item_ids:
+                    duplicate_item_count += 1
+                    continue
+                seen_item_ids.add(item.item_id)
                 normalized_count += 1
                 items.append(item)
 
@@ -531,15 +570,22 @@ class XianyuCrawler:
 
         self._last_debug_summary = {
             "keyword": keyword,
+            "max_items_requested": max_items,
             "response_count": len(response_urls),
             "response_urls": response_urls[:3],
             "response_statuses": response_statuses[:10],
             "response_ret_samples": response_ret_samples[:5],
+            "scroll_attempts": scroll_stats["attempts"],
+            "scroll_no_growth_streak": scroll_stats["no_growth_streak"],
+            "raw_count_after_scroll": scroll_stats["raw_count_after_scroll"],
+            "reached_requested_count": scroll_stats["reached_requested_count"],
             "raw_item_count": len(collected),
             "normalized_count": normalized_count,
             "filtered_bad_function_count": filtered_bad_function_count,
             "filtered_bad_condition_count": filtered_bad_function_count,
+            "duplicate_item_count": duplicate_item_count,
             "final_count": len(items),
+            "returned_count": min(len(items), max_items),
             "quality_score_avg": quality_avg,
             "has_storage_state": self.has_storage_state(),
             "storage_state_file": str(STORAGE_STATE_FILE),
