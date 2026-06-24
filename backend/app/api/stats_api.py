@@ -19,8 +19,7 @@ from app.models.price_history import PriceHistory
 from app.models.item import CrawledItem
 from app.models.auth import AppUser
 from app.services.auth import get_current_user
-from app.services.keyword_tier import get_all_model_ids
-from app.services.tier_coverage import count_tier_covered_models
+from app.services.tier_coverage import count_model_covered_models
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +66,9 @@ class SystemStats(BaseModel):
     recent_batches: list
     # 品牌覆盖
     brands: dict
-    # tier 覆盖
-    tier_t0_cached: int
-    tier_t0_expected: int
-    tier_t1_cached: int
-    tier_t1_expected: int
-    tier_t2_cached: int
-    tier_t2_expected: int
+    # 统一型号池覆盖
+    model_coverage_cached: int
+    model_coverage_expected: int
 
 
 _STAGE_LABELS = {
@@ -136,26 +131,32 @@ async def get_stats_overview(
     - 最近 5 个爬取批次摘要
     - 各品牌型号覆盖数
     """
-    # L2 缓存：覆盖型号数 + 最新爬取时间
-    l2_result = await db.execute(
-        select(
-            sql_func.count(CCDPriceCache.id),
-            sql_func.max(CCDPriceCache.crawled_at),
-        )
-    )
-    l2_row = l2_result.first()
-    cached_models = l2_row[0] or 0 if l2_row else 0
-    latest_crawl = l2_row[1].isoformat() if l2_row and l2_row[1] else None
-
+    # 统一型号池：低并发下所有型号同一优先级，不再按层级分组。
+    from app.services.keyword_tier import get_all_model_ids, get_canonical_model
     model_ids = get_all_model_ids()
-    fresh_result = await db.execute(
-        select(sql_func.count(CCDPriceCache.id)).where(
-            CCDPriceCache.keyword.in_(model_ids),
-            CCDPriceCache.crawled_at >= datetime.utcnow() - timedelta(hours=48),
-        )
+    cache_rows_result = await db.execute(
+        select(CCDPriceCache.keyword, CCDPriceCache.crawled_at)
     )
-    fresh_models_48h = fresh_result.scalar() or 0
-    stale_models_48h = max(0, len(model_ids) - fresh_models_48h)
+    cache_rows = cache_rows_result.fetchall()
+    cached_keywords = [kw for kw, _ in cache_rows if kw]
+    fresh_cutoff = datetime.utcnow() - timedelta(hours=48)
+    fresh_keywords = [
+        kw for kw, crawled_at in cache_rows
+        if kw and crawled_at and crawled_at >= fresh_cutoff
+    ]
+    cached_models, expected_models = count_model_covered_models(
+        cached_keywords,
+        model_ids,
+        get_canonical_model,
+    )
+    fresh_models_48h, _ = count_model_covered_models(
+        fresh_keywords,
+        model_ids,
+        get_canonical_model,
+    )
+    stale_models_48h = max(0, expected_models - fresh_models_48h)
+    latest_dt = max((dt for _, dt in cache_rows if dt), default=None)
+    latest_crawl = latest_dt.isoformat() if latest_dt else None
 
     # 总商品数
     total_items_result = await db.execute(
@@ -211,30 +212,10 @@ async def get_stats_overview(
         for row in brand_result.fetchall()
     }
 
-    # tier 覆盖统计：按 canonical model 去重，避免同一型号多个别名把 T0 统计顶穿。
-    from app.services.keyword_tier import get_canonical_model, get_keywords_by_tier, KeywordTier
-    cache_kw_result = await db.execute(select(CCDPriceCache.keyword))
-    cached_keywords = [kw for (kw,) in cache_kw_result.fetchall() if kw]
-    covered_by_tier, expected_by_tier = count_tier_covered_models(
-        cached_keywords,
-        {
-            KeywordTier.T0_HOT: get_keywords_by_tier(KeywordTier.T0_HOT),
-            KeywordTier.T1_WARM: get_keywords_by_tier(KeywordTier.T1_WARM),
-            KeywordTier.T2_COLD: get_keywords_by_tier(KeywordTier.T2_COLD),
-        },
-        get_canonical_model,
-    )
-    t0_expected = expected_by_tier.get(KeywordTier.T0_HOT, 0)
-    t1_expected = expected_by_tier.get(KeywordTier.T1_WARM, 0)
-    t2_expected = expected_by_tier.get(KeywordTier.T2_COLD, 0)
-    t0_cached = covered_by_tier.get(KeywordTier.T0_HOT, 0)
-    t1_cached = covered_by_tier.get(KeywordTier.T1_WARM, 0)
-    t2_cached = covered_by_tier.get(KeywordTier.T2_COLD, 0)
-
     return SystemStats(
         cached_models=cached_models,
         latest_crawl=latest_crawl,
-        crawl_expected_models=len(model_ids),
+        crawl_expected_models=expected_models,
         crawl_fresh_models_48h=fresh_models_48h,
         crawl_stale_models_48h=stale_models_48h,
         total_items=total_items,
@@ -243,10 +224,6 @@ async def get_stats_overview(
         price_history_count=price_history_count,
         recent_batches=recent_batches,
         brands=brands,
-        tier_t0_cached=t0_cached,
-        tier_t0_expected=t0_expected,
-        tier_t1_cached=t1_cached,
-        tier_t1_expected=t1_expected,
-        tier_t2_cached=t2_cached,
-        tier_t2_expected=t2_expected,
+        model_coverage_cached=cached_models,
+        model_coverage_expected=expected_models,
     )

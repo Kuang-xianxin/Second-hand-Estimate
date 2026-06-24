@@ -44,8 +44,6 @@ class Settings(BaseSettings):
     # ── Crawl Core ──
     crawl_enabled: bool = True
     crawl_interval_seconds: int = 300
-    crawl_interval_t1_seconds: int = 43200
-    crawl_interval_t2_seconds: int = 259200
     crawl_scheduler_mode: str = "embedded"  # "embedded" | "external"
     crawl_stability_mode: bool = False
     crawl_stop_on_risk: bool = True
@@ -68,16 +66,10 @@ class Settings(BaseSettings):
     crawl_failure_rate_threshold: float = 0.5
     crawl_slowdown_delay: float = 5.0
 
-    # ── Items / Tier Config ──
+    # ── Items / Crawl Scope ──
     max_items_per_query: int = 60
-    max_items_per_query_t0: int = 20
-    max_items_per_query_t0: int = 20
-    max_items_per_query_t1: int = 20
-    max_items_per_query_t2: int = 20
+    max_items_per_crawl_keyword: int = 20
     max_pages_per_query: int = 1
-    crawl_t0_enabled: bool = True
-    crawl_t1_enabled: bool = False
-    crawl_t2_enabled: bool = False
 
     # ── Bargain ──
     bargain_threshold: float = 120.0
