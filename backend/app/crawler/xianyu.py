@@ -21,7 +21,7 @@ import pathlib
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import os
 import sys
@@ -426,7 +426,21 @@ class XianyuCrawler:
             context.add_cookies(cookies)
         return context
 
-    def _collect_more_search_results(self, page, collected: List[dict], max_items: int) -> dict:
+    def _emit_search_progress(self, progress_callback: Optional[Callable[[dict], None]], **payload):
+        if not progress_callback:
+            return
+        try:
+            progress_callback(payload)
+        except Exception as e:
+            logger.debug(f"搜索进度回调失败: {e}")
+
+    def _collect_more_search_results(
+        self,
+        page,
+        collected: List[dict],
+        max_items: int,
+        progress_callback: Optional[Callable[[dict], None]] = None,
+    ) -> dict:
         max_scrolls = 8 if max_items > 30 else 5
         attempts = 0
         no_growth_streak = 0
@@ -449,12 +463,29 @@ class XianyuCrawler:
             page.wait_for_timeout(2500)
 
             current = len(collected)
+            # WHY: background DB crawls are one-keyword serial jobs; emitting
+            # the raw item count during lazy loading keeps the UI from sitting
+            # at 0% until crawler.search() fully returns.
+            self._emit_search_progress(
+                progress_callback,
+                event="scroll",
+                raw_item_count=current,
+                max_items=max_items,
+                scroll_attempts=attempts,
+            )
             if current <= prev:
                 no_growth_streak += 1
                 if no_growth_streak < 2 and len(collected) < max_items:
                     page.wait_for_timeout(1500)
                     if len(collected) > current:
                         no_growth_streak = 0
+                        self._emit_search_progress(
+                            progress_callback,
+                            event="scroll_wait",
+                            raw_item_count=len(collected),
+                            max_items=max_items,
+                            scroll_attempts=attempts,
+                        )
                 continue
 
             no_growth_streak = 0
@@ -466,7 +497,13 @@ class XianyuCrawler:
             "reached_requested_count": len(collected) >= max_items,
         }
 
-    def _scrape_sync(self, keyword: str, max_items: int, filter_keyword: Optional[str] = None) -> List[XianyuItem]:
+    def _scrape_sync(
+        self,
+        keyword: str,
+        max_items: int,
+        filter_keyword: Optional[str] = None,
+        progress_callback: Optional[Callable[[dict], None]] = None,
+    ) -> List[XianyuItem]:
         from playwright.sync_api import sync_playwright
 
         items: List[XianyuItem] = []
@@ -532,6 +569,13 @@ class XianyuCrawler:
                     raw_list = self._extract_items_from_page_data(body)
                     if raw_list:
                         collected.extend(raw_list)
+                        self._emit_search_progress(
+                            progress_callback,
+                            event="response",
+                            raw_item_count=len(collected),
+                            max_items=max_items,
+                            response_count=len(response_urls),
+                        )
                 except Exception as e:
                     logger.info(f"响应解析失败: {e}")
 
@@ -540,8 +584,15 @@ class XianyuCrawler:
             page.goto(f"https://www.goofish.com/search?q={keyword}", wait_until="networkidle", timeout=30000)
             # 等待足够长让闲鱼两批数据（共60条）都到达
             page.wait_for_timeout(6000)
+            self._emit_search_progress(
+                progress_callback,
+                event="initial_wait",
+                raw_item_count=len(collected),
+                max_items=max_items,
+                response_count=len(response_urls),
+            )
 
-            scroll_stats = self._collect_more_search_results(page, collected, max_items)
+            scroll_stats = self._collect_more_search_results(page, collected, max_items, progress_callback)
 
             if not response_urls:
                 page_text = page.content().lower()
@@ -614,6 +665,7 @@ class XianyuCrawler:
         cookie_override: Optional[str] = None,
         filter_keyword: Optional[str] = None,
         storage_state_override: Optional[str] = None,
+        progress_callback: Optional[Callable[[dict], None]] = None,
     ) -> List[XianyuItem]:
         if storage_state_override:
             self._storage_state_path = pathlib.Path(storage_state_override)
@@ -629,7 +681,7 @@ class XianyuCrawler:
             exc = []
             def _target():
                 try:
-                    result.extend(self._scrape_sync(keyword, max_items, filter_keyword))
+                    result.extend(self._scrape_sync(keyword, max_items, filter_keyword, progress_callback))
                 except Exception as e:
                     exc.append(e)
             t = threading.Thread(target=_target, daemon=True)

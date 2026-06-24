@@ -12,6 +12,9 @@ const props = withDefaults(defineProps<{
 const progress = ref<CrawlProgress | null>(null)
 const error = ref('')
 let timer: ReturnType<typeof setInterval> | null = null
+// WHY: pricing/detecting/saving can finish in under 5 seconds, so a 5s poll
+// makes the UI look frozen during crawl and then jump straight to done.
+const REFRESH_INTERVAL_MS = 1000
 
 const percent = computed(() => {
   if (!progress.value) return 0
@@ -70,7 +73,7 @@ async function refresh() {
 
 onMounted(() => {
   refresh()
-  timer = setInterval(refresh, 5000)
+  timer = setInterval(refresh, REFRESH_INTERVAL_MS)
 })
 
 onUnmounted(() => {

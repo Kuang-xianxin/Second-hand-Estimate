@@ -87,6 +87,7 @@ _STAGE_LABELS = {
     "pricing":    "计算估价",
     "detecting_bargains": "检测捡漏",
     "saving":     "写入数据",
+    "warming":    "预热缓存",
     "completed":  "已完成",
     "failed":     "失败",
 }
@@ -100,6 +101,7 @@ _STAGE_KEYS_ZH = {
     "捡漏": "detecting_bargains",
     "写入": "saving",
     "保存": "saving",
+    "预热": "warming",
     "完成": "completed",
     "失败": "failed",
     "错误": "failed",
@@ -110,6 +112,7 @@ _PHASES = [
     ("pricing", "规则清洗/估价", 70, 82),
     ("detecting_bargains", "检测捡漏", 82, 92),
     ("saving", "写入缓存", 92, 98),
+    ("warming", "预热缓存", 98, 99),
     ("completed", "完成", 100, 100),
 ]
 
@@ -128,6 +131,10 @@ def _stage_key(raw_stage: str) -> str:
     low = stage.lower()
     if low in _STAGE_LABELS:
         return low
+    if low.startswith("saving"):
+        return "saving"
+    if low.startswith("warming"):
+        return "warming"
     for needle, key in _STAGE_KEYS_ZH.items():
         if needle in stage:
             return key
@@ -139,11 +146,14 @@ def _phase_percent(stage_key: str, item_percent: int) -> int:
         return min(99, max(0, item_percent))
     if stage_key == "completed":
         return 100
-    if stage_key == "crawling":
-        # WHY: 前端旧进度条直接用 done/total 算百分比；爬取阶段必须显示采样进度，不显示并发 worker 完成度。
-        return min(99, max(0, item_percent))
-    for key, _, start, _ in _PHASES:
+    for key, _, start, end in _PHASES:
         if key == stage_key:
+            if key == "crawling":
+                # WHY: sample collection is the long part, but it is only one
+                # phase of the whole DB write task. Map sample percent into the
+                # phase range so later stages never jump backwards.
+                clamped = min(100, max(0, item_percent))
+                return min(end, start + round((end - start) * clamped / 100))
             return start
     return max(0, min(99, item_percent))
 

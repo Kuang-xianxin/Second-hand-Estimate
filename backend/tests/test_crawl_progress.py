@@ -22,8 +22,21 @@ _stub_module("app.models.crawl_status", CrawlStatus=_DummyModel)
 _stub_module("app.models.price_history", PriceHistory=_DummyModel)
 _stub_module("app.models.auth", AppUser=_DummyModel)
 _stub_module("app.services.auth", get_current_user=lambda: None)
+_stub_module(
+    "app.services.cache",
+    get_cache_l1=lambda *_args, **_kwargs: None,
+    get_cache_l2=lambda *_args, **_kwargs: None,
+    get_cache_l3=lambda *_args, **_kwargs: None,
+    get_cache_status=lambda *_args, **_kwargs: {},
+)
+_stub_module(
+    "app.api.valuate",
+    require_admin_token=lambda: None,
+    _canonicalize_keyword=lambda keyword: keyword,
+)
 
 from app.api.stats_api import _normalize_crawl_progress, get_crawl_progress, get_stats_overview
+from app.api.cache_api import cache_status, get_global_bargains, get_global_bargains_count
 
 
 def test_stats_endpoints_do_not_require_app_user_auth():
@@ -32,7 +45,15 @@ def test_stats_endpoints_do_not_require_app_user_auth():
     assert "_current_user" not in signature(get_stats_overview).parameters
 
 
-def test_crawl_progress_uses_item_progress_not_worker_done():
+def test_global_bargain_read_endpoints_do_not_require_app_user_auth():
+    # WHY: bargain plaza uses these read-only endpoints anonymously; auth turns
+    # the whole page into an empty state even when global bargain rows exist.
+    assert "_current_user" not in signature(cache_status).parameters
+    assert "_current_user" not in signature(get_global_bargains).parameters
+    assert "_current_user" not in signature(get_global_bargains_count).parameters
+
+
+def test_crawl_progress_maps_item_progress_into_task_phase():
     progress = _normalize_crawl_progress({
         "stage": "crawling",
         "done": 1,
@@ -46,10 +67,24 @@ def test_crawl_progress_uses_item_progress_not_worker_done():
 
     assert progress["raw_done"] == 1
     assert progress["raw_total"] == 1
-    assert progress["progress_percent"] == 82
-    assert progress["display_done"] == 82
+    assert progress["progress_percent"] == 57
+    assert progress["display_done"] == 57
     assert progress["display_total"] == 100
     assert "33/40" in progress["current_keyword"]
+
+
+def test_crawl_progress_later_phases_do_not_jump_behind_task_phase():
+    progress = _normalize_crawl_progress({
+        "stage": "pricing",
+        "done": 1,
+        "total": 1,
+        "success_count": 1,
+        "fail_count": 0,
+        "total_items": 33,
+        "max_items_per_kw": 40,
+    })
+
+    assert progress["progress_percent"] == 70
 
 
 def test_crawl_progress_completed_is_exactly_100_percent():
