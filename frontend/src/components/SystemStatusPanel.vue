@@ -4,7 +4,7 @@ import { getSystemStats } from '@/api'
 import type { RecentCrawlBatch, SystemStats } from '@/types'
 
 
-const props = defineProps<{ loggedIn: boolean }>()
+const props = defineProps<{ loggedIn?: boolean }>()
 const stats = ref<SystemStats | null>(null)
 const loading = ref(true)
 const error = ref('')
