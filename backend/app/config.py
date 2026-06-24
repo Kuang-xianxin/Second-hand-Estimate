@@ -68,7 +68,7 @@ class Settings(BaseSettings):
 
     # ── Items / Crawl Scope ──
     max_items_per_query: int = 60
-    max_items_per_crawl_keyword: int = 20
+    max_items_per_crawl_keyword: int = 40
     max_pages_per_query: int = 1
 
     # ── Bargain ──
