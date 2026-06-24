@@ -44,6 +44,18 @@ CCD_DECOY_PRICE_KEYWORDS = [
     "拍下后即可", "价格合不合适", "拍照技巧", "问问题",
 ]
 
+CCD_LOTTERY_DECOY_KEYWORDS = [
+    # WHY: 盲盒/抽奖/许愿卖的是抽选机会，不是标题里的相机整机，会制造 1.88 元这类假捡漏。
+    "盲盒", "潮流盲盒", "抽抽抽", "抽奖", "抽盒", "抽赏", "福袋",
+    "可许愿", "许愿", "没抽到可退", "抽不到可退", "未抽中可退", "没中可退",
+    "随机发", "随机款", "随机出",
+]
+
+CCD_LOW_PRICE_BAIT_KEYWORDS = [
+    # WHY: 这些词单独可能只是营销话术，但叠加极低标价时基本是引流价，必须从捡漏榜剔除。
+    "1.88捡漏", "一元捡漏", "1元捡漏", "低价捡漏", "超低价捡漏", "捡漏", "先到先得",
+]
+
 CCD_ACCESSORY_KEYWORDS = [
     # WHY: 配件/耗材/资料不是可估价整机，不能参与基准价或捡漏判断。
     "说明书", "电子版", "pdf", "外屏", "内屏", "液晶屏", "显示屏", "屏幕总成",
@@ -66,6 +78,20 @@ CCD_STANDALONE_ACCESSORY_HINTS = [
 # WHY: “带电池/充电器”常见于整机描述，只有配合“适用/专用/单电池”等语境才按配件过滤。
 CCD_HARD_ACCESSORY_KEYWORDS = [
     kw for kw in CCD_ACCESSORY_KEYWORDS if kw not in CCD_SOFT_ACCESSORY_KEYWORDS
+]
+
+CCD_ALWAYS_ACCESSORY_KEYWORDS = [
+    # WHY: 这些词本身就是资料或拆机零件，放宽样本过滤时仍不能当作整机价格样本。
+    "电子版", "pdf", "外屏", "内屏", "液晶屏", "显示屏", "屏幕总成",
+    "拆机", "零件", "主板", "排线", "usb盖", "usb 盖", "数据盖", "hdmi盖", "hdmi 盖",
+    "背盖", "后盖", "前盖", "外壳", "机身壳", "按键", "快门按钮", "传感器", "底座",
+    "仓盖", "电路图", "资料", "软件安装", "滤光片", "低通滤镜",
+]
+
+CCD_STANDALONE_HARD_ACCESSORY_HINTS = [
+    # WHY: “滤镜/镜头盖”可能出现在整机随赠描述里，只有配合这些独立售卖语境才过滤样本。
+    *CCD_STANDALONE_ACCESSORY_HINTS,
+    "配件", "耗材", "零件", "全新原装", "规格", "专拍", "链接", "单拍", "单出",
 ]
 
 CCD_BRANDS = {
@@ -151,6 +177,14 @@ def _item_text(item) -> str:
     return f"{getattr(item, 'title', '')} {getattr(item, 'description', '')}".lower()
 
 
+def _item_price(item) -> float:
+    # WHY: ORM/测试对象里的 price 可能是 None 或字符串，低价引流判断要安全降级。
+    try:
+        return float(getattr(item, "price", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _contains_any(text: str, keywords: list[str]) -> bool:
     return any(kw.lower() in text for kw in keywords)
 
@@ -228,8 +262,11 @@ def _ccd_invalid_sample_reason(item) -> str:
     text = _item_text(item)
     if _contains_any(text, CCD_DECOY_PRICE_KEYWORDS):
         return "低价引流/非实价"
+    # WHY: 样本池需要保留“送滤镜/带电池充电器”这类整机描述，只拦独立配件或拆机资料。
+    if _contains_any(text, CCD_ALWAYS_ACCESSORY_KEYWORDS):
+        return "配件/耗材/资料"
     if _contains_any(text, CCD_HARD_ACCESSORY_KEYWORDS):
-        if "配件齐全" not in text:
+        if "配件齐全" not in text and _contains_any(text, CCD_STANDALONE_HARD_ACCESSORY_HINTS):
             return "配件/耗材/资料"
     if _contains_any(text, CCD_SOFT_ACCESSORY_KEYWORDS):
         if _contains_any(text, CCD_STANDALONE_ACCESSORY_HINTS):
@@ -242,9 +279,20 @@ def _ccd_invalid_sample_reason(item) -> str:
     return ""
 
 
+def _ccd_invalid_bargain_reason(item) -> str:
+    text = _item_text(item)
+    price = _item_price(item)
+    # WHY: 捡漏榜对极低价引流更敏感；盲盒/抽奖类即使标题含具体型号，也不是该型号整机交易。
+    if _contains_any(text, CCD_LOTTERY_DECOY_KEYWORDS):
+        return "低价引流/盲盒抽奖"
+    if price and price <= 20 and _contains_any(text, CCD_LOW_PRICE_BAIT_KEYWORDS + CCD_DECOY_PRICE_KEYWORDS):
+        return "低价引流/非实价"
+    return _ccd_invalid_sample_reason(item)
+
+
 def ccd_invalid_bargain_reason(item) -> str:
     """WHY: 历史 BargainAlert 里可能已有脏数据，接口展示前也要复用同一套拦截规则。"""
-    return _ccd_invalid_sample_reason(item)
+    return _ccd_invalid_bargain_reason(item)
 
 
 def _is_risky_by_category(item, category: Literal["phone", "ccd", "other"]) -> bool:
@@ -529,8 +577,8 @@ def detect_bargains(
         if item.sold:
             continue
         if category == "ccd":
-            # WHY: 捡漏入口必须和样本入口共用 CCD 整机过滤，避免出租/咨询/配件以低价进榜。
-            if _ccd_invalid_sample_reason(item):
+            # WHY: 捡漏写入前要使用更严格的低价引流规则，样本池则保留更多整机描述避免估价缺样本。
+            if _ccd_invalid_bargain_reason(item):
                 continue
         elif _is_risky_by_category(item, category):
             continue

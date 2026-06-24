@@ -35,7 +35,18 @@ def test_ccd_filter_removes_rental_consulting_and_accessory_listings():
     assert reasons[items[2].title] == "配件/耗材/资料"
 
 
-def test_detect_bargains_uses_same_ccd_filter():
+def test_ccd_sample_filter_keeps_whole_camera_with_gift_accessories():
+    items = [
+        _item("camera", "佳能A3300is CCD相机 功能正常 自用 送滤镜 带电池充电器", 520),
+    ]
+
+    kept, filtered_out = filter_target_items_with_reasons(items, "ccd")
+
+    assert [item.item_id for item in kept] == ["camera"]
+    assert filtered_out == []
+
+
+def test_detect_bargains_uses_ccd_bargain_filter():
     items = [
         _item("rental", "【免押租】南昌个人自用佳能ixus130ccd 1天25", 25),
         _item("consult", "回答关于ccd的任何问题 有问题直接拍链接再问", 1.01),
@@ -43,6 +54,21 @@ def test_detect_bargains_uses_same_ccd_filter():
     ]
 
     bargains = detect_bargains(items, base_price=2280, query_keyword="ccd", threshold=80)
+
+    assert [bargain.item_id for bargain in bargains] == ["camera"]
+
+
+def test_detect_bargains_rejects_blind_box_low_price_bait():
+    bait = _item(
+        "bait",
+        "佳能A3300is，家里太多了 用不到了 【1.88捡漏】全新未拆 抽抽抽 可许愿 先到先得 没抽到可退 #潮流盲盒",
+        1.88,
+    )
+    camera = _item("camera", "佳能A3300is CCD相机 功能正常 自用", 520)
+
+    assert ccd_invalid_bargain_reason(bait) == "低价引流/盲盒抽奖"
+
+    bargains = detect_bargains([bait, camera], base_price=888, query_keyword="ccd", threshold=80)
 
     assert [bargain.item_id for bargain in bargains] == ["camera"]
 
