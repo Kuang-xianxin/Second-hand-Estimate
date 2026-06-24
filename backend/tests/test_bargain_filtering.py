@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from app.services.bargain import (
     ccd_invalid_bargain_reason,
     detect_bargains,
+    filter_target_items,
     filter_target_items_with_reasons,
 )
 
@@ -40,10 +41,28 @@ def test_ccd_sample_filter_keeps_whole_camera_with_gift_accessories():
         _item("camera", "佳能A3300is CCD相机 功能正常 自用 送滤镜 带电池充电器", 520),
     ]
 
+    plain_kept = filter_target_items(items, "ccd")
     kept, filtered_out = filter_target_items_with_reasons(items, "ccd")
 
+    assert [item.item_id for item in plain_kept] == ["camera"]
     assert [item.item_id for item in kept] == ["camera"]
     assert filtered_out == []
+
+
+def test_ccd_sample_filter_removes_blind_box_low_price_bait():
+    bait = _item(
+        "bait",
+        "佳能A3300is，家里太多了 用不到了 【1.88捡漏】全新未拆 抽抽抽 可许愿 先到先得 没抽到可退 #潮流盲盒",
+        1.88,
+    )
+    camera = _item("camera", "佳能A3300is CCD相机 功能正常 自用", 520)
+
+    plain_kept = filter_target_items([bait, camera], "ccd")
+    kept, filtered_out = filter_target_items_with_reasons([bait, camera], "ccd")
+
+    assert [item.item_id for item in plain_kept] == ["camera"]
+    assert [item.item_id for item in kept] == ["camera"]
+    assert filtered_out[0]["reason"] == "低价引流/盲盒抽奖"
 
 
 def test_detect_bargains_uses_ccd_bargain_filter():

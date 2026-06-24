@@ -260,6 +260,12 @@ def _ccd_model_mismatch(keyword: str, title: str) -> bool:
 
 def _ccd_invalid_sample_reason(item) -> str:
     text = _item_text(item)
+    price = _item_price(item)
+    # WHY: 出租、咨询、盲盒抽奖和极低价引流都不是真实整机成交样本，不能进入估价统计。
+    if _contains_any(text, CCD_LOTTERY_DECOY_KEYWORDS):
+        return "低价引流/盲盒抽奖"
+    if price and price <= 20 and _contains_any(text, CCD_LOW_PRICE_BAIT_KEYWORDS):
+        return "低价引流/非实价"
     if _contains_any(text, CCD_DECOY_PRICE_KEYWORDS):
         return "低价引流/非实价"
     # WHY: 样本池需要保留“送滤镜/带电池充电器”这类整机描述，只拦独立配件或拆机资料。
@@ -280,13 +286,7 @@ def _ccd_invalid_sample_reason(item) -> str:
 
 
 def _ccd_invalid_bargain_reason(item) -> str:
-    text = _item_text(item)
-    price = _item_price(item)
-    # WHY: 捡漏榜对极低价引流更敏感；盲盒/抽奖类即使标题含具体型号，也不是该型号整机交易。
-    if _contains_any(text, CCD_LOTTERY_DECOY_KEYWORDS):
-        return "低价引流/盲盒抽奖"
-    if price and price <= 20 and _contains_any(text, CCD_LOW_PRICE_BAIT_KEYWORDS + CCD_DECOY_PRICE_KEYWORDS):
-        return "低价引流/非实价"
+    # WHY: 捡漏榜和估价样本都必须排除同一批非真实整机交易，避免脏样本推高估价后再制造假捡漏。
     return _ccd_invalid_sample_reason(item)
 
 
@@ -308,15 +308,16 @@ def _is_risky_by_category(item, category: Literal["phone", "ccd", "other"]) -> b
 
 
 def filter_target_items(items: list, query_keyword: str) -> list:
-    """仅按型号一致性过滤样本（估价主流程），配件/故障判断交给LLM。
+    """按型号一致性和明显非整机样本过滤估价样本。
     
-    WHY: 估价需要尽可能多的价格样本做统计，过度过滤会杀死 cache 回填。
-    配件/出租过滤仅用于捡漏展示（filter_target_items_with_reasons）。
+    WHY: 出租/咨询/盲盒/独立配件不是可比较成交样本；但正常整机随赠配件仍保留，避免误伤 cache 回填。
     """
     category = _infer_category(query_keyword)
     kept = []
     for item in items:
         if _is_model_mismatch(query_keyword, item.title, category):
+            continue
+        if category == "ccd" and _ccd_invalid_sample_reason(item):
             continue
         kept.append(item)
     return kept
