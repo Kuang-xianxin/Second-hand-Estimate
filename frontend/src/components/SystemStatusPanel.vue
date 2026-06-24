@@ -31,8 +31,12 @@ async function load() {
   try {
     stats.value = await getSystemStats()
     error.value = ''
-  } catch {
-    error.value = '数据库概况加载失败'
+  } catch (e: any) {
+    if (e?.response?.status === 401) {
+      error.value = ''
+    } else {
+      error.value = '数据库概况加载失败'
+    }
   } finally {
     loading.value = false
   }
