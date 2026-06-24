@@ -197,6 +197,99 @@ export interface BargainAlert {
   xd_card_value?: number
 }
 
+// 后台数据库爬取进度
+// progress_percent: 后端归一化后的 UI 百分比，不再直接使用并发 worker 的 done/total
+// raw_done/raw_total: Redis 原始计数，仅用于排查
+export interface CrawlPhaseStep {
+  key: string
+  label: string
+  status: 'pending' | 'done' | 'error'
+  start_percent: number
+  end_percent: number
+}
+
+export interface CrawlProgress {
+  batch_id: string
+  stage: string
+  stage_key?: string
+  done: number
+  total: number
+  current_keyword: string
+  success_count: number
+  fail_count: number
+  total_items: number
+  bargains_found: number
+  started_at: string
+  finished_at: string
+  raw_done?: number
+  raw_total?: number
+  keyword_done?: number
+  keyword_total?: number
+  progress_percent?: number
+  progress_text?: string
+  progress_unit?: string
+  phase_steps?: CrawlPhaseStep[]
+}
+
+export interface RecentCrawlBatch {
+  batch_id: string
+  status: string
+  total_keywords: number
+  success_count: number
+  fail_count: number
+  total_items: number
+  bargains_found: number
+  started_at: string | null
+  finished_at: string | null
+  error_message?: string | null
+}
+
+export interface SystemStats {
+  cached_models: number
+  latest_crawl: string | null
+  crawl_expected_models: number
+  crawl_fresh_models_48h: number
+  crawl_stale_models_48h: number
+  total_items: number
+  total_bargains: number
+  bargains_by_brand: Record<string, number>
+  price_history_count: number
+  recent_batches: RecentCrawlBatch[]
+  brands: Record<string, number>
+  model_coverage_cached: number
+  model_coverage_expected: number
+}
+
+export interface CacheStatus {
+  l1_count?: number
+  l2_count?: number
+  l2?: {
+    latest_crawl?: string | null
+    total_keywords?: number
+  }
+}
+
+export interface GlobalBargain {
+  item_id: string
+  title: string
+  url?: string
+  brand?: string
+  image_url?: string
+  current_price: number
+  base_price: number
+  profit_estimate: number
+  is_xd_card?: boolean
+  xd_card_size?: string
+  xd_card_value?: number
+  condition?: string
+  quality_score?: number
+}
+
+export interface GlobalBargainCount {
+  total: number
+  brand_counts: Record<string, number>
+}
+
 // 步骤状态枚举
 export type StepStatus = 'pending' | 'done' | 'error' | 'info'
 

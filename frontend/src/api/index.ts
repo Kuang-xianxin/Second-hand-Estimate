@@ -4,6 +4,11 @@ import type {
   HistoryRecord,
   HistoryDetail,
   BargainAlert,
+  CrawlProgress,
+  SystemStats,
+  CacheStatus,
+  GlobalBargain,
+  GlobalBargainCount,
 } from '@/types'
 import axios from 'axios'
 
@@ -63,4 +68,39 @@ export async function getBargains(unreadOnly = false): Promise<BargainAlert[]> {
 // 标记指定捡漏提醒为已读
 export async function markBargainRead(id: string): Promise<void> {
   await http.patch(`/bargains/${id}/read`)
+}
+
+// 获取后台数据库爬取进度
+export async function getCrawlProgress(): Promise<CrawlProgress | null> {
+  const res = await http.get<CrawlProgress | null>('/crawl/progress')
+  return res.data
+}
+
+// 获取数据库概况和缓存覆盖统计
+export async function getSystemStats(): Promise<SystemStats> {
+  const res = await http.get<SystemStats>('/stats/overview')
+  return res.data
+}
+
+export async function getCacheStatus(): Promise<CacheStatus> {
+  const res = await http.get<CacheStatus>('/cache/status')
+  return res.data
+}
+
+export async function getGlobalBargains(params: {
+  brand?: string
+  xd_card?: boolean
+  page?: number
+  limit?: number
+} = {}): Promise<GlobalBargain[]> {
+  const res = await http.get<GlobalBargain[]>('/bargains/global', { params })
+  return res.data
+}
+
+export async function getGlobalBargainCount(params: {
+  brand?: string
+  xd_card?: boolean
+} = {}): Promise<GlobalBargainCount> {
+  const res = await http.get<GlobalBargainCount>('/bargains/global/count', { params })
+  return res.data
 }
