@@ -2,6 +2,7 @@
 import { onMounted, reactive, computed } from 'vue'
 import { getLoginState, openXianyuLogin, stopValuateTask } from '@/api'
 import type { ValuationTask, ValuationStep, ValuationResult, LlmResult, SampleItem, BargainItem, AlgorithmResult, SSEEventType, SSEQualitySummary } from '../types'
+import SystemStatusPanel from '@/components/SystemStatusPanel.vue'
 
 defineOptions({ name: 'HomeView' })
 
@@ -749,6 +750,7 @@ onMounted(() => {
         </a>
       </div>
     </section>
+    <SystemStatusPanel />
   </div>
 </template>
 
