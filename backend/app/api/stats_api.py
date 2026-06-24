@@ -20,6 +20,7 @@ from app.models.item import CrawledItem
 from app.models.auth import AppUser
 from app.services.auth import get_current_user
 from app.services.keyword_tier import get_all_model_ids
+from app.services.tier_coverage import count_tier_covered_models
 
 logger = logging.getLogger(__name__)
 
@@ -210,21 +211,25 @@ async def get_stats_overview(
         for row in brand_result.fetchall()
     }
 
-    # tier 覆盖统计：按 get_tier 分组统计缓存命中数
-    from app.services.keyword_tier import get_tier, get_keywords_by_tier, KeywordTier
-    t0_expected = len(get_keywords_by_tier(KeywordTier.T0_HOT))
-    t1_expected = len(get_keywords_by_tier(KeywordTier.T1_WARM))
-    t2_expected = len(get_keywords_by_tier(KeywordTier.T2_COLD))
-    t0_cached = t1_cached = t2_cached = 0
+    # tier 覆盖统计：按 canonical model 去重，避免同一型号多个别名把 T0 统计顶穿。
+    from app.services.keyword_tier import get_canonical_model, get_keywords_by_tier, KeywordTier
     cache_kw_result = await db.execute(select(CCDPriceCache.keyword))
-    for (kw,) in cache_kw_result.fetchall():
-        t = get_tier(kw)
-        if t == KeywordTier.T0_HOT:
-            t0_cached += 1
-        elif t == KeywordTier.T1_WARM:
-            t1_cached += 1
-        elif t == KeywordTier.T2_COLD:
-            t2_cached += 1
+    cached_keywords = [kw for (kw,) in cache_kw_result.fetchall() if kw]
+    covered_by_tier, expected_by_tier = count_tier_covered_models(
+        cached_keywords,
+        {
+            KeywordTier.T0_HOT: get_keywords_by_tier(KeywordTier.T0_HOT),
+            KeywordTier.T1_WARM: get_keywords_by_tier(KeywordTier.T1_WARM),
+            KeywordTier.T2_COLD: get_keywords_by_tier(KeywordTier.T2_COLD),
+        },
+        get_canonical_model,
+    )
+    t0_expected = expected_by_tier.get(KeywordTier.T0_HOT, 0)
+    t1_expected = expected_by_tier.get(KeywordTier.T1_WARM, 0)
+    t2_expected = expected_by_tier.get(KeywordTier.T2_COLD, 0)
+    t0_cached = covered_by_tier.get(KeywordTier.T0_HOT, 0)
+    t1_cached = covered_by_tier.get(KeywordTier.T1_WARM, 0)
+    t2_cached = covered_by_tier.get(KeywordTier.T2_COLD, 0)
 
     return SystemStats(
         cached_models=cached_models,
