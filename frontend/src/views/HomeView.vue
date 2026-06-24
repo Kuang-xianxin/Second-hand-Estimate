@@ -750,7 +750,7 @@ onMounted(() => {
         </a>
       </div>
     </section>
-    <SystemStatusPanel v-if="state.isLoggedIn" :logged-in="state.isLoggedIn" />
+    <SystemStatusPanel />
   </div>
 </template>
 

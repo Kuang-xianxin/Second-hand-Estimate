@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getSystemStats } from '@/api'
 import type { RecentCrawlBatch, SystemStats } from '@/types'
 
 
-const props = defineProps<{ loggedIn?: boolean }>()
 const stats = ref<SystemStats | null>(null)
 const loading = ref(true)
 const error = ref('')
@@ -80,9 +79,6 @@ onUnmounted(() => {
   if (timer) clearInterval(timer)
 })
 
-watch(() => props.loggedIn, (val) => {
-  if (val && !stats.value) load()
-})
 </script>
 
 <template>
