@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { getCrawlProgress } from '@/api'
+import { createCrawlProgressStream, getCrawlProgress } from '@/api'
 import type { CrawlPhaseStep, CrawlProgress } from '@/types'
 
 const props = withDefaults(defineProps<{
@@ -12,6 +12,7 @@ const props = withDefaults(defineProps<{
 const progress = ref<CrawlProgress | null>(null)
 const error = ref('')
 let timer: ReturnType<typeof setInterval> | null = null
+let stream: EventSource | null = null
 // WHY: pricing/detecting/saving can finish in under 5 seconds, so a 5s poll
 // makes the UI look frozen during crawl and then jump straight to done.
 const REFRESH_INTERVAL_MS = 1000
@@ -71,13 +72,43 @@ async function refresh() {
   }
 }
 
-onMounted(() => {
+function startPolling() {
+  if (timer) return
   refresh()
   timer = setInterval(refresh, REFRESH_INTERVAL_MS)
+}
+
+function startStream() {
+  if (typeof EventSource === 'undefined') {
+    return false
+  }
+  try {
+    stream = createCrawlProgressStream()
+    stream.onmessage = (event) => {
+      progress.value = event.data === 'null' ? null : JSON.parse(event.data)
+      error.value = ''
+    }
+    stream.onerror = () => {
+      error.value = '爬取进度流中断，已切换轮询'
+      stream?.close()
+      stream = null
+      startPolling()
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+onMounted(() => {
+  if (!startStream()) {
+    startPolling()
+  }
 })
 
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  stream?.close()
 })
 </script>
 

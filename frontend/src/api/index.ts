@@ -77,6 +77,10 @@ export async function getCrawlProgress(): Promise<CrawlProgress | null> {
 }
 
 // 获取数据库概况和缓存覆盖统计
+export function createCrawlProgressStream(): EventSource {
+  return new EventSource(`${API_BASE}/crawl/progress/stream`)
+}
+
 export async function getSystemStats(): Promise<SystemStats> {
   const res = await http.get<SystemStats>('/stats/overview')
   return res.data

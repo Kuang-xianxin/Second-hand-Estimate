@@ -2,11 +2,13 @@
 爬取进度 + 系统统计 API。
 用于前端实时展示后台爬取进度和数据库概览。
 """
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta
 from typing import Any
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func as sql_func
@@ -270,6 +272,32 @@ def _normalize_crawl_progress(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _build_crawl_progress_payload(data: dict[str, Any]) -> CrawlProgress:
+    progress = _normalize_crawl_progress(data)
+    return CrawlProgress(
+        batch_id=data.get("batch_id", ""),
+        stage=progress["stage_label"],
+        stage_key=progress["stage_key"],
+        done=progress["display_done"],
+        total=progress["display_total"],
+        current_keyword=progress["current_keyword"],
+        success_count=data.get("success_count", 0),
+        fail_count=data.get("fail_count", 0),
+        total_items=data.get("total_items", 0),
+        bargains_found=data.get("bargains_found", 0),
+        started_at=data.get("started_at", ""),
+        finished_at=data.get("finished_at", ""),
+        raw_done=progress["raw_done"],
+        raw_total=progress["raw_total"],
+        keyword_done=progress["keyword_done"],
+        keyword_total=progress["keyword_total"],
+        progress_percent=progress["progress_percent"],
+        progress_text=progress["progress_text"],
+        progress_unit=progress["progress_unit"],
+        phase_steps=progress["phase_steps"],
+    )
+
+
 @router.get("/crawl/progress", response_model=CrawlProgress | None)
 async def get_crawl_progress():
     """
@@ -285,32 +313,46 @@ async def get_crawl_progress():
         if not raw:
             return None
         data = json.loads(raw)
-        progress = _normalize_crawl_progress(data)
-        return CrawlProgress(
-            batch_id=data.get("batch_id", ""),
-            stage=progress["stage_label"],
-            stage_key=progress["stage_key"],
-            done=progress["display_done"],
-            total=progress["display_total"],
-            current_keyword=progress["current_keyword"],
-            success_count=data.get("success_count", 0),
-            fail_count=data.get("fail_count", 0),
-            total_items=data.get("total_items", 0),
-            bargains_found=data.get("bargains_found", 0),
-            started_at=data.get("started_at", ""),
-            finished_at=data.get("finished_at", ""),
-            raw_done=progress["raw_done"],
-            raw_total=progress["raw_total"],
-            keyword_done=progress["keyword_done"],
-            keyword_total=progress["keyword_total"],
-            progress_percent=progress["progress_percent"],
-            progress_text=progress["progress_text"],
-            progress_unit=progress["progress_unit"],
-            phase_steps=progress["phase_steps"],
-        )
+        return _build_crawl_progress_payload(data)
     except Exception as e:
         logger.warning(f"读取爬取进度失败: {e}")
         return None
+
+
+@router.get("/crawl/progress/stream")
+async def stream_crawl_progress():
+    async def event_stream():
+        r = await get_redis()
+        last_payload = None
+        while True:
+            try:
+                raw = await r.get(CRAWL_PROGRESS_KEY) if r else None
+                payload = "null"
+                if raw:
+                    payload = _build_crawl_progress_payload(json.loads(raw)).model_dump_json()
+                if payload != last_payload:
+                    yield f"data: {payload}\n\n"
+                    last_payload = payload
+                else:
+                    # WHY: keep EventSource alive without forcing Vue to
+                    # re-render unchanged progress every second.
+                    yield ": keep-alive\n\n"
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"推送爬取进度失败: {e}")
+                yield 'event: error\ndata: {"message":"crawl progress stream failed"}\n\n'
+                await asyncio.sleep(3)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/stats/overview", response_model=SystemStats)

@@ -35,13 +35,14 @@ _stub_module(
     _canonicalize_keyword=lambda keyword: keyword,
 )
 
-from app.api.stats_api import _normalize_crawl_progress, get_crawl_progress, get_stats_overview
+from app.api.stats_api import _normalize_crawl_progress, get_crawl_progress, get_stats_overview, stream_crawl_progress
 from app.api.cache_api import cache_status, get_global_bargains, get_global_bargains_count
 
 
 def test_stats_endpoints_do_not_require_app_user_auth():
     # WHY: 前端没有站内账号登录入口；只读数据库状态不能因为缺 token 变成空白面板。
     assert "_current_user" not in signature(get_crawl_progress).parameters
+    assert "_current_user" not in signature(stream_crawl_progress).parameters
     assert "_current_user" not in signature(get_stats_overview).parameters
 
 
