@@ -22,6 +22,7 @@ from app.services.cache_updater import (
     compute_price_for_keyword, batch_update_cache,
     write_crawled_items, warm_l1_cache,
 )
+from app.services.bargain import filter_target_items
 from app.services.bargain_detector import detect_global_bargains, replace_global_bargains
 from app.config import settings
 
@@ -30,6 +31,20 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("crawl_fill")
+
+
+def _rule_filter_crawled_items(items: list) -> list:
+    """Use the same lightweight rule filter as /valuate, without LLM or image analysis."""
+    filtered: list = []
+    for item in items:
+        keyword = getattr(item, "query_keyword", "") or getattr(item, "keyword", "")
+        if not keyword:
+            filtered.append(item)
+            continue
+        # WHY: 后台库也不能吃出租/咨询/盲盒/独立配件样本；这里只复用规则筛，不跑 LLM/图片以适配 2核2G。
+        if filter_target_items([item], keyword):
+            filtered.append(item)
+    return filtered
 
 
 async def main():
@@ -93,14 +108,21 @@ async def main():
         logger.error("没有爬到任何商品，终止")
         return
 
-    # 4. 写入原始商品表
+    filtered_items = _rule_filter_crawled_items(report.all_items)
+    logger.info(f"规则筛选: 原始 {len(report.all_items)} 条，保留 {len(filtered_items)} 条，剔除 {len(report.all_items) - len(filtered_items)} 条")
+
+    if not filtered_items:
+        logger.error("规则筛选后没有可入库商品，终止")
+        return
+
+    # 4. 写入规则筛后的商品表
     async with AsyncSessionLocal() as session:
-        written = await write_crawled_items(report.all_items, session)
-        logger.info(f"原始商品写入: {written} 条")
+        written = await write_crawled_items(filtered_items, session)
+        logger.info(f"规则筛后商品写入: {written} 条")
 
     # 5. 按 canonical model 归并
     items_by_canonical: dict[str, list] = {}
-    for item in report.all_items:
+    for item in filtered_items:
         kw = getattr(item, "query_keyword", "") or getattr(item, "keyword", "")
         if not kw:
             continue
@@ -125,13 +147,13 @@ async def main():
     bargains = []
     if tier in (KeywordTier.T0_HOT, KeywordTier.T1_WARM):
         bargain_prices = {kw: data["base_price"] for kw, data in keyword_prices.items()}
-        bargains = detect_global_bargains(report.all_items, bargain_prices)
+        bargains = detect_global_bargains(filtered_items, bargain_prices)
         logger.info(f"检测到 {len(bargains)} 件捡漏")
 
     # 8. 写入缓存 + 捡漏表
     async with AsyncSessionLocal() as session:
         success_count, fail_count = await batch_update_cache(
-            keyword_prices, list(keyword_prices.keys()), report.all_items, session
+            keyword_prices, list(keyword_prices.keys()), filtered_items, session
         )
         logger.info(f"缓存写入: 成功 {success_count}, 失败 {fail_count}")
 
@@ -151,6 +173,7 @@ async def main():
     logger.info("入库完成！汇总:")
     logger.info(f"  爬取关键词: {report.success_count}/{len(keywords)}")
     logger.info(f"  爬取商品数: {len(report.all_items)}")
+    logger.info(f"  规则筛后商品数: {len(filtered_items)}")
     logger.info(f"  Canonical models: {len(items_by_canonical)}")
     logger.info(f"  有效估价: {len(keyword_prices)}")
     logger.info(f"  捡漏: {len(bargains)}")
