@@ -18,9 +18,7 @@ from app.models.global_bargain import GlobalBargain
 from app.models.crawl_status import CrawlStatus
 from app.models.price_history import PriceHistory
 from app.models.item import CrawledItem
-from app.models.auth import AppUser
 from app.config import settings
-from app.services.auth import get_current_user
 from app.services.tier_coverage import count_model_covered_models
 
 logger = logging.getLogger(__name__)
@@ -263,7 +261,7 @@ def _normalize_crawl_progress(data: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/crawl/progress", response_model=CrawlProgress | None)
-async def get_crawl_progress(_current_user: AppUser = Depends(get_current_user)):
+async def get_crawl_progress():
     """
     返回当前爬取任务的实时进度。
     若无正在进行的任务，返回 None（前端据此判断"空闲"状态）。
@@ -307,7 +305,6 @@ async def get_crawl_progress(_current_user: AppUser = Depends(get_current_user))
 
 @router.get("/stats/overview", response_model=SystemStats)
 async def get_stats_overview(
-    _current_user: AppUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -320,6 +317,7 @@ async def get_stats_overview(
     - 最近 5 个爬取批次摘要
     - 各品牌型号覆盖数
     """
+    # WHY: 前端当前没有站内账号登录流程；这两个状态接口只返回只读聚合统计，不能被站内鉴权挡成空白面板。
     # 统一型号池：低并发下所有型号同一优先级，不再按层级分组。
     from app.services.keyword_tier import get_all_model_ids, get_canonical_model
     model_ids = get_all_model_ids()

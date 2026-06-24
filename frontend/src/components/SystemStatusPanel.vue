@@ -33,11 +33,8 @@ async function load() {
     stats.value = await getSystemStats()
     error.value = ''
   } catch (e: any) {
-    if (e?.response?.status === 401) {
-      error.value = ''
-    } else {
-      error.value = '数据库概况加载失败'
-    }
+    // WHY: 失败时清空错误会让模板进入 stats/error 都为空的分支，用户看到的就是数据库状态消失。
+    error.value = e?.response?.status === 401 ? '数据库概况暂无访问权限' : '数据库概况加载失败'
   } finally {
     loading.value = false
   }
