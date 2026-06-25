@@ -13,6 +13,52 @@ CCD_HINT_KEYWORDS = [
     "ccd", "卡片机", "数码相机", "相机", "镜头", "佳能", "尼康", "富士", "索尼", "松下", "奥林巴斯", "理光",
 ]
 
+CCD_ASCII_HINT_KEYWORDS = [
+    # WHY: sweep pricing often passes canonical tier keys or romanized model
+    # names, while the legacy Chinese constants in this file are mojibake.
+    "canon", "nikon", "sony", "fujifilm", "fuji", "olympus", "panasonic",
+    "casio", "kodak", "ricoh", "pentax", "samsung", "ixus", "ixy",
+    "powershot", "coolpix", "cybershot", "dsc", "finepix", "lumix",
+    "exilim", "mju", "stylus", "ccd",
+]
+
+CCD_SERVICE_LISTING_KEYWORDS = [
+    # WHY: recycling/quote service ads use very high placeholder prices and
+    # often list many camera models, so they must not enter price samples.
+    "回收", "高价回收", "上门回收", "全国回收", "收购", "报价",
+    "在线报价", "免费估价", "当面打款", "寄卖", "置换",
+]
+
+CCD_WHOLE_CAMERA_TERMS = [
+    "ccd", "卡片机", "数码相机", "相机", "机身", "像素", "光学变焦",
+    "拍照", "闪光灯", "屏幕", "ccd camera", "digital camera",
+]
+
+CCD_STANDALONE_LENS_TERMS = [
+    # WHY: model names such as FE-25 collide with lens focal lengths like
+    # Sony FE 16-25mm; standalone lens listings are not compact-camera samples.
+    "镜头", "lens", "卡口", "e卡口", "f卡口", "ef卡口", "rf卡口",
+    "全画幅", "半画幅", "恒定光圈", "遮光罩", "前后盖", "镜片",
+    "f2.8", "f/2.8", "f4", "f/4", "16-25mm", "20-70mm", "sel",
+]
+
+CCD_REAL_ALWAYS_ACCESSORY_TERMS = [
+    # WHY: real production titles contain proper UTF-8 Chinese accessory words;
+    # the legacy accessory constants above are mojibake and miss these rows.
+    "卡托", "滤光片", "低通滤镜", "液晶屏", "显示屏", "屏幕总成",
+    "排线", "主板", "电池盖", "外壳", "转接环", "镜头盖",
+]
+
+CCD_REAL_SOFT_ACCESSORY_TERMS = [
+    "电池", "充电器", "充电线", "数据线", "读卡器", "内存卡",
+    "存储卡", "相机包", "保护套",
+]
+
+CCD_REAL_STANDALONE_ACCESSORY_HINTS = [
+    "适用", "适配", "专用", "通用", "全新原装", "套装",
+    "单拍", "单出", "型号", "规格",
+]
+
 COMMON_RISK_KEYWORDS = [
     "不包好坏", "当配件", "尸体", "仅机身", "无测试", "不退不换",
 ]
@@ -166,10 +212,14 @@ XD_MODEL_SIGNAL_PATTERNS = [
 
 def _infer_category(keyword: str) -> Literal["phone", "ccd", "other"]:
     text = (keyword or "").lower()
-    if any(kw in text for kw in CCD_HINT_KEYWORDS):
-        return "ccd"
     if any(kw in text for kw in PHONE_HINT_KEYWORDS):
         return "phone"
+    if text.startswith("tier:"):
+        return "ccd"
+    if any(kw in text for kw in CCD_HINT_KEYWORDS + CCD_ASCII_HINT_KEYWORDS):
+        return "ccd"
+    if _extract_model_tokens(text):
+        return "ccd"
     return "other"
 
 
@@ -187,6 +237,27 @@ def _item_price(item) -> float:
 
 def _contains_any(text: str, keywords: list[str]) -> bool:
     return any(kw.lower() in text for kw in keywords)
+
+
+def _is_service_listing(text: str) -> bool:
+    return _contains_any(text, CCD_SERVICE_LISTING_KEYWORDS)
+
+
+def _is_standalone_accessory_listing(text: str) -> bool:
+    if _contains_any(text, CCD_REAL_ALWAYS_ACCESSORY_TERMS):
+        return True
+    return (
+        _contains_any(text, CCD_REAL_SOFT_ACCESSORY_TERMS)
+        and _contains_any(text, CCD_REAL_STANDALONE_ACCESSORY_HINTS)
+    )
+
+
+def _is_standalone_lens_listing(text: str) -> bool:
+    if not _contains_any(text, CCD_STANDALONE_LENS_TERMS):
+        return False
+    if _contains_any(text, CCD_WHOLE_CAMERA_TERMS):
+        return False
+    return True
 
 
 def _extract_iphone_generation(text: str) -> str:
@@ -232,9 +303,32 @@ def _extract_ccd_brand(text: str) -> str:
 
 def _extract_model_tokens(text: str) -> set[str]:
     low = (text or "").lower()
-    tokens = set(re.findall(r"[a-z]{1,5}[- ]?\d{2,4}[a-z]?", low))
+    tokens = set(re.findall(r"[a-z]{1,8}[- ]?\d{1,5}[a-z]{0,4}", low))
     clean = {t.replace(" ", "").replace("-", "") for t in tokens}
     return {t for t in clean if len(t) >= 3}
+
+
+def _split_model_token(token: str):
+    match = re.fullmatch(r"([a-z]{1,8})(\d{1,5})([a-z]{0,4})", token or "")
+    if not match:
+        return None
+    prefix, number, suffix = match.groups()
+    return prefix, number.lstrip("0") or "0", suffix
+
+
+def _ccd_tokens_overlap(keyword_tokens: set[str], item_tokens: set[str]) -> bool:
+    for kw_token in keyword_tokens:
+        kw_parts = _split_model_token(kw_token)
+        for item_token in item_tokens:
+            if kw_token == item_token:
+                return True
+            item_parts = _split_model_token(item_token)
+            if kw_parts and item_parts:
+                # WHY: allow A2400 to match A2400IS, but do not allow FE25 to
+                # match FE250 or Sony FE16-25 lens samples.
+                if kw_parts[0] == item_parts[0] and kw_parts[1] == item_parts[1]:
+                    return True
+    return False
 
 
 def _ccd_model_mismatch(keyword: str, title: str) -> bool:
@@ -246,13 +340,7 @@ def _ccd_model_mismatch(keyword: str, title: str) -> bool:
     kw_tokens = _extract_model_tokens(keyword)
     item_tokens = _extract_model_tokens(title)
     if kw_tokens and item_tokens:
-        def _tokens_overlap(a, b):
-            for ta in a:
-                for tb in b:
-                    if ta == tb or ta.startswith(tb) or tb.startswith(ta):
-                        return True
-            return False
-        if not _tokens_overlap(kw_tokens, item_tokens):
+        if not _ccd_tokens_overlap(kw_tokens, item_tokens):
             return True
 
     return False
@@ -261,6 +349,12 @@ def _ccd_model_mismatch(keyword: str, title: str) -> bool:
 def _ccd_invalid_sample_reason(item) -> str:
     text = _item_text(item)
     price = _item_price(item)
+    if _is_service_listing(text):
+        return "服务/回收广告"
+    if _is_standalone_accessory_listing(text):
+        return "配件/耗材/资料"
+    if _is_standalone_lens_listing(text):
+        return "独立镜头/非整机"
     # WHY: 出租、咨询、盲盒抽奖和极低价引流都不是真实整机成交样本，不能进入估价统计。
     if _contains_any(text, CCD_LOTTERY_DECOY_KEYWORDS):
         return "低价引流/盲盒抽奖"
@@ -301,6 +395,8 @@ def _is_risky_by_category(item, category: Literal["phone", "ccd", "other"]) -> b
     if category == "phone":
         category_risk = PHONE_RISK_KEYWORDS
     elif category == "ccd":
+        if _ccd_invalid_sample_reason(item):
+            return True
         category_risk = CCD_RISK_KEYWORDS + CCD_HARD_ACCESSORY_KEYWORDS + CCD_DECOY_PRICE_KEYWORDS
 
     risk_keywords = COMMON_RISK_KEYWORDS + category_risk

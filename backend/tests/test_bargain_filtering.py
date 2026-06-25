@@ -49,6 +49,56 @@ def test_ccd_sample_filter_keeps_whole_camera_with_gift_accessories():
     assert filtered_out == []
 
 
+def test_ccd_sample_filter_rejects_short_model_lens_collision():
+    items = [
+        _item("lens", "索尼FE 16-25mm F2.8 G镜头 E卡口 全画幅 成色几乎全新", 5800),
+        _item("camera", "奥林巴斯FE-25 1000万像素相机 3倍光学变焦 功能正常", 299),
+    ]
+
+    kept, filtered_out = filter_target_items_with_reasons(items, "奥林巴斯fe25")
+
+    assert [item.item_id for item in kept] == ["camera"]
+    assert [entry["title"] for entry in filtered_out] == [items[0].title]
+
+
+def test_ccd_sample_filter_rejects_nearby_model_and_recycling_ads():
+    items = [
+        _item("recycle", "全国高价上门回收相机镜头 尼康 佳能 索尼 在线报价 当面打款", 8888),
+        _item("d7100", "尼康D7100单反套机 18-140mm镜头 功能正常", 2550),
+        _item("s7100", "尼康COOLPIX S7100数码相机 功能正常 屏幕显示正常", 430),
+    ]
+
+    kept, filtered_out = filter_target_items_with_reasons(items, "尼康s7100")
+
+    assert [item.item_id for item in kept] == ["s7100"]
+    reasons = {entry["title"]: entry["reason"] for entry in filtered_out}
+    assert reasons[items[0].title] == "服务/回收广告"
+    assert items[1].title in reasons
+
+
+def test_ccd_sample_filter_keeps_known_model_suffixes():
+    items = [
+        _item("a2400is", "佳能A2400IS数码相机 樱花粉 功能正常 配电池内存卡", 838),
+        _item("a7", "索尼A7M4微单相机 全画幅 功能正常", 9999),
+    ]
+
+    kept = filter_target_items(items, "佳能a2400")
+
+    assert [item.item_id for item in kept] == ["a2400is"]
+
+
+def test_ccd_sample_filter_rejects_real_utf8_accessory_terms():
+    items = [
+        _item("adapter", "XD卡托1G 适用奥林巴斯FE20 FE25 FE250 U1010 数码相机", 23.8),
+        _item("camera", "奥林巴斯FE25数码相机 功能正常 配电池和内存卡", 299),
+    ]
+
+    kept, filtered_out = filter_target_items_with_reasons(items, "奥林巴斯fe25")
+
+    assert [item.item_id for item in kept] == ["camera"]
+    assert filtered_out[0]["reason"] == "配件/耗材/资料"
+
+
 def test_ccd_sample_filter_removes_blind_box_low_price_bait():
     bait = _item(
         "bait",

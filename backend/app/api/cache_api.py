@@ -75,9 +75,25 @@ def _global_bargain_to_xianyu_item(item: GlobalBargain) -> XianyuItem:
     )
 
 
+def _has_implausible_global_bargain_price(item: GlobalBargain) -> bool:
+    try:
+        current_price = float(item.current_price or 0)
+        base_price = float(item.base_price or 0)
+        profit = float(item.profit_estimate or 0)
+    except (TypeError, ValueError):
+        return True
+    if current_price <= 0 or base_price <= 0:
+        return True
+    # WHY: polluted short-model samples can produce impossible CCD estimates
+    # like FE-25 at 5399 yuan; hide extreme old rows until the cache refreshes.
+    return base_price >= 1500 and current_price <= 900 and profit >= 1000 and (base_price / current_price) >= 3.5
+
+
 def _is_global_bargain_displayable(item: GlobalBargain) -> bool:
     keyword = (item.keyword or "").strip()
     if not keyword:
+        return False
+    if _has_implausible_global_bargain_price(item):
         return False
     keyword_low = keyword.lower()
     if any(term in keyword_low for term in GLOBAL_BARGAIN_REJECT_KEYWORDS):

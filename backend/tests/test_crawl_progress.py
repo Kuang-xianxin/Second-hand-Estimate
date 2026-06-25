@@ -36,7 +36,12 @@ _stub_module(
 )
 
 from app.api.stats_api import _normalize_crawl_progress, get_crawl_progress, get_stats_overview, stream_crawl_progress
-from app.api.cache_api import cache_status, get_global_bargains, get_global_bargains_count
+from app.api.cache_api import (
+    _has_implausible_global_bargain_price,
+    cache_status,
+    get_global_bargains,
+    get_global_bargains_count,
+)
 
 
 def test_stats_endpoints_do_not_require_app_user_auth():
@@ -52,6 +57,14 @@ def test_global_bargain_read_endpoints_do_not_require_app_user_auth():
     assert "_current_user" not in signature(cache_status).parameters
     assert "_current_user" not in signature(get_global_bargains).parameters
     assert "_current_user" not in signature(get_global_bargains_count).parameters
+
+
+def test_global_bargain_display_hides_implausible_polluted_prices():
+    item = types.SimpleNamespace(current_price=299, base_price=5399, profit_estimate=5100)
+    normal = types.SimpleNamespace(current_price=620, base_price=1399, profit_estimate=779)
+
+    assert _has_implausible_global_bargain_price(item) is True
+    assert _has_implausible_global_bargain_price(normal) is False
 
 
 def test_crawl_progress_maps_item_progress_into_task_phase():
