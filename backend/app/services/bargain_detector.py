@@ -42,9 +42,9 @@ class GlobalBargainRecord:
     image_url: str
 
 
-def detect_xd_bonus(item) -> tuple[str, float]:
+def detect_xd_bonus(item, query_keyword: str = "") -> tuple[str, float]:
     """从单个商品中检测 xD 卡捆绑，返回 (card_size, card_value)。"""
-    is_bundle, card_size = _is_xd_bundle_from_text(item, "")
+    is_bundle, card_size = _is_xd_bundle_from_text(item, query_keyword)
     if not card_size:
         return "", 0.0
     card_value = _get_xd_card_value(card_size)
@@ -103,7 +103,7 @@ def detect_global_bargains(
         if _is_model_mismatch(keyword, getattr(item, "title", ""), category):
             continue
 
-        card_size, card_value = detect_xd_bonus(item)
+        card_size, card_value = detect_xd_bonus(item, keyword)
         profit = base_price - float(getattr(item, "price", 0))
         total_profit = profit + card_value
 

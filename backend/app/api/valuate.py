@@ -449,7 +449,7 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
     if camera_like_for_xd:
         is_xd_model = detect_xd_card_model_from_items(items, keyword=keyword)
         if is_xd_model:
-            camera_only_items, bundle_infos = strip_xd_card_prices(items)
+            camera_only_items, bundle_infos = strip_xd_card_prices(items, query_keyword=keyword)
             xd_bundle_count = len(bundle_infos)
             for bi in bundle_infos:
                 xd_card_bonus[bi.item_id] = (bi.card_size, bi.card_value)
@@ -889,7 +889,7 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
             is_xd_model = detect_xd_card_model_from_items(items, keyword=keyword)
             if is_xd_model:
                 from app.services.bargain import strip_xd_card_prices, _get_xd_card_value
-                camera_only_items, bundle_infos = strip_xd_card_prices(items)
+                camera_only_items, bundle_infos = strip_xd_card_prices(items, query_keyword=keyword)
                 xd_bundle_count = len(bundle_infos)
                 for bi in bundle_infos:
                     xd_card_bonus[bi.item_id] = (bi.card_size, bi.card_value)

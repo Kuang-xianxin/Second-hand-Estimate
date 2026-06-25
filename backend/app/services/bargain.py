@@ -151,6 +151,22 @@ CCD_BRANDS = {
     "casio": ["casio", "卡西欧", "exilim"],
 }
 
+CCD_REAL_BRAND_ALIASES = {
+    # WHY: some xD model entries are bare tokens like A700; real brand context
+    # lets us reject Canon/Sony/etc. collisions before adding xD-card value.
+    "canon": ("佳能", "canon", "ixus", "ixy", "powershot"),
+    "nikon": ("尼康", "nikon", "coolpix"),
+    "sony": ("索尼", "sony", "cybershot", "cyber-shot"),
+    "panasonic": ("松下", "panasonic", "lumix"),
+    "fujifilm": ("富士", "fujifilm", "fuji", "finepix"),
+    "olympus": ("奥林巴斯", "olympus", "mju", "stylus"),
+    "ricoh": ("理光", "ricoh"),
+    "casio": ("卡西欧", "casio", "exilim"),
+    "kodak": ("柯达", "kodak"),
+    "samsung": ("三星", "samsung"),
+    "pentax": ("宾得", "pentax"),
+}
+
 # XD 卡价格表（富士/奥林巴斯老相机常见配卡）
 XD_CARD_PRICES = {
     "16mb": 50,
@@ -166,6 +182,14 @@ XD_CARD_PRICES = {
     "2g高速": 175,
 }
 
+NON_XD_CARD_BRANDS = {
+    # WHY: xD model matching also contains bare tokens like A700; brand context
+    # must prevent Canon/Sony/Nikon/Panasonic listings from colliding with
+    # Fuji/Olympus xD-capable model numbers.
+    "canon", "nikon", "sony", "panasonic", "ricoh", "casio",
+    "kodak", "samsung", "pentax",
+}
+
 XD_CARD_SIZE_PATTERNS = [
     (r"(\d+)\s*g(?:高速)?", lambda m: f"{m.group(1)}g"),
     (r"(\d+)\s*gb", lambda m: f"{m.group(1)}g"),
@@ -179,6 +203,8 @@ XD_SELF_PROVIDE_PATTERNS = [
     r"xd卡买家自备", r"需要自备", r"需自备", r"xd卡另购",
     r"xd卡加购", r"xd卡另加", r"另购xd卡", r"需加购xd卡",
     r"xd卡需另买", r"卡需自备", r"xd卡买家",
+    # WHY: optional card upsells are not included bundle value.
+    r"可选购\s*xd卡", r"选购\s*xd卡", r"xd卡可选", r"自备.*xd.*卡",
 ]
 
 # 检测"相机捆绑XD卡销售"的文本模式
@@ -207,6 +233,20 @@ XD_MODEL_SIGNAL_PATTERNS = [
     r"xd卡槽", r"xD卡槽", r"xd-p", r"xD-P",
     r"储存介质\s*[为:]?\s*xd", r"储存介质\s*[为:]?\s*xD",
     r"存储介质\s*[为:]?\s*xd",
+]
+
+XD_STANDALONE_CARD_PATTERNS = [
+    # WHY: card-only listings are accessories; do not let them enter samples or
+    # global bargains just because the target camera family also uses xD cards.
+    r"xd\s*卡\s*(套|托)",
+    r"(tf|microsd|micro\s*sd).{0,12}(转|转换).{0,12}xd",
+    r"(闪存卡|存储卡|内存卡)\s*xd\s*卡",
+    r"^(出)?\s*(奥林巴斯|富士)?\s*(原装|正品|全新)?\s*(\d+\s*(mb|g|gb))?\s*xd\s*卡",
+    r"^(出)?\s*(奥林巴斯|富士)?\s*(原装|正品|全新)?\s*\d+\s*(mb|g|gb)\s*xd\s*卡",
+]
+
+XD_STANDALONE_CARD_HINTS = [
+    "适合", "适用", "老款", "备用", "读写", "塑封", "数量多", "容量", "金属触点",
 ]
 
 
@@ -243,7 +283,34 @@ def _is_service_listing(text: str) -> bool:
     return _contains_any(text, CCD_SERVICE_LISTING_KEYWORDS)
 
 
+def _is_standalone_xd_card_listing(text: str) -> bool:
+    if "xd" not in text or "卡" not in text:
+        return False
+    for pattern in XD_STANDALONE_CARD_PATTERNS:
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            return True
+
+    xd_pos = text.find("xd")
+    first_camera_pos = min(
+        (text.find(term) for term in CCD_WHOLE_CAMERA_TERMS if term in text),
+        default=-1,
+    )
+    has_camera_before_xd = first_camera_pos >= 0 and first_camera_pos < xd_pos
+    model_before_xd = bool(_extract_model_tokens(text[:xd_pos])) or bool(
+        re.search(r"(μ|u|mju|sp|fe|sz|tg|xz|ep|f|a|z|jx|xp)\s*-?\s*\d{2,4}", text[:xd_pos], flags=re.IGNORECASE)
+    )
+    # WHY: accessory posts often say "适合老款...CCD相机", which mentions cameras
+    # only as compatibility context; a real bundle describes the camera before xD.
+    if not has_camera_before_xd and not model_before_xd:
+        return True
+    if not has_camera_before_xd and _contains_any(text, XD_STANDALONE_CARD_HINTS):
+        return True
+    return False
+
+
 def _is_standalone_accessory_listing(text: str) -> bool:
+    if _is_standalone_xd_card_listing(text):
+        return True
     if _contains_any(text, CCD_REAL_ALWAYS_ACCESSORY_TERMS):
         return True
     return (
@@ -288,6 +355,19 @@ def _phone_model_mismatch(keyword: str, title: str) -> bool:
     if "plus" in kw and "plus" not in t:
         return True
     return False
+
+
+def _extract_real_ccd_brand(text: str) -> str:
+    low = (text or "").lower()
+    for brand, aliases in CCD_REAL_BRAND_ALIASES.items():
+        for alias in aliases:
+            alias_low = alias.lower()
+            if alias_low.isascii() and alias_low.isalnum():
+                if re.search(r"(?<![a-z0-9])" + re.escape(alias_low) + r"(?![a-z0-9])", low):
+                    return brand
+            elif alias_low in low:
+                return brand
+    return ""
 
 
 def _extract_ccd_brand(text: str) -> str:
@@ -537,6 +617,14 @@ def _is_xd_bundle_from_text(item, query_keyword: str) -> tuple[bool, str]:
     检测单个商品是否捆绑了 XD 卡。
     返回 (is_bundle, card_size)
     """
+    # WHY: "送1G卡/带2G卡" is generic storage-card wording. Only xD-capable
+    # camera contexts should translate it into xD-card value.
+    query_brand = _extract_real_ccd_brand(query_keyword) or _extract_ccd_brand(query_keyword)
+    title_brand = _extract_real_ccd_brand(getattr(item, "title", "")) or _extract_ccd_brand(getattr(item, "title", ""))
+    if query_brand in NON_XD_CARD_BRANDS or title_brand in NON_XD_CARD_BRANDS:
+        return False, ""
+    if not detect_xd_card_model_from_items([item], keyword=query_keyword):
+        return False, ""
     text = _item_text(item)
     card_size = _extract_xd_card_from_text(text)
     return bool(card_size), card_size
@@ -552,7 +640,7 @@ class XDCardBundleInfo:
     camera_only_price: float # 剔除卡值后的纯相机价格
 
 
-def strip_xd_card_prices(items: list) -> tuple[list, list[XDCardBundleInfo]]:
+def strip_xd_card_prices(items: list, query_keyword: str = "") -> tuple[list, list[XDCardBundleInfo]]:
     """
     对所有商品进行XD卡文字检测，返回两组数据：
 
@@ -568,7 +656,7 @@ def strip_xd_card_prices(items: list) -> tuple[list, list[XDCardBundleInfo]]:
     xd_bundle_ids: set = set()
 
     for item in items:
-        is_bundle, card_size = _is_xd_bundle_from_text(item, "")
+        is_bundle, card_size = _is_xd_bundle_from_text(item, query_keyword)
         if is_bundle and card_size:
             card_val = _get_xd_card_value(card_size)
             raw_price = float(item.price)

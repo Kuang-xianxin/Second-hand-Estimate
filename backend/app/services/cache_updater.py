@@ -86,7 +86,7 @@ def compute_price_for_keyword(
         pass
 
     if is_xd and detect_xd_card_model_from_items(filtered_items, keyword=display_keyword):
-        camera_only, bundle_infos = strip_xd_card_prices(filtered_items)
+        camera_only, bundle_infos = strip_xd_card_prices(filtered_items, query_keyword=display_keyword)
         xd_bundle_count = len(bundle_infos)
         items_for_algo = camera_only
 

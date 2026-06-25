@@ -6,6 +6,7 @@ from app.services.bargain import (
     filter_target_items,
     filter_target_items_with_reasons,
 )
+from app.services.bargain_detector import detect_global_bargains
 
 
 def _item(item_id: str, title: str, price: float = 1.0, description: str = ""):
@@ -99,6 +100,20 @@ def test_ccd_sample_filter_rejects_real_utf8_accessory_terms():
     assert filtered_out[0]["reason"] == "配件/耗材/资料"
 
 
+def test_ccd_sample_filter_rejects_standalone_xd_card_but_keeps_camera_bundle():
+    items = [
+        _item("card", "奥林巴斯原装64MB xD卡，全新未用，适合老款奥林巴斯、富士CCD相机", 50),
+        _item("brand-list-card", "【可直拍】奥林巴斯&富士&东芝xd卡 全部功能正常 看看店铺有没有喜欢的相机", 85),
+        _item("mu-camera", "奥林巴斯μ1020，送2g xd卡，可直拍，拍人也很好看", 380),
+        _item("camera", "奥林巴斯u1050sw 银色 CCD相机 功能正常 送原装xd卡1g", 320),
+    ]
+
+    kept, filtered_out = filter_target_items_with_reasons(items, "奥林巴斯u1050")
+
+    assert [item.item_id for item in kept] == ["mu-camera", "camera"]
+    assert [entry["reason"] for entry in filtered_out] == ["配件/耗材/资料", "配件/耗材/资料"]
+
+
 def test_ccd_sample_filter_removes_blind_box_low_price_bait():
     bait = _item(
         "bait",
@@ -140,6 +155,122 @@ def test_detect_bargains_rejects_blind_box_low_price_bait():
     bargains = detect_bargains([bait, camera], base_price=888, query_keyword="ccd", threshold=80)
 
     assert [bargain.item_id for bargain in bargains] == ["camera"]
+
+
+def test_non_xd_sony_storage_card_text_does_not_add_xd_bonus():
+    sony = _item(
+        "sony-h9",
+        "索尼H9 CCD数码相机 卡片机 复古相机 810万像素 15X倍光学变焦 送1G卡 标价是实价",
+        318,
+    )
+
+    bargains = detect_bargains([sony], base_price=350, query_keyword="索尼h9", threshold=80)
+
+    assert bargains == []
+
+
+def test_non_xd_canon_bare_model_collision_does_not_add_xd_bonus():
+    canon = _item(
+        "canon-a700",
+        "佳能A700，6倍光学变焦，机器性能完好，带2g卡没有其它附件",
+        620,
+    )
+
+    bargains = detect_bargains([canon], base_price=588, query_keyword="佳能a700", threshold=80)
+
+    assert bargains == []
+
+
+def test_xd_model_storage_card_text_still_adds_xd_bonus():
+    fuji = _item(
+        "fuji-f200",
+        "富士F200EXR CCD数码相机 功能正常 送1G卡 标价是实价",
+        430,
+    )
+
+    bargains = detect_bargains([fuji], base_price=500, query_keyword="富士f200exr", threshold=80)
+
+    assert len(bargains) == 1
+    assert bargains[0].xd_card_size == "1g"
+    assert bargains[0].xd_card_value == 148
+    assert bargains[0].profit_estimate == 218
+
+
+def test_optional_xd_card_purchase_does_not_add_xd_bonus():
+    olympus = _item(
+        "olympus-sp550",
+        "奥林巴斯sp550uz小长焦 功能正常 自备4节五号电池XD内存卡和读卡器（可选购XD卡256m 115元 1g 148元）",
+        430,
+    )
+
+    bargains = detect_bargains([olympus], base_price=500, query_keyword="奥林巴斯sp550", threshold=80)
+
+    assert bargains == []
+
+
+def test_global_bargains_do_not_mark_non_xd_storage_card_as_xd():
+    sony = _item(
+        "sony-t300",
+        "索尼T300 CCD数码相机 1010万像素 5X倍光学变焦 送1G卡 标价是实价",
+        298,
+    )
+    sony.query_keyword = "索尼t300"
+    canon = _item(
+        "canon-a700",
+        "佳能A700，6倍光学变焦，机器性能完好，带2g卡没有其它附件",
+        620,
+    )
+    canon.query_keyword = "佳能a700"
+    fuji = _item(
+        "fuji-f200",
+        "富士F200EXR CCD数码相机 功能正常 送1G卡 标价是实价",
+        430,
+    )
+    fuji.query_keyword = "富士f200exr"
+
+    records = detect_global_bargains(
+        [sony, canon, fuji],
+        {"索尼t300": 300, "佳能a700": 588, "富士f200exr": 500},
+    )
+
+    assert [record.item_id for record in records] == ["fuji-f200"]
+    assert records[0].is_xd_card is True
+    assert records[0].xd_card_size == "1g"
+
+
+def test_global_bargains_skip_standalone_xd_card_listing():
+    card = _item(
+        "xd-card",
+        "奥林巴斯原装128MB xD卡，金属触点完好，适合老款奥林巴斯、富士CCD相机用",
+        45,
+    )
+    card.query_keyword = "奥林巴斯μ1070"
+    brand_list_card = _item(
+        "brand-list-card",
+        "【可直拍】奥林巴斯&富士&东芝xd卡 全部功能正常 看看店铺有没有喜欢的相机",
+        85,
+    )
+    brand_list_card.query_keyword = "奥林巴斯μ1070"
+    camera = _item(
+        "camera",
+        "奥林巴斯u1070 CCD相机 功能正常 送原装xd卡1g",
+        320,
+    )
+    camera.query_keyword = "奥林巴斯μ1070"
+    mu_camera = _item(
+        "mu-camera",
+        "奥林巴斯μ1020，送2g xd卡，可直拍，拍人也很好看",
+        380,
+    )
+    mu_camera.query_keyword = "奥林巴斯μ1020"
+
+    records = detect_global_bargains(
+        [card, brand_list_card, camera, mu_camera],
+        {"奥林巴斯μ1070": 450, "奥林巴斯μ1020": 435},
+    )
+
+    assert [record.item_id for record in records] == ["camera", "mu-camera"]
+    assert all(record.is_xd_card for record in records)
 
 
 def test_existing_bargain_alerts_can_be_hidden_without_deleting_rows():
