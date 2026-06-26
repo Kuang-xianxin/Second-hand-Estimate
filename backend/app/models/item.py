@@ -45,6 +45,25 @@ class ValuationRecord(Base):
     created_at = Column(DateTime, server_default=func.now())
 
 
+class ValuationSample(Base):
+    """Snapshot of the samples used by one user valuation run."""
+    __tablename__ = "valuation_samples"
+
+    id = Column(Integer, primary_key=True, index=True)
+    valuation_record_id = Column(Integer, ForeignKey("valuation_records.id"), index=True, nullable=False)
+    item_id = Column(String(64), index=True)
+    title = Column(String(512))
+    price = Column(Float)
+    condition = Column(String(64), nullable=True)
+    description = Column(Text, nullable=True)
+    sold = Column(Boolean, default=False)
+    url = Column(String(1024), nullable=True)
+    images = Column(Text, nullable=True)
+    quality_score = Column(Float, nullable=True)
+    quality_flags = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
 class BargainAlert(Base):
     """捡漏提醒"""
     __tablename__ = "bargain_alerts"

@@ -5,6 +5,7 @@ import os
 import re
 import uuid
 import webbrowser
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +15,9 @@ from typing import Optional, Dict
 from pathlib import Path
 
 from app.models.database import get_db
-from app.models.item import CrawledItem, ValuationRecord, BargainAlert
+from app.models.cache import CCDPriceCache
+from app.models.item import CrawledItem, ValuationRecord, ValuationSample, BargainAlert
+from app.models.price_history import PriceHistory
 from app.crawler.xianyu import get_crawler
 from app.services.pricing import calculate_price
 from app.services.llm import multi_model_valuation, classify_camera_items_by_llm, call_deepseek as call_deepseek_fn, call_qwen as call_qwen_fn, call_doubao as call_kimi_fn, analyze_item_images, check_xd_card_from_images, _build_prompt as _build_prompt_for_stream, _to_valuation as _to_valuation_raw
@@ -145,6 +148,222 @@ def _to_valuation_for_stream(data: dict, model_name: str) -> dict:
         "confidence": v.confidence,
         "error": v.error,
     }
+
+
+def _llm_result_to_dict(result) -> dict:
+    if isinstance(result, dict):
+        return result
+    return {
+        "model": getattr(result, "model_name", ""),
+        "suggested_price": getattr(result, "suggested_price", 0),
+        "price_min": getattr(result, "price_min", 0),
+        "price_max": getattr(result, "price_max", 0),
+        "reasoning": getattr(result, "reasoning", ""),
+        "confidence": getattr(result, "confidence", ""),
+        "error": getattr(result, "error", None),
+    }
+
+
+def _serialize_llm_results(llm_results: list) -> tuple[str, str]:
+    normalized = [_llm_result_to_dict(r) for r in (llm_results or [])]
+
+    def by_model(model_name: str, index: int) -> dict:
+        for item in normalized:
+            if item.get("model") == model_name:
+                return item
+        return normalized[index] if len(normalized) > index else {}
+
+    deepseek = by_model(settings.deepseek_model, 0)
+    qwen = by_model(settings.qwen_model, 1)
+    doubao = by_model(settings.doubao_model, 2)
+    return (
+        json.dumps(deepseek, ensure_ascii=False),
+        json.dumps({**qwen, "doubao": doubao}, ensure_ascii=False),
+    )
+
+
+def _cache_brand_from_keyword(keyword: str) -> str:
+    low = (keyword or "").lower()
+    brand_map = [
+        ("canon", ("canon", "佳能", "ixus", "ixy", "powershot")),
+        ("nikon", ("nikon", "尼康", "coolpix")),
+        ("sony", ("sony", "索尼", "cybershot", "cyber-shot")),
+        ("fujifilm", ("fujifilm", "fuji", "富士", "finepix")),
+        ("olympus", ("olympus", "奥林巴斯", "mju", "stylus", "μ")),
+        ("panasonic", ("panasonic", "松下", "lumix")),
+        ("casio", ("casio", "卡西欧", "exilim")),
+        ("samsung", ("samsung", "三星")),
+        ("kodak", ("kodak", "柯达")),
+    ]
+    for brand, aliases in brand_map:
+        if any(alias.lower() in low for alias in aliases):
+            return brand
+    return ""
+
+
+def _cache_series_from_keyword(keyword: str) -> str:
+    low = (keyword or "").lower()
+    series_map = [
+        ("ixus", "IXUS"),
+        ("powershot", "PowerShot"),
+        ("coolpix", "Coolpix"),
+        ("cybershot", "Cyber-shot"),
+        ("cyber-shot", "Cyber-shot"),
+        ("dsc-", "Cyber-shot"),
+        ("finepix", "FinePix"),
+        ("lumix", "Lumix"),
+        ("exilim", "Exilim"),
+        ("mju", "mju"),
+        ("μ", "μ"),
+    ]
+    for pattern, series in series_map:
+        if pattern in low:
+            return series
+    return ""
+
+
+async def _persist_valuation_snapshot(
+    db: AsyncSession,
+    *,
+    keyword: str,
+    original_keyword: str,
+    pricing,
+    items: list,
+    bargains: list,
+    llm_results: list,
+    is_xd_model: bool,
+    xd_bundle_count: int,
+) -> ValuationRecord:
+    """Persist one user valuation run and the exact sample snapshot it used."""
+    for item in items:
+        existing = await db.execute(
+            select(CrawledItem).where(CrawledItem.item_id == item.item_id)
+        )
+        if existing.scalar_one_or_none() is None:
+            db.add(CrawledItem(
+                item_id=item.item_id,
+                title=item.title,
+                price=item.price,
+                condition=getattr(item, "condition", ""),
+                description=getattr(item, "description", ""),
+                sold=getattr(item, "sold", False),
+                query_keyword=keyword,
+                keyword=keyword,
+                sold_at=getattr(item, "sold_at", None),
+                images=json.dumps(getattr(item, "images", []) or [], ensure_ascii=False),
+                url=getattr(item, "url", ""),
+                quality_score=getattr(item, "quality_score", None),
+                quality_flags=json.dumps(getattr(item, "quality_flags", []) or [], ensure_ascii=False),
+            ))
+
+    deepseek_result, qwen_result = _serialize_llm_results(llm_results)
+    record = ValuationRecord(
+        keyword=keyword,
+        base_price=pricing.base_price,
+        price_min=pricing.price_min,
+        price_max=pricing.price_max,
+        sample_count=pricing.sample_count,
+        raw_prices=json.dumps(pricing.raw_prices),
+        deepseek_result=deepseek_result,
+        qwen_result=qwen_result,
+    )
+    db.add(record)
+    await db.flush()
+
+    for item in items:
+        # WHY: crawled_items is unique by item_id and loses per-run membership;
+        # this snapshot preserves the exact samples behind each user valuation.
+        db.add(ValuationSample(
+            valuation_record_id=record.id,
+            item_id=item.item_id,
+            title=item.title,
+            price=item.price,
+            condition=getattr(item, "condition", ""),
+            description=getattr(item, "description", ""),
+            sold=getattr(item, "sold", False),
+            url=getattr(item, "url", ""),
+            images=json.dumps(getattr(item, "images", []) or [], ensure_ascii=False),
+            quality_score=getattr(item, "quality_score", None),
+            quality_flags=json.dumps(getattr(item, "quality_flags", []) or [], ensure_ascii=False),
+        ))
+
+    for b in bargains:
+        existing = await db.execute(
+            select(BargainAlert).where(BargainAlert.item_id == b.item_id)
+        )
+        exists_alert = existing.scalar_one_or_none()
+        if exists_alert is None:
+            db.add(BargainAlert(
+                valuation_record_id=record.id,
+                item_id=b.item_id,
+                title=b.title,
+                price=b.price,
+                estimated_price=b.estimated_price,
+                profit_estimate=b.profit_estimate,
+                url=b.url,
+                xd_card_size=b.xd_card_size or "",
+                xd_card_value=b.xd_card_value or 0.0,
+            ))
+        elif exists_alert.valuation_record_id is None:
+            exists_alert.valuation_record_id = record.id
+
+    now = datetime.utcnow()
+    raw_prices = [float(p) for p in (pricing.raw_prices or [])]
+    avg_price = round(sum(raw_prices) / len(raw_prices), 2) if raw_prices else 0
+    median_price = 0
+    if raw_prices:
+        import statistics
+        median_price = round(statistics.median(raw_prices), 2)
+
+    cache_result = await db.execute(
+        select(CCDPriceCache).where(CCDPriceCache.keyword == keyword)
+    )
+    cache_row = cache_result.scalar_one_or_none()
+    cache_values = {
+        "keyword": keyword,
+        "display_name": original_keyword or keyword,
+        "brand": _cache_brand_from_keyword(keyword),
+        "series": _cache_series_from_keyword(keyword),
+        "base_price": pricing.base_price,
+        "price_min": pricing.price_min,
+        "price_max": pricing.price_max,
+        "median_price": median_price,
+        "sample_count": pricing.sample_count,
+        "avg_price": avg_price,
+        "is_xd_card": is_xd_model,
+        "xd_card_bundle_count": xd_bundle_count,
+        "crawled_at": now,
+        "updated_at": now,
+    }
+    if cache_row is None:
+        db.add(CCDPriceCache(**cache_values))
+    else:
+        for key, value in cache_values.items():
+            setattr(cache_row, key, value)
+
+    db.add(PriceHistory(
+        keyword=keyword,
+        base_price=pricing.base_price,
+        median_price=median_price,
+        price_min=pricing.price_min,
+        price_max=pricing.price_max,
+        sample_count=pricing.sample_count,
+        crawled_at=now,
+    ))
+
+    await db.commit()
+    return record
+
+
+async def _update_valuation_llm_results(
+    db: AsyncSession,
+    record: ValuationRecord,
+    llm_results: list,
+) -> None:
+    deepseek_result, qwen_result = _serialize_llm_results(llm_results)
+    record.deepseek_result = deepseek_result
+    record.qwen_result = qwen_result
+    await db.commit()
 
 
 def _bucket_fill_items(base_items: list, candidates: list, target_count: int) -> list:
@@ -496,63 +715,17 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
     bargains = detect_bargains(items, pricing.base_price, query_keyword=keyword, xd_card_bonus=xd_card_bonus if xd_card_bonus else None)
 
     # 9. 存储估价记录
-    record = ValuationRecord(
+    await _persist_valuation_snapshot(
+        db,
         keyword=keyword,
-        base_price=pricing.base_price,
-        price_min=pricing.price_min,
-        price_max=pricing.price_max,
-        sample_count=pricing.sample_count,
-        raw_prices=json.dumps(pricing.raw_prices),
-        deepseek_result=json.dumps(
-            {"suggested_price": llm_results[0].suggested_price,
-             "price_min": llm_results[0].price_min,
-             "price_max": llm_results[0].price_max,
-             "reasoning": llm_results[0].reasoning,
-             "confidence": llm_results[0].confidence,
-             "error": llm_results[0].error},
-            ensure_ascii=False
-        ),
-        qwen_result=json.dumps(
-            {"suggested_price": llm_results[1].suggested_price,
-             "price_min": llm_results[1].price_min,
-             "price_max": llm_results[1].price_max,
-             "reasoning": llm_results[1].reasoning,
-             "confidence": llm_results[1].confidence,
-             "error": llm_results[1].error,
-             "kimi": {
-                 "suggested_price": llm_results[2].suggested_price,
-                 "price_min": llm_results[2].price_min,
-                 "price_max": llm_results[2].price_max,
-                 "reasoning": llm_results[2].reasoning,
-                 "confidence": llm_results[2].confidence,
-                 "error": llm_results[2].error,
-             }},
-            ensure_ascii=False
-        ),
+        original_keyword=original_keyword,
+        pricing=pricing,
+        items=items,
+        bargains=bargains,
+        llm_results=llm_results,
+        is_xd_model=is_xd_model,
+        xd_bundle_count=xd_bundle_count,
     )
-    db.add(record)
-    await db.flush()
-
-    for b in bargains:
-        existing = await db.execute(
-            select(BargainAlert).where(BargainAlert.item_id == b.item_id)
-        )
-        exists_alert = existing.scalar_one_or_none()
-        if exists_alert is None:
-            db.add(BargainAlert(
-                valuation_record_id=record.id,
-                item_id=b.item_id,
-                title=b.title,
-                price=b.price,
-                estimated_price=b.estimated_price,
-                profit_estimate=b.profit_estimate,
-                url=b.url,
-                xd_card_size=b.xd_card_size or "",
-                xd_card_value=b.xd_card_value or 0.0,
-            ))
-        elif exists_alert.valuation_record_id is None:
-            exists_alert.valuation_record_id = record.id
-    await db.commit()
 
     return {
         "keyword": keyword,
@@ -1017,6 +1190,25 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                           "xd_card_size": b.xd_card_size, "xd_card_value": b.xd_card_value,
                           "has_xd_bonus": bool(b.xd_card_size and b.xd_card_value > 0)} for b in bargains],
         }
+        try:
+            persisted_record = await _persist_valuation_snapshot(
+                db,
+                keyword=keyword,
+                original_keyword=original_keyword,
+                pricing=pricing,
+                items=items,
+                bargains=bargains,
+                llm_results=[],
+                is_xd_model=is_xd_model,
+                xd_bundle_count=xd_bundle_count,
+            )
+            base_payload["record_id"] = persisted_record.id
+        except Exception as e:
+            await db.rollback()
+            logger.exception("SSE 基础估价数据入库失败")
+            _mark_stream_task_finished(task_id)
+            yield f"event: error\ndata: {json.dumps({'detail': f'估价数据入库失败: {repr(e)}'}, ensure_ascii=False)}\n\n"
+            return
         yield f"event: base\ndata: {json.dumps(base_payload, ensure_ascii=False)}\n\n"
 
         # ---- 阶段2：多模型竞速，谁先完成先推送 ----
@@ -1072,50 +1264,14 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                 }
                 yield f"event: llm\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
+        try:
+            await _update_valuation_llm_results(db, persisted_record, llm_results_collected)
+        except Exception as e:
+            await db.rollback()
+            logger.warning(f"SSE LLM 结果更新失败: {e}")
+
         _mark_stream_task_finished(task_id)
         yield "event: done\ndata: {}\n\n"
-
-        # 存储记录
-        try:
-            for item in items:
-                existing = await db.execute(select(CrawledItem).where(CrawledItem.item_id == item.item_id))
-                if existing.scalar_one_or_none() is None:
-                    db.add(CrawledItem(item_id=item.item_id, title=item.title, price=item.price,
-                                       condition=item.condition, description=item.description,
-                                       sold=item.sold, query_keyword=keyword, sold_at=item.sold_at,
-                                       images=json.dumps(item.images, ensure_ascii=False) if item.images else None))
-            r0 = next((x for x in llm_results_collected if x["model"] == settings.deepseek_model), {})
-            r1 = next((x for x in llm_results_collected if x["model"] == settings.qwen_model), {})
-            r2 = next((x for x in llm_results_collected if x["model"] == settings.doubao_model), {})
-            record = ValuationRecord(
-                keyword=keyword,
-                base_price=pricing.base_price, price_min=pricing.price_min, price_max=pricing.price_max,
-                sample_count=pricing.sample_count, raw_prices=json.dumps(pricing.raw_prices),
-                deepseek_result=json.dumps(r0, ensure_ascii=False),
-                qwen_result=json.dumps({**r1, "doubao": r2}, ensure_ascii=False),
-            )
-            db.add(record)
-            await db.flush()
-            for b in bargains:
-                ex = await db.execute(select(BargainAlert).where(BargainAlert.item_id == b.item_id))
-                ex_alert = ex.scalar_one_or_none()
-                if ex_alert is None:
-                    db.add(BargainAlert(
-                        valuation_record_id=record.id,
-                        item_id=b.item_id,
-                        title=b.title,
-                        price=b.price,
-                        estimated_price=b.estimated_price,
-                        profit_estimate=b.profit_estimate,
-                        url=b.url,
-                        xd_card_size=b.xd_card_size or "",
-                        xd_card_value=b.xd_card_value or 0.0,
-                    ))
-                elif ex_alert.valuation_record_id is None:
-                    ex_alert.valuation_record_id = record.id
-            await db.commit()
-        except Exception as e:
-            logger.warning(f"SSE 存储记录失败: {e}")
 
     return StreamingResponse(event_stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -1181,6 +1337,12 @@ async def get_history_detail(
         .order_by(BargainAlert.created_at.asc())
         .limit(20)
     )
+    sample_result = await db.execute(
+        select(ValuationSample)
+        .where(ValuationSample.valuation_record_id == r.id)
+        .order_by(ValuationSample.id.asc())
+    )
+    samples = sample_result.scalars().all()
     # WHY: 老数据里可能已经写入出租/咨询/配件低价项，详情页返回前也要拦掉。
     bargains = [
         b for b in bargain_result.scalars().all()
@@ -1196,6 +1358,19 @@ async def get_history_detail(
         "raw_prices": raw_prices,
         "created_at": r.created_at.isoformat() if r.created_at else None,
         "llm_results": [x for x in [deepseek, qwen_data, doubao] if x],
+        "samples": [
+            {
+                "item_id": s.item_id,
+                "title": s.title,
+                "price": s.price,
+                "condition": s.condition,
+                "quality_score": s.quality_score,
+                "quality_flags": json.loads(s.quality_flags) if s.quality_flags else [],
+                "images": json.loads(s.images) if s.images else [],
+                "url": s.url,
+                "sold": s.sold,
+            } for s in samples
+        ],
         "bargains": [
             {
                 "item_id": b.item_id,
