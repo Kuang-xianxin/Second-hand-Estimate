@@ -504,6 +504,42 @@ import re, logging
 logger = logging.getLogger(__name__)
 
 
+NON_XD_BRAND_ALIASES: tuple[str, ...] = (
+    # WHY: Casio/Sony/Canon model numbers can share short tokens with Fuji or
+    # Olympus xD models, so brand context must win before fuzzy model matching.
+    "canon", "佳能", "ixus", "ixy", "powershot",
+    "nikon", "尼康", "coolpix",
+    "sony", "索尼", "cybershot", "cyber-shot",
+    "panasonic", "松下", "lumix",
+    "casio", "卡西欧", "exilim",
+    "ricoh", "理光",
+    "kodak", "柯达",
+    "samsung", "三星",
+    "pentax", "宾得",
+)
+
+XD_BRAND_ALIASES: tuple[str, ...] = (
+    "fuji", "fujifilm", "finepix", "富士",
+    "olympus", "奥林巴斯", "mju", "stylus",
+)
+
+
+def _contains_alias(text: str, aliases: tuple[str, ...]) -> bool:
+    low = (text or "").lower()
+    for alias in aliases:
+        alias_low = alias.lower()
+        if alias_low.isascii() and alias_low.isalnum():
+            if re.search(r"(?<![a-z0-9])" + re.escape(alias_low) + r"(?![a-z0-9])", low):
+                return True
+        elif alias_low in low:
+            return True
+    return False
+
+
+def _has_non_xd_brand_context(text: str) -> bool:
+    return _contains_alias(text, NON_XD_BRAND_ALIASES) and not _contains_alias(text, XD_BRAND_ALIASES)
+
+
 def _normalize(text: str) -> str:
     """将关键词标准化：小写、去除空格和连字符、μ→mu"""
     text = text.lower()
@@ -618,6 +654,45 @@ def _extract_model_tokens(text: str) -> set[str]:
     return tokens
 
 
+def _model_parts(token: str) -> tuple[str, str, str] | None:
+    match = re.fullmatch(r"([a-z]{1,8})(\d{1,6})([a-z]{0,5})", token or "")
+    if not match:
+        return None
+    prefix, number, suffix = match.groups()
+    return prefix, number.lstrip("0") or "0", suffix
+
+
+def _model_token_compatible(query_token: str, xd_model_token: str) -> bool:
+    query_norm = _normalize(query_token)
+    model_norm = _normalize(xd_model_token)
+    if query_norm == model_norm:
+        return True
+
+    query_parts = _model_parts(query_norm)
+    model_parts = _model_parts(model_norm)
+    if not query_parts or not model_parts:
+        return False
+
+    query_prefix, query_number, query_suffix = query_parts
+    model_prefix, model_number, model_suffix = model_parts
+    if query_prefix != model_prefix or query_number != model_number:
+        return False
+
+    # WHY: allow incomplete suffix searches like "富士 z5" -> "z5fd", while
+    # rejecting numeric-prefix collisions like "z3000" -> Fuji "z3".
+    return not query_suffix or model_suffix.startswith(query_suffix)
+
+
+def _ascii_model_candidates(keyword: str) -> set[str]:
+    normalized = _normalize(keyword)
+    ascii_only = re.sub(r"[^a-z0-9]", "", normalized)
+    candidates = {ascii_only} if ascii_only else set()
+    for prefix in ("finepix", "fujifilm", "fuji", "olympus"):
+        if ascii_only.startswith(prefix) and len(ascii_only) > len(prefix):
+            candidates.add(ascii_only[len(prefix):])
+    return {candidate for candidate in candidates if _model_parts(candidate)}
+
+
 def is_xd_card_model(keyword: str) -> bool:
     """
     根据关键词判断该 CCD 是否为使用 xD 卡的机型。
@@ -644,6 +719,9 @@ def is_xd_card_model(keyword: str) -> bool:
     if not keyword:
         return False
 
+    if _has_non_xd_brand_context(keyword):
+        return False
+
     tokens = _extract_model_tokens(keyword)
     # 数据库 key 有各种格式（有空格如"mu 1060"、有连字符如"fe-140"），
     # 提取的 token 是无分隔符格式（如"mu1060"、"fe140"）。
@@ -664,17 +742,13 @@ def is_xd_card_model(keyword: str) -> bool:
         if token in ALL_XD_MODEL_VARIANTS:
             return True
 
-    # 子串匹配兜底：normalized keyword 与规范化后的数据库 key 比对
-    normalized = _normalize(keyword)
-    for model_norm in is_xd_card_model._norm_models:
-        if model_norm in normalized or normalized in model_norm:
-            return True
-    # 从 normalized 中提取纯英数字（去掉中文字符）后再比对
-    # 解决"富士z5"中"z5"无法匹配"z5fd"的问题
-    ascii_only = re.sub(r"[^a-z0-9]", "", normalized)
-    for model_norm in is_xd_card_model._norm_models:
-        if model_norm in ascii_only or ascii_only in model_norm:
-            return True
+    # WHY: this fallback supports shorthand searches such as "富士z5" matching
+    # "z5fd", but it compares complete numeric model fields to avoid treating
+    # "z3000" as Fuji "z3".
+    for candidate in _ascii_model_candidates(keyword):
+        for model_norm in is_xd_card_model._norm_models:
+            if _model_token_compatible(candidate, model_norm):
+                return True
 
     return False
 
