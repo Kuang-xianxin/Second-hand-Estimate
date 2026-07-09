@@ -1,11 +1,13 @@
 from types import SimpleNamespace
 
 from app.services.bargain import (
+    card_status_uncertain_needs_confirm,
     ccd_invalid_bargain_reason,
     detect_bargains,
     filter_target_items,
     filter_target_items_with_reasons,
 )
+from app.services.xd_card_models import is_direct_xd_sd_dual_model
 from app.services.bargain_detector import detect_global_bargains
 
 
@@ -47,6 +49,60 @@ def test_ccd_sample_filter_keeps_whole_camera_with_gift_accessories():
 
     assert [item.item_id for item in plain_kept] == ["camera"]
     assert [item.item_id for item in kept] == ["camera"]
+    assert filtered_out == []
+
+
+def test_ccd_sample_filter_keeps_f30_whole_camera_descriptions():
+    items = [
+        _item(
+            "sensor-buttons",
+            "富士FinePix F30 香槟色CCD卡片机 功能正常 无拆修 镜头伸缩顺畅 "
+            "屏幕显示正常 按键灵敏 CCD传感器 630万像素 3倍光学变焦 "
+            "配件：电池、充电器 包邮",
+            468,
+        ),
+        _item(
+            "no-mold",
+            "富士F30 带521Mb原厂xd卡 富士CCD 整机9新 功能全好 "
+            "镜头无霉无划痕 屏幕显示清晰 免费配件 全新电池 万能充 XD卡",
+            500,
+        ),
+        _item(
+            "recommend-tag",
+            "富士FinePix F30 日版 实价可直拍 功能一切正常 CCD机型 "
+            "有问题可以退换 没有问题不退不换 关联：小红书推荐ccd",
+            400,
+        ),
+        _item(
+            "film-filter-mode",
+            "富士F30 相机 CCD银色 功能正常 出片偏日系 胶卷滤镜 复古出片模式 "
+            "配件：内存卡 电池 售后支持收到货有问题可退",
+            358,
+        ),
+        _item(
+            "repair-service",
+            "富士F30 CCD相机复古数码相机 功能完好 配件：电池 充电器 "
+            "本店下单粉丝享一年维修免手工费 只收小额零件费用",
+            468,
+        ),
+        _item(
+            "optional-seat-charger",
+            "富士f30 成色如图 功能正常 到货清单默认裸机 15元配件含电池 "
+            "万能充升级全新座充+10元 若有问题48小时内可以退换",
+            428,
+        ),
+    ]
+
+    kept, filtered_out = filter_target_items_with_reasons(items, "富士f30")
+
+    assert [item.item_id for item in kept] == [
+        "sensor-buttons",
+        "no-mold",
+        "recommend-tag",
+        "film-filter-mode",
+        "repair-service",
+        "optional-seat-charger",
+    ]
     assert filtered_out == []
 
 
@@ -98,6 +154,37 @@ def test_ccd_sample_filter_rejects_real_utf8_accessory_terms():
 
     assert [item.item_id for item in kept] == ["camera"]
     assert filtered_out[0]["reason"] == "配件/耗材/资料"
+
+
+def test_ccd_sample_filter_rejects_soft_accessory_compatibility_lists():
+    items = [
+        _item("battery-pack", "奥林巴斯U750 1050 FE5020 150 160 F E190 290 FE280 230 240 250 320 fe300电池充电器 全新包邮，", 16),
+        _item("li42b", "奥林巴斯u1060 u5010 u7000 u7010 FE 5020 5030 5050 5500 照相机Li-42B电池充电器", 17),
+        _item("cable", "奥林巴斯相机数据线U1040 U1050 U1060 U10 10 U1020 U1030", 25),
+        _item("camera", "奥林巴斯U1060数码相机 功能正常 闪光灯正常 配电池充电器", 320),
+    ]
+
+    kept, filtered_out = filter_target_items_with_reasons(items, "奥林巴斯u1060")
+
+    assert [item.item_id for item in kept] == ["camera"]
+    assert [entry["reason"] for entry in filtered_out] == [
+        "配件/耗材/资料",
+        "配件/耗材/资料",
+        "配件/耗材/资料",
+    ]
+
+
+def test_ccd_sample_filter_keeps_short_model_token_exact():
+    items = [
+        _item("sony-t2", "靓机 索尼T2数码相机CCD 成色好 功能全部正常 闪光灯触屏都可以", 350),
+        _item("sony-t200", "索尼T200数码相机CCD 成色好 功能正常", 980),
+        _item("sony-battery", "索尼NP-BD1电池 适用DSC-TX1/T2/T70/T200/T300/T700相机", 18),
+    ]
+
+    kept, filtered_out = filter_target_items_with_reasons(items, "索尼t2")
+
+    assert [item.item_id for item in kept] == ["sony-t2"]
+    assert [entry["title"] for entry in filtered_out] == [items[1].title, items[2].title]
 
 
 def test_ccd_sample_filter_rejects_standalone_xd_card_but_keeps_camera_bundle():
@@ -181,19 +268,20 @@ def test_non_xd_canon_bare_model_collision_does_not_add_xd_bonus():
     assert bargains == []
 
 
-def test_xd_model_storage_card_text_still_adds_xd_bonus():
+def test_direct_dual_generic_storage_card_text_needs_confirmation_without_xd_bonus():
     fuji = _item(
         "fuji-f200",
         "富士F200EXR CCD数码相机 功能正常 送1G卡 标价是实价",
         430,
     )
 
-    bargains = detect_bargains([fuji], base_price=500, query_keyword="富士f200exr", threshold=80)
+    bargains = detect_bargains([fuji], base_price=500, query_keyword="富士f200exr", threshold=60)
 
     assert len(bargains) == 1
-    assert bargains[0].xd_card_size == "1g"
-    assert bargains[0].xd_card_value == 148
-    assert bargains[0].profit_estimate == 218
+    assert bargains[0].xd_card_size == ""
+    assert bargains[0].xd_card_value == 0
+    assert bargains[0].profit_estimate == 70
+    assert bargains[0].card_status_uncertain_needs_confirm is True
 
 
 def test_optional_xd_card_purchase_does_not_add_xd_bonus():
@@ -224,7 +312,7 @@ def test_global_bargains_do_not_mark_non_xd_storage_card_as_xd():
     fuji = _item(
         "fuji-f200",
         "富士F200EXR CCD数码相机 功能正常 送1G卡 标价是实价",
-        430,
+        400,
     )
     fuji.query_keyword = "富士f200exr"
 
@@ -234,8 +322,9 @@ def test_global_bargains_do_not_mark_non_xd_storage_card_as_xd():
     )
 
     assert [record.item_id for record in records] == ["fuji-f200"]
-    assert records[0].is_xd_card is True
-    assert records[0].xd_card_size == "1g"
+    assert records[0].is_xd_card is False
+    assert records[0].xd_card_size == ""
+    assert records[0].card_status_uncertain_needs_confirm is True
 
 
 def test_global_bargains_skip_standalone_xd_card_listing():
@@ -279,3 +368,57 @@ def test_existing_bargain_alerts_can_be_hidden_without_deleting_rows():
 
     assert ccd_invalid_bargain_reason(dirty_alert) == "低价引流/非实价"
     assert ccd_invalid_bargain_reason(clean_alert) == ""
+
+
+def test_direct_xd_sd_dual_model_detection_is_gated_by_xd_model():
+    assert is_direct_xd_sd_dual_model("富士 F200EXR")
+    assert is_direct_xd_sd_dual_model("FinePix Z10fd")
+    assert not is_direct_xd_sd_dual_model("富士 A700")
+    assert not is_direct_xd_sd_dual_model("佳能 A700")
+
+
+def test_direct_dual_generic_card_gets_confirmation_flag_without_xd_bonus():
+    item = _item("f200-generic", "富士 F200EXR CCD相机 功能正常 带1G内存卡", 300)
+
+    bargains = detect_bargains([item], base_price=500, query_keyword="富士 F200EXR", threshold=80)
+
+    assert len(bargains) == 1
+    assert bargains[0].xd_card_value == 0
+    assert bargains[0].profit_estimate == 200
+    assert bargains[0].card_status_uncertain_needs_confirm is True
+
+
+def test_direct_dual_missing_card_status_gets_confirmation_flag():
+    item = _item("f200-unknown", "富士 F200EXR CCD相机 功能正常", 300)
+
+    assert card_status_uncertain_needs_confirm(item, "富士 F200EXR") is True
+
+
+def test_direct_dual_explicit_no_card_or_sd_does_not_get_confirmation_flag():
+    no_card = _item("f200-no-card", "富士 F200EXR CCD相机 功能正常 不带卡", 300)
+    sd_card = _item("f200-sd", "富士 F200EXR CCD相机 功能正常 带1G SD卡", 300)
+
+    assert card_status_uncertain_needs_confirm(no_card, "富士 F200EXR") is False
+    assert card_status_uncertain_needs_confirm(sd_card, "富士 F200EXR") is False
+
+
+def test_direct_dual_explicit_xd_card_adds_bonus_without_confirmation_flag():
+    item = _item("f200-xd", "富士 F200EXR CCD相机 功能正常 带1G XD卡", 300)
+
+    bargains = detect_bargains([item], base_price=500, query_keyword="富士 F200EXR", threshold=80)
+
+    assert len(bargains) == 1
+    assert bargains[0].xd_card_size == "1g"
+    assert bargains[0].xd_card_value == 148
+    assert bargains[0].profit_estimate == 348
+    assert bargains[0].card_status_uncertain_needs_confirm is False
+
+
+def test_xd_only_generic_card_still_counts_as_xd_without_confirmation_flag():
+    item = _item("a700-xd", "富士 A700 CCD相机 功能正常 带1G卡", 300)
+
+    bargains = detect_bargains([item], base_price=500, query_keyword="富士 A700", threshold=80)
+
+    assert len(bargains) == 1
+    assert bargains[0].xd_card_value == 148
+    assert bargains[0].card_status_uncertain_needs_confirm is False

@@ -175,6 +175,7 @@ class GlobalBargainItem(BaseModel):
     is_xd_card: bool = False
     xd_card_size: str = ""
     xd_card_value: float = 0.0
+    card_status_uncertain_needs_confirm: bool = False
     url: Optional[str] = None
     image_url: Optional[str] = None
     created_at: Optional[str] = None
@@ -292,6 +293,7 @@ async def get_global_bargains(
             is_xd_card=item.is_xd_card,
             xd_card_size=item.xd_card_size or "",
             xd_card_value=item.xd_card_value or 0.0,
+            card_status_uncertain_needs_confirm=bool(item.card_status_uncertain_needs_confirm),
             url=item.url,
             image_url=item.image_url,
             created_at=item.created_at.isoformat() if item.created_at else None,
@@ -505,6 +507,7 @@ async def get_bargains_by_keyword(
             "is_xd_card": a.is_xd_card,
             "xd_card_size": a.xd_card_size or "",
             "xd_card_value": a.xd_card_value or 0.0,
+            "card_status_uncertain_needs_confirm": bool(a.card_status_uncertain_needs_confirm),
             "url": a.url,
             "image_url": a.image_url,
             "created_at": a.created_at.isoformat() if a.created_at else None,

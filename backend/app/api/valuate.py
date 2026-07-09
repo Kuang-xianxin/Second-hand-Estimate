@@ -303,9 +303,12 @@ async def _persist_valuation_snapshot(
                 url=b.url,
                 xd_card_size=b.xd_card_size or "",
                 xd_card_value=b.xd_card_value or 0.0,
+                card_status_uncertain_needs_confirm=bool(getattr(b, "card_status_uncertain_needs_confirm", False)),
             ))
-        elif exists_alert.valuation_record_id is None:
-            exists_alert.valuation_record_id = record.id
+        else:
+            if exists_alert.valuation_record_id is None:
+                exists_alert.valuation_record_id = record.id
+            exists_alert.card_status_uncertain_needs_confirm = bool(getattr(b, "card_status_uncertain_needs_confirm", False))
 
     now = datetime.utcnow()
     raw_prices = [float(p) for p in (pricing.raw_prices or [])]
@@ -789,6 +792,7 @@ async def valuate(req: ValuateRequest, db: AsyncSession = Depends(get_db)):
                 "xd_card_size": b.xd_card_size,
                 "xd_card_value": b.xd_card_value,
                 "has_xd_bonus": bool(b.xd_card_size and b.xd_card_value > 0),
+                "card_status_uncertain_needs_confirm": b.card_status_uncertain_needs_confirm,
             }
             for b in bargains
         ],
@@ -1188,7 +1192,8 @@ async def valuate_stream(req: ValuateRequest, db: AsyncSession = Depends(get_db)
                           "estimated_price": b.estimated_price, "profit_estimate": b.profit_estimate,
                           "url": b.url,
                           "xd_card_size": b.xd_card_size, "xd_card_value": b.xd_card_value,
-                          "has_xd_bonus": bool(b.xd_card_size and b.xd_card_value > 0)} for b in bargains],
+                          "has_xd_bonus": bool(b.xd_card_size and b.xd_card_value > 0),
+                          "card_status_uncertain_needs_confirm": b.card_status_uncertain_needs_confirm} for b in bargains],
         }
         try:
             persisted_record = await _persist_valuation_snapshot(
@@ -1379,6 +1384,10 @@ async def get_history_detail(
                 "estimated_price": b.estimated_price,
                 "profit_estimate": b.profit_estimate,
                 "url": b.url,
+                "xd_card_size": b.xd_card_size or "",
+                "xd_card_value": b.xd_card_value or 0.0,
+                "has_xd_bonus": bool(b.xd_card_size and b.xd_card_value > 0),
+                "card_status_uncertain_needs_confirm": bool(b.card_status_uncertain_needs_confirm),
             } for b in bargains
         ],
     }
@@ -1410,6 +1419,7 @@ async def get_bargains(
             "created_at": a.created_at.isoformat() if a.created_at else None,
             "xd_card_size": a.xd_card_size or "",
             "xd_card_value": a.xd_card_value or 0.0,
+            "card_status_uncertain_needs_confirm": bool(a.card_status_uncertain_needs_confirm),
         }
         for a in alerts
     ]

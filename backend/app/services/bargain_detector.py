@@ -12,6 +12,7 @@ from app.services.bargain import (
     _is_model_mismatch,
     _is_xd_bundle_from_text,
     _get_xd_card_value,
+    card_status_uncertain_needs_confirm,
     XD_CARD_PRICES,
 )
 from app.models.global_bargain import GlobalBargain
@@ -38,6 +39,7 @@ class GlobalBargainRecord:
     is_xd_card: bool
     xd_card_size: str
     xd_card_value: float
+    card_status_uncertain_needs_confirm: bool
     url: str
     image_url: str
 
@@ -104,6 +106,11 @@ def detect_global_bargains(
             continue
 
         card_size, card_value = detect_xd_bonus(item, keyword)
+        card_uncertain = card_status_uncertain_needs_confirm(
+            item,
+            query_keyword=keyword,
+            has_confirmed_xd_card=bool(card_value > 0),
+        )
         profit = base_price - float(getattr(item, "price", 0))
         total_profit = profit + card_value
 
@@ -129,6 +136,7 @@ def detect_global_bargains(
             is_xd_card=bool(card_value > 0),
             xd_card_size=card_size,
             xd_card_value=round(card_value, 2),
+            card_status_uncertain_needs_confirm=card_uncertain,
             url=getattr(item, "url", ""),
             image_url=extract_first_image(getattr(item, "images", [])),
         ))
@@ -170,6 +178,7 @@ async def replace_global_bargains(
                 is_xd_card=record.is_xd_card,
                 xd_card_size=record.xd_card_size,
                 xd_card_value=record.xd_card_value,
+                card_status_uncertain_needs_confirm=record.card_status_uncertain_needs_confirm,
                 url=record.url,
                 image_url=record.image_url,
                 refresh_batch=batch_id,
@@ -222,6 +231,7 @@ async def replace_global_bargains_for_keywords(
                 is_xd_card=record.is_xd_card,
                 xd_card_size=record.xd_card_size,
                 xd_card_value=record.xd_card_value,
+                card_status_uncertain_needs_confirm=record.card_status_uncertain_needs_confirm,
                 url=record.url,
                 image_url=record.image_url,
                 refresh_batch=batch_id,

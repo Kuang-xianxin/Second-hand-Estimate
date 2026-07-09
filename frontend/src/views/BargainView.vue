@@ -198,6 +198,9 @@ onMounted(load)
           <div v-if="item.is_xd_card && item.xd_card_value" class="xd-badge">
             含{{ item.xd_card_size?.toUpperCase() || '' }}XD卡 +约¥{{ item.xd_card_value }}卡值
           </div>
+          <div v-if="item.card_status_uncertain_needs_confirm" class="card-status-badge">
+            卡状态待确认
+          </div>
           <div class="card-meta">
             <span v-if="item.condition" class="condition-tag">{{ item.condition }}</span>
             <span v-if="item.quality_score" class="quality-score">
@@ -431,6 +434,17 @@ onMounted(load)
   background: rgba(232, 197, 71, 0.12);
   color: var(--accent);
   font-size: 12px;
+}
+
+.card-status-badge {
+  margin-top: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .card-meta {

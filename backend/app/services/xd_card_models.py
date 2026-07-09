@@ -30,7 +30,7 @@ FUJIFILM_A_XD: set[str] = {
     "a220", "a225", "a230", "a235",
     "a303", "a310", "a330", "a340", "a345", "a350",
     "a400", "a500", "a510", "a600", "a607",
-    "a610", "a700", "a800", "a805", "a810", "a820", "a850", "a900", "a920",
+    "a610", "a700", "a800", "a805", "a810", "a820", "a825", "a850", "a900", "a920",
     "ax350", "ax510", "ax550",
     "av200", "av220", "av230", "av250",
 }
@@ -43,7 +43,7 @@ FUJIFILM_A_XD_VARIANTS: set[str] = {
     "finepix a310", "finepix a330", "finepix a340", "finepix a345",
     "finepix a350", "finepix a400", "finepix a500", "finepix a510",
     "finepix a600", "finepix a607", "finepix a610", "finepix a700",
-    "finepix a800", "finepix a805", "finepix a820", "finepix a850",
+    "finepix a800", "finepix a805", "finepix a820", "finepix a825", "finepix a850",
     "finepix a900", "finepix a920",
     "fuji a100", "fuji a120", "fuji a150", "fuji a170",
     "fuji a175", "fuji a180", "fuji a200", "fuji a202",
@@ -52,7 +52,7 @@ FUJIFILM_A_XD_VARIANTS: set[str] = {
     "fuji a310", "fuji a330", "fuji a340", "fuji a345",
     "fuji a350", "fuji a400", "fuji a500", "fuji a510",
     "fuji a600", "fuji a607", "fuji a610", "fuji a700",
-    "fuji a800", "fuji a805", "fuji a820", "fuji a850",
+    "fuji a800", "fuji a805", "fuji a820", "fuji a825", "fuji a850",
     "fuji a900", "fuji a920",
 }
 
@@ -65,7 +65,7 @@ FUJIFILM_F_XD: set[str] = {
     # F10-F31fd 仅 xD
     "f10", "f11", "f20", "f30", "f31fd",
     # F40fd-F200EXR：xD + SD 双插槽
-    "f40fd", "f47fd", "f480", "f50fd", "f60fd", "f100fd", "f200exr",
+    "f40fd", "f45fd", "f47fd", "f480", "f485", "f50fd", "f60fd", "f100fd", "f200exr",
 }
 
 FUJIFILM_F_XD_VARIANTS: set[str] = {
@@ -73,13 +73,13 @@ FUJIFILM_F_XD_VARIANTS: set[str] = {
     "finepix f440", "finepix f450", "finepix f455", "finepix f460", "finepix f470",
     "finepix f650", "finepix f700",
     "finepix f10", "finepix f11", "finepix f20", "finepix f30", "finepix f31fd",
-    "finepix f40fd", "finepix f47fd", "finepix f480",
+    "finepix f40fd", "finepix f45fd", "finepix f47fd", "finepix f480", "finepix f485",
     "finepix f50fd", "finepix f60fd", "finepix f100fd", "finepix f200exr",
     "fuji f401", "fuji f402", "fuji f410", "fuji f420",
     "fuji f440", "fuji f450", "fuji f455", "fuji f460", "fuji f470",
     "fuji f650", "fuji f700",
     "fuji f10", "fuji f11", "fuji f20", "fuji f30", "fuji f31fd",
-    "fuji f40fd", "fuji f47fd", "fuji f480",
+    "fuji f40fd", "fuji f45fd", "fuji f47fd", "fuji f480", "fuji f485",
     "fuji f50fd", "fuji f60fd", "fuji f100fd", "fuji f200exr",
 }
 
@@ -94,7 +94,7 @@ FUJIFILM_S_XD: set[str] = {
     # Bridge xD 机型
     "s3500",
     "s5000", "s5100", "s5200", "s5500", "s5600",
-    "s5700", "s5800",
+    "s5700", "s700", "s5800",
     "s6000fd", "s6500fd",
     "s7000", "s9000", "s9500", "s9600",
     "sp-1", "sp1",
@@ -105,13 +105,13 @@ FUJIFILM_S_XD_VARIANTS: set[str] = {
     "finepix s3pro", "finepix s3 pro", "finepix s5pro", "finepix s5 pro",
     "finepix ispro", "finepix is pro",
     "finepix s3500", "finepix s5000", "finepix s5100", "finepix s5200",
-    "finepix s5500", "finepix s5600", "finepix s5700", "finepix s5800",
+    "finepix s5500", "finepix s5600", "finepix s5700", "finepix s700", "finepix s5800",
     "finepix s6000fd", "finepix s6500fd",
     "finepix s7000", "finepix s9000", "finepix s9500", "finepix s9600",
     "fuji s1pro", "fuji s1 pro", "fuji s2pro", "fuji s2 pro",
     "fuji s3pro", "fuji s3 pro", "fuji s5pro", "fuji s5 pro",
     "fuji s3500", "fuji s5000", "fuji s5100", "fuji s5200",
-    "fuji s5500", "fuji s5600", "fuji s5700", "fuji s5800",
+    "fuji s5500", "fuji s5600", "fuji s5700", "fuji s700", "fuji s5800",
     "fuji s6000fd", "fuji s6500fd",
     "fuji s7000", "fuji s9000", "fuji s9500", "fuji s9600",
 }
@@ -188,6 +188,28 @@ FUJIFILM_ALL_XD_VARIANTS: set[str] = (
     | FUJIFILM_E_XD_VARIANTS
     | FUJIFILM_J_XD_VARIANTS
     | FUJIFILM_OTHER_XD_VARIANTS
+)
+
+
+# ============================================================================
+# 富士 xD + SD/SDHC 直插双兼容机型
+# ============================================================================
+
+# WHY: direct xD+SD models need a separate branch. A generic "带1G内存卡"
+# listing could contain either an xD card or an SD card, so it must be flagged
+# for manual confirmation instead of being counted as xD value.
+FUJIFILM_XD_SD_DUAL_MODELS: set[str] = {
+    # 官方说明书高置信名单，待核对机型不要放入自动逻辑。
+    "a610", "a800", "a820", "a825", "a900",
+    "f40fd", "f45fd", "f480", "f485", "f50fd", "f60fd", "f100fd", "f200exr",
+    "j10", "j12", "j15fd", "j50",
+    "s5700", "s700", "s5800", "s800", "s1000fd",
+    "z10fd", "z20fd", "z100fd", "z200fd",
+}
+
+FUJIFILM_XD_SD_DUAL_VARIANTS: set[str] = (
+    {f"finepix {model}" for model in FUJIFILM_XD_SD_DUAL_MODELS}
+    | {f"fuji {model}" for model in FUJIFILM_XD_SD_DUAL_MODELS}
 )
 
 
@@ -747,6 +769,45 @@ def is_xd_card_model(keyword: str) -> bool:
     # "z3000" as Fuji "z3".
     for candidate in _ascii_model_candidates(keyword):
         for model_norm in is_xd_card_model._norm_models:
+            if _model_token_compatible(candidate, model_norm):
+                return True
+
+    return False
+
+
+def is_direct_xd_sd_dual_model(keyword: str) -> bool:
+    """
+    判断相机是否为原生 xD + SD/SDHC 双卡槽机型。
+
+    该函数只在 is_xd_card_model(keyword) 已确认 xD 机型后继续匹配双卡表，
+    避免 Canon/Sony/SD-only 等非 xD 相机因为短型号 token 碰撞误入待确认逻辑。
+    """
+    if not keyword or not is_xd_card_model(keyword):
+        return False
+
+    tokens = _extract_model_tokens(keyword)
+    normalized_tokens = {_normalize(t) for t in tokens}
+
+    if not hasattr(is_direct_xd_sd_dual_model, "_norm_models"):
+        is_direct_xd_sd_dual_model._norm_models = {
+            _normalize(k) for k in FUJIFILM_XD_SD_DUAL_MODELS
+        }
+        is_direct_xd_sd_dual_model._norm_variants = {
+            _normalize(k) for k in FUJIFILM_XD_SD_DUAL_VARIANTS
+        }
+
+    for token in normalized_tokens:
+        if token in is_direct_xd_sd_dual_model._norm_models:
+            return True
+        if token in is_direct_xd_sd_dual_model._norm_variants:
+            return True
+
+    for token in tokens:
+        if token in FUJIFILM_XD_SD_DUAL_VARIANTS:
+            return True
+
+    for candidate in _ascii_model_candidates(keyword):
+        for model_norm in is_direct_xd_sd_dual_model._norm_models:
             if _model_token_compatible(candidate, model_norm):
                 return True
 

@@ -33,3 +33,10 @@ async def init_db():
             await conn.execute(text("ALTER TABLE bargain_alerts ADD COLUMN xd_card_size TEXT DEFAULT ''"))
         if "xd_card_value" not in columns:
             await conn.execute(text("ALTER TABLE bargain_alerts ADD COLUMN xd_card_value REAL DEFAULT 0"))
+        if "card_status_uncertain_needs_confirm" not in columns:
+            await conn.execute(text("ALTER TABLE bargain_alerts ADD COLUMN card_status_uncertain_needs_confirm BOOLEAN DEFAULT 0"))
+
+        rows = await conn.execute(text("PRAGMA table_info('global_bargains')"))
+        global_columns = {row[1] for row in rows.fetchall()} if rows is not None else set()
+        if "card_status_uncertain_needs_confirm" not in global_columns:
+            await conn.execute(text("ALTER TABLE global_bargains ADD COLUMN card_status_uncertain_needs_confirm BOOLEAN DEFAULT 0"))

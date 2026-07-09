@@ -21,6 +21,7 @@ class GlobalBargain(Base):
     is_xd_card = Column(Boolean, default=False)
     xd_card_size = Column(String(32), nullable=True, default="")
     xd_card_value = Column(Float, default=0)
+    card_status_uncertain_needs_confirm = Column(Boolean, nullable=True, default=False)
     url = Column(String(1024), nullable=True)
     image_url = Column(String(1024), nullable=True)
     refresh_batch = Column(String(64), nullable=True, index=True)

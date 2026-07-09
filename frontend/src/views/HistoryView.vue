@@ -118,6 +118,7 @@ function formatTime(iso: string): string {
                   class="bargain-mini-item"
                 >
                   <span class="bm-title">{{ b.title }}</span>
+                  <span v-if="b.card_status_uncertain_needs_confirm" class="bm-card-status">卡状态待确认</span>
                   <span class="bm-price">¥{{ b.price }}</span>
                   <span class="bm-profit">+¥{{ b.profit_estimate }}</span>
                 </a>
@@ -269,6 +270,7 @@ function formatTime(iso: string): string {
 }
 .bargain-mini-item:hover { border-color: var(--red); }
 .bm-title { flex: 1; font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bm-card-status { font-size: 12px; color: #b45309; background: rgba(245,158,11,0.14); border: 1px solid rgba(245,158,11,0.3); padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
 .bm-price { font-family: var(--font-mono); font-size: 14px; font-weight: 700; color: var(--red); }
 .bm-profit { font-family: var(--font-mono); font-size: 12px; color: var(--green); background: rgba(92,184,122,0.1); padding: 2px 6px; border-radius: 4px; }
 

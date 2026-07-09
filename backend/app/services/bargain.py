@@ -59,6 +59,19 @@ CCD_REAL_STANDALONE_ACCESSORY_HINTS = [
     "单拍", "单出", "型号", "规格",
 ]
 
+CCD_STRONG_WHOLE_CAMERA_CONTEXT_TERMS = [
+    # WHY: "相机数据线/照相机电池" only names compatibility; these terms
+    # indicate the listing is actually selling a complete camera.
+    "ccd", "卡片机", "数码相机", "功能正常", "成色", "拍照",
+    "闪光灯", "触屏", "变焦", "像素", "验机", "可视频验机",
+    "自用", "一切正常", "无拆无修", "镜头正常", "屏幕正常",
+]
+
+CCD_SOFT_ACCESSORY_MODEL_PATTERNS = [
+    # Common battery/charger model families seen in compatibility-list ads.
+    r"\b(?:li|np|nb|en-el|dmw|bc|cb|klic|bls)[-\s]?[a-z0-9]{2,8}\b",
+]
+
 COMMON_RISK_KEYWORDS = [
     "不包好坏", "当配件", "尸体", "仅机身", "无测试", "不退不换",
 ]
@@ -85,7 +98,7 @@ CCD_DECOY_PRICE_KEYWORDS = [
     "邮费链接", "运费链接", "专拍链接", "补款链接", "非卖品", "价格面议",
     "免押出租", "免押租", "出租", "租赁", "租相机", "起租", "续租", "日租",
     "单天", "芝麻免押", "芝麻信用", "档期", "跑腿到付", "闪送跑腿",
-    "咨询辨真假", "辨别ccd真假", "辨真假", "鉴别真假", "帮忙推荐", "推荐ccd",
+    "咨询辨真假", "辨别ccd真假", "辨真假", "鉴别真假", "帮忙推荐",
     "推荐机型", "回答关于ccd", "回答问题", "拍下链接", "有问题直接拍",
     "拍下后即可", "价格合不合适", "拍照技巧", "问问题",
 ]
@@ -105,10 +118,11 @@ CCD_LOW_PRICE_BAIT_KEYWORDS = [
 CCD_ACCESSORY_KEYWORDS = [
     # WHY: 配件/耗材/资料不是可估价整机，不能参与基准价或捡漏判断。
     "说明书", "电子版", "pdf", "外屏", "内屏", "液晶屏", "显示屏", "屏幕总成",
-    "电池", "充电器", "充电线", "数据线", "镜头盖", "镜头组", "转接环", "滤镜", "遮光罩",
+    "电池", "充电器", "充电线", "数据线", "镜头盖", "镜头组", "转接环", "遮光罩",
     "读卡器", "内存卡", "存储卡", "相机包", "保护套", "贴膜", "背带", "三脚架", "快装板", "热靴",
     "拆机", "零件", "主板", "排线", "usb盖", "usb 盖", "数据盖", "hdmi盖", "hdmi 盖",
-    "背盖", "后盖", "前盖", "外壳", "机身壳", "按键", "快门按钮", "传感器", "底座",
+    "背盖", "后盖", "前盖", "外壳", "机身壳", "按键排线", "按键板", "按键总成",
+    "快门按钮排线", "传感器组件", "传感器排线", "底座",
     "仓盖", "手册", "电路图", "资料", "软件安装", "滤光片", "低通滤镜",
 ]
 
@@ -130,7 +144,8 @@ CCD_ALWAYS_ACCESSORY_KEYWORDS = [
     # WHY: 这些词本身就是资料或拆机零件，放宽样本过滤时仍不能当作整机价格样本。
     "电子版", "pdf", "外屏", "内屏", "液晶屏", "显示屏", "屏幕总成",
     "拆机", "零件", "主板", "排线", "usb盖", "usb 盖", "数据盖", "hdmi盖", "hdmi 盖",
-    "背盖", "后盖", "前盖", "外壳", "机身壳", "按键", "快门按钮", "传感器", "底座",
+    "背盖", "后盖", "前盖", "外壳", "机身壳", "按键排线", "按键板", "按键总成",
+    "快门按钮排线", "传感器组件", "传感器排线", "底座",
     "仓盖", "电路图", "资料", "软件安装", "滤光片", "低通滤镜",
 ]
 
@@ -207,6 +222,25 @@ XD_SELF_PROVIDE_PATTERNS = [
     r"可选购\s*xd卡", r"选购\s*xd卡", r"xd卡可选", r"自备.*xd.*卡",
 ]
 
+CARD_NOT_INCLUDED_PATTERNS = [
+    *XD_SELF_PROVIDE_PATTERNS,
+    r"单机", r"裸机", r"仅机身", r"无内存卡", r"没有内存卡",
+    r"不送卡", r"不配卡", r"不带内存卡", r"不含内存卡",
+    r"自备内存卡", r"需自备内存卡", r"请自备内存卡",
+]
+
+EXPLICIT_XD_CARD_PATTERNS = [
+    r"xd\s*卡", r"xd[-\s]*picture\s*card", r"xd-picture",
+    r"富士\s*(原装|正品)?\s*(xd)?\s*卡",
+    r"奥林巴斯\s*(原装|正品)?\s*(xd)?\s*卡",
+]
+
+EXPLICIT_SD_CARD_PATTERNS = [
+    r"sd\s*卡", r"sdhc", r"sdxc",
+    r"tf\s*卡", r"micro\s*sd", r"microsd",
+    r"闪迪", r"sandisk",
+]
+
 # 检测"相机捆绑XD卡销售"的文本模式
 XD_BUNDLE_PATTERNS = [
     r"xd卡", r"富士卡", r"奥林巴斯卡", r"原装卡",
@@ -279,6 +313,52 @@ def _contains_any(text: str, keywords: list[str]) -> bool:
     return any(kw.lower() in text for kw in keywords)
 
 
+def _is_contextual_non_issue_risk(text: str, keyword: str, start: int, end: int) -> bool:
+    prefix = text[max(0, start - 8):start]
+    suffix = text[end:end + 8]
+
+    if prefix.endswith(("无", "没", "未", "非", "没有")):
+        return True
+    if keyword == "有问题" and (
+        prefix.endswith(("没", "没有"))
+        or any(term in suffix for term in ("可以", "可退", "可换", "包退", "退换"))
+    ):
+        return True
+    if keyword == "维修" and (
+        "售后" in prefix
+        or "质保" in prefix
+        or suffix.startswith(("免", "保", "服务"))
+    ):
+        return True
+    return False
+
+
+def _contains_actionable_risk_keyword(text: str, keyword: str) -> bool:
+    keyword_low = keyword.lower()
+    for match in re.finditer(re.escape(keyword_low), text):
+        if _is_contextual_non_issue_risk(text, keyword_low, match.start(), match.end()):
+            continue
+        return True
+    return False
+
+
+def _is_contextual_whole_camera_accessory_term(text: str, keyword: str, start: int, end: int) -> bool:
+    suffix = text[end:end + 8]
+    if keyword == "零件" and suffix.startswith("费用"):
+        return True
+    return False
+
+
+def _contains_accessory_keyword(text: str, keywords: list[str]) -> bool:
+    for keyword in keywords:
+        keyword_low = keyword.lower()
+        for match in re.finditer(re.escape(keyword_low), text):
+            if _is_contextual_whole_camera_accessory_term(text, keyword_low, match.start(), match.end()):
+                continue
+            return True
+    return False
+
+
 def _is_service_listing(text: str) -> bool:
     return _contains_any(text, CCD_SERVICE_LISTING_KEYWORDS)
 
@@ -313,10 +393,21 @@ def _is_standalone_accessory_listing(text: str) -> bool:
         return True
     if _contains_any(text, CCD_REAL_ALWAYS_ACCESSORY_TERMS):
         return True
-    return (
-        _contains_any(text, CCD_REAL_SOFT_ACCESSORY_TERMS)
-        and _contains_any(text, CCD_REAL_STANDALONE_ACCESSORY_HINTS)
-    )
+    if not _contains_any(text, CCD_REAL_SOFT_ACCESSORY_TERMS):
+        return False
+    if _contains_any(text, CCD_REAL_STANDALONE_ACCESSORY_HINTS):
+        return True
+    if _contains_any(text, CCD_STRONG_WHOLE_CAMERA_CONTEXT_TERMS):
+        return False
+    if len(_extract_model_tokens(text)) >= 2:
+        return True
+    if any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in CCD_SOFT_ACCESSORY_MODEL_PATTERNS):
+        return True
+    return bool(re.search(
+        r"(?:相机|照相机).{0,8}(?:电池|充电器|充电线|数据线|读卡器|内存卡|存储卡|相机包|保护套)",
+        text,
+        flags=re.IGNORECASE,
+    ))
 
 
 def _is_standalone_lens_listing(text: str) -> bool:
@@ -376,7 +467,11 @@ def _extract_ccd_brand(text: str) -> str:
     for brand, aliases in CCD_BRANDS.items():
         for alias in aliases:
             # 使用单词边界匹配，避免误匹配（如"sony"不能匹配到"fujisony"）
-            if re.search(r'\b' + re.escape(alias) + r'\b', low):
+            alias_low = alias.lower()
+            if alias_low.isascii() and alias_low.isalnum():
+                if re.search(r'\b' + re.escape(alias_low) + r'\b', low):
+                    return brand
+            elif alias_low in low:
                 return brand
     return ""
 
@@ -385,7 +480,10 @@ def _extract_model_tokens(text: str) -> set[str]:
     low = (text or "").lower()
     tokens = set(re.findall(r"[a-z]{1,8}[- ]?\d{1,5}[a-z]{0,4}", low))
     clean = {t.replace(" ", "").replace("-", "") for t in tokens}
-    return {t for t in clean if len(t) >= 3}
+    return {
+        t for t in clean
+        if len(t) >= 3 or re.fullmatch(r"[a-z]\d{1,2}", t)
+    }
 
 
 def _split_model_token(token: str):
@@ -431,6 +529,8 @@ def _ccd_invalid_sample_reason(item) -> str:
     price = _item_price(item)
     if _is_service_listing(text):
         return "服务/回收广告"
+    if "当配件" in text or "配件机" in text or "零件机" in text:
+        return "故障/维修/零件机"
     if _is_standalone_accessory_listing(text):
         return "配件/耗材/资料"
     if _is_standalone_lens_listing(text):
@@ -443,18 +543,19 @@ def _ccd_invalid_sample_reason(item) -> str:
     if _contains_any(text, CCD_DECOY_PRICE_KEYWORDS):
         return "低价引流/非实价"
     # WHY: 样本池需要保留“送滤镜/带电池充电器”这类整机描述，只拦独立配件或拆机资料。
-    if _contains_any(text, CCD_ALWAYS_ACCESSORY_KEYWORDS):
+    if _contains_accessory_keyword(text, CCD_ALWAYS_ACCESSORY_KEYWORDS):
         return "配件/耗材/资料"
-    if _contains_any(text, CCD_HARD_ACCESSORY_KEYWORDS):
+    if _contains_accessory_keyword(text, CCD_HARD_ACCESSORY_KEYWORDS):
         if "配件齐全" not in text and _contains_any(text, CCD_STANDALONE_HARD_ACCESSORY_HINTS):
             return "配件/耗材/资料"
     if _contains_any(text, CCD_SOFT_ACCESSORY_KEYWORDS):
-        if _contains_any(text, CCD_STANDALONE_ACCESSORY_HINTS):
+        if (
+            _contains_any(text, CCD_STANDALONE_ACCESSORY_HINTS)
+            and not _contains_any(text, CCD_STRONG_WHOLE_CAMERA_CONTEXT_TERMS)
+        ):
             return "配件/耗材/资料"
-    if "当配件" in text or "配件机" in text or "零件机" in text:
-        return "故障/维修/零件机"
     for kw in CCD_RISK_KEYWORDS:
-        if kw.lower() in text:
+        if _contains_actionable_risk_keyword(text, kw):
             return "故障/维修/零件机"
     return ""
 
@@ -505,13 +606,6 @@ def filter_target_items_with_reasons(items: list, query_keyword: str):
     kept = []
     filtered_out = []
     for item in items:
-        if _is_model_mismatch(query_keyword, item.title, category):
-            filtered_out.append({
-                "title": item.title,
-                "price": item.price,
-                "reason": "型号不符",
-            })
-            continue
         if category == "ccd":
             reason = _ccd_invalid_sample_reason(item)
             if reason:
@@ -521,6 +615,13 @@ def filter_target_items_with_reasons(items: list, query_keyword: str):
                     "reason": reason,
                 })
                 continue
+        if _is_model_mismatch(query_keyword, item.title, category):
+            filtered_out.append({
+                "title": item.title,
+                "price": item.price,
+                "reason": "型号不符",
+            })
+            continue
         kept.append(item)
     return kept, filtered_out
 
@@ -584,6 +685,58 @@ def _get_xd_card_value(size: str) -> float:
     return XD_CARD_PRICES.get(key, 0.0)
 
 
+def _matches_any_pattern(text: str, patterns: list[str]) -> bool:
+    return any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
+
+
+def _has_explicit_no_card_text(text: str) -> bool:
+    return _matches_any_pattern(text, CARD_NOT_INCLUDED_PATTERNS)
+
+
+def _has_explicit_xd_card_text(text: str) -> bool:
+    return _matches_any_pattern(text, EXPLICIT_XD_CARD_PATTERNS)
+
+
+def _has_explicit_sd_card_text(text: str) -> bool:
+    return _matches_any_pattern(text, EXPLICIT_SD_CARD_PATTERNS)
+
+
+def _is_direct_xd_sd_dual_context(item, query_keyword: str) -> bool:
+    try:
+        from app.services.xd_card_models import is_direct_xd_sd_dual_model
+    except ImportError:
+        return False
+    return (
+        is_direct_xd_sd_dual_model(query_keyword or "")
+        or is_direct_xd_sd_dual_model(getattr(item, "title", "") or "")
+    )
+
+
+def card_status_uncertain_needs_confirm(
+    item,
+    query_keyword: str = "",
+    has_confirmed_xd_card: bool = False,
+) -> bool:
+    """
+    双卡直插机型的卡状态待确认标识。
+
+    只有原生 xD+SD 双兼容相机进入这里；明确 xD、明确 SD、明确无卡/自备卡
+    都不打标。未写带不带卡或只泛称带卡时，提示人工确认但不加利润。
+    """
+    if has_confirmed_xd_card:
+        return False
+    if not _is_direct_xd_sd_dual_context(item, query_keyword):
+        return False
+    text = _item_text(item)
+    if _has_explicit_no_card_text(text):
+        return False
+    if _has_explicit_xd_card_text(text):
+        return False
+    if _has_explicit_sd_card_text(text):
+        return False
+    return True
+
+
 def _extract_xd_card_from_text(text: str) -> str:
     """
     从文字中提取 XD 卡容量。
@@ -626,6 +779,8 @@ def _is_xd_bundle_from_text(item, query_keyword: str) -> tuple[bool, str]:
     if not detect_xd_card_model_from_items([item], keyword=query_keyword):
         return False, ""
     text = _item_text(item)
+    if _is_direct_xd_sd_dual_context(item, query_keyword) and not _has_explicit_xd_card_text(text):
+        return False, ""
     card_size = _extract_xd_card_from_text(text)
     return bool(card_size), card_size
 
@@ -737,6 +892,7 @@ class BargainItem:
     url: str
     xd_card_size: str = ""       # XD 卡容量，如 "256mb"、"1g高速"
     xd_card_value: float = 0.0   # XD 卡估值（按价格表）
+    card_status_uncertain_needs_confirm: bool = False
 
 
 def detect_bargains(
@@ -779,6 +935,11 @@ def detect_bargains(
                 card_size = bonus_size
                 card_value = bonus_value
                 is_bundle = True
+        card_status_uncertain = card_status_uncertain_needs_confirm(
+            item,
+            query_keyword=query_keyword,
+            has_confirmed_xd_card=bool(card_value > 0),
+        )
 
         profit = base_price - item.price
 
@@ -797,6 +958,7 @@ def detect_bargains(
                 url=item.url,
                 xd_card_size=card_size,
                 xd_card_value=round(card_value, 2),
+                card_status_uncertain_needs_confirm=card_status_uncertain,
             ))
 
     bargains.sort(key=lambda x: x.profit_estimate, reverse=True)

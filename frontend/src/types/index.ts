@@ -111,6 +111,7 @@ export interface LlmResult {
 // has_xd_bonus: 是否包含 XD 卡附加价值
 // xd_card_size: XD 卡容量（如"512MB"）
 // xd_card_value: XD 卡估算价值
+// card_status_uncertain_needs_confirm: 双卡机型卡状态/卡类型待人工确认
 export interface BargainItem {
   item_id: string
   title: string
@@ -121,6 +122,7 @@ export interface BargainItem {
   has_xd_bonus?: boolean
   xd_card_size?: string
   xd_card_value?: number
+  card_status_uncertain_needs_confirm?: boolean
 }
 
 // 完整估价结果（合并算法结果 + 样本 + 捡漏）
@@ -195,6 +197,7 @@ export interface BargainAlert {
   has_xd_bonus?: boolean
   xd_card_size?: string
   xd_card_value?: number
+  card_status_uncertain_needs_confirm?: boolean
 }
 
 // 后台数据库爬取进度
@@ -281,6 +284,7 @@ export interface GlobalBargain {
   is_xd_card?: boolean
   xd_card_size?: string
   xd_card_value?: number
+  card_status_uncertain_needs_confirm?: boolean
   condition?: string
   quality_score?: number
 }

@@ -734,10 +734,13 @@ onMounted(() => {
       </div>
       <div v-if="state.result?.bargains.length" class="bargain-list">
         <a v-for="b in state.result.bargains" :key="b.item_id" :href="b.url" target="_blank" class="bargain-item"
-          :class="{ 'bargain-item-xd': b.has_xd_bonus }">
+          :class="{ 'bargain-item-xd': b.has_xd_bonus, 'bargain-item-card-uncertain': b.card_status_uncertain_needs_confirm }">
           <div v-if="b.has_xd_bonus" class="xd-card-badge">
             含XD卡 {{ b.xd_card_size ? b.xd_card_size.toUpperCase() : '' }}
             <span class="xd-card-value">+约¥{{ b.xd_card_value }}卡值</span>
+          </div>
+          <div v-if="b.card_status_uncertain_needs_confirm" class="card-status-badge">
+            卡状态待确认
           </div>
           <div class="bargain-title-text">{{ b.title }}</div>
           <div class="bargain-prices">
@@ -1893,6 +1896,15 @@ onMounted(() => {
   background: rgba(255, 136, 0, 0.10);
 }
 
+.bargain-item.bargain-item-card-uncertain {
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.bargain-item.bargain-item-card-uncertain:hover {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+}
+
 .xd-card-badge {
   display: inline-flex;
   align-items: center;
@@ -1912,6 +1924,19 @@ onMounted(() => {
   border-radius: 3px;
   padding: 0 5px;
   font-weight: 600;
+}
+
+.card-status-badge {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(245, 158, 11, 0.15);
+  color: #d97706;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 4px;
+  margin-bottom: 6px;
 }
 
 .step-item.info {
