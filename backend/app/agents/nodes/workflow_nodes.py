@@ -24,7 +24,7 @@ def parse_requirement(state: AdvisorState) -> dict:
     if not query:
         return {"errors": ["empty query"], "current_node": "parse_requirement"}
 
-    requirement = _parse_with_llm(query)
+    requirement = _parse_with_regex(query)  # fast sync, Doubao via async in generate_report
     brands = requirement.get("brands", [])
     models = requirement.get("models", [])
 
@@ -44,12 +44,34 @@ def parse_requirement(state: AdvisorState) -> dict:
     }
 
 
-def _parse_with_llm(query: str) -> dict:
-    """Parse user query with LLM into structured requirement.
+def _parse_with_doubao(query: str) -> dict:
+    """Parse user query with Doubao API."""
+    import json
+    from app.config import settings
+    if not settings.doubao_api_key:
+        return _parse_with_regex(query)
+    try:
+        import httpx
+        prompt = f"""分析用户关于二手CCD/数码相机的购买查询，提取结构化JSON。
+查询：{query}
+格式：{{"brands":["Canon"],"models":["IXUS130"],"budget_min":300,"budget_max":500,"usage":"日常拍照","condition_preference":"不限","risk_tolerance":"medium"}}
+brands英文名(Canon/Sony/Fujifilm/Nikon/Olympus/Panasonic/Casio/Samsung/Pentax/Kodak/Ricoh)。只返回JSON。"""
+        r = httpx.post(
+            f"{settings.doubao_base_url.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {settings.doubao_api_key}"},
+            json={"model": settings.doubao_model, "messages": [{"role":"user","content":prompt}], "temperature":0.1, "max_tokens":150},
+            timeout=20,
+        )
+        if r.status_code == 200:
+            c = r.json()["choices"][0]["message"]["content"].strip()
+            c = c.removeprefix("```json").removesuffix("```").strip()
+            return json.loads(c)
+    except Exception as e:
+        logger.warning("Doubao parse failed: %s", e)
+    return _parse_with_regex(query)
 
-    Uses simple keyword extraction as fallback when LLM not available.
-    Production should use DeepSeek structured output.
-    """
+
+def _parse_with_regex(query: str) -> dict:
     import re
 
     brands = []
@@ -63,7 +85,7 @@ def _parse_with_llm(query: str) -> dict:
         if cn.lower() in query.lower():
             brands.append(en)
 
-    models = re.findall(r'[A-Za-z0-9]+[\-\s]?\d+[A-Za-z]*', query)
+    models = re.findall(r'[A-Za-z]+[\-\s]?\d+[A-Za-z]*', query)
     models = list(dict.fromkeys(models))
 
     budget_match = re.search(r'(\d+)\s*[-~到至]\s*(\d+)\s*(?:元|块|$)', query)
@@ -497,7 +519,10 @@ def assess_risk(state: AdvisorState) -> dict:
 # ── Node 11: generate_report ──
 
 def generate_report(state: AdvisorState) -> dict:
-    """Generate structured purchase decision report based on evidence."""
+    """Generate structured purchase decision report based on evidence.
+
+    Uses Doubao LLM for natural language when available, template fallback otherwise.
+    """
     valuation = state.get("valuation") or {}
     risks = state.get("risks", [])
     market = state.get("market_evidence", [])
@@ -505,19 +530,48 @@ def generate_report(state: AdvisorState) -> dict:
     models = state.get("target_models", [])
 
     has_data = bool(valuation.get("base_price"))
-    has_risks = any(r.get("severity") == "high" for r in risks)
+    has_high_risk = any(r.get("severity") == "high" for r in risks)
     insufficient = not has_data
 
+    # Try Doubao for natural language report
+    try:
+        import httpx, json
+        from app.config import settings
+        if settings.doubao_api_key:
+            risk_text = "\n".join([f"- [{r.get('severity','?')}] {r.get('category','?')}: {r.get('description','')[:150]}" for r in risks[:3]])
+            model_str = ", ".join(models) if models else "未知型号"
+            price_str = f"¥{valuation.get('price_min',0):.0f}~¥{valuation.get('price_max',0):.0f}" if has_data else "数据不足"
+            prompt = f"""二手CCD相机选购建议。型号：{model_str}，估价：{price_str}，样本：{valuation.get('sample_count',0)}条，风险：{risk_text or '无'}。返回JSON: {{"recommendation":"buy|caution|skip|insufficient_data","summary":"一句话建议20字内"}}"""
+            r = httpx.post(
+                f"{settings.doubao_base_url.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.doubao_api_key}"},
+                json={"model": settings.doubao_model, "messages": [{"role":"user","content":prompt}], "temperature":0.3, "max_tokens":100},
+                timeout=15,
+            )
+            if r.status_code == 200:
+                c = r.json()["choices"][0]["message"]["content"].strip()
+                c = c.removeprefix("```json").removesuffix("```").strip()
+                llm = json.loads(c)
+                summary = llm.get("summary", "")
+                recommendation = llm.get("recommendation", "buy" if not insufficient else "insufficient_data")
+                return _build_report(valuation, risks, market, knowledge, summary, recommendation, state)
+    except Exception as e:
+        logger.warning("Doubao report failed: %s", e)
+
+    # Template fallback
     if insufficient:
         recommendation = "insufficient_data"
         summary = f"关于 {', '.join(models) if models else '该机型'} 的市场数据不足，无法给出可靠估价。建议提供更多信息或选择热门型号。"
-    elif has_risks:
+    elif has_high_risk:
         recommendation = "caution"
         summary = f"{', '.join(models)} 估价 ¥{valuation['price_min']:.0f}~¥{valuation['price_max']:.0f}，但存在高风险，建议谨慎购买。"
     else:
         recommendation = "buy"
         summary = f"{', '.join(models)} 估价 ¥{valuation['price_min']:.0f}~¥{valuation['price_max']:.0f}，基于 {valuation.get('sample_count', 0)} 条市场样本。价格合理，建议入手。"
+    return _build_report(valuation, risks, market, knowledge, summary, recommendation, state)
 
+
+def _build_report(valuation, risks, market, knowledge, summary, recommendation, state):
     return {
         "report": {
             "summary": summary,
@@ -527,7 +581,7 @@ def generate_report(state: AdvisorState) -> dict:
             "evidence_summary": f"市场证据 {len(market)} 条，知识证据 {len(knowledge)} 条",
             "confidence": state.get("confidence", 0.5),
         },
-        "confidence": 0.7 if not insufficient else 0.2,
+        "confidence": 0.7 if recommendation != "insufficient_data" else 0.2,
         "current_node": "generate_report",
     }
 
