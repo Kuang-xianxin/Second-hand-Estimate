@@ -407,13 +407,17 @@ async def crawler_tiers(_admin=Depends(require_admin_token)):
 
 @router.get("/crawler/login-check")
 async def crawler_login_check(_admin=Depends(require_admin_token)):
-    """轻量登录态检查：不爬取，只检查 storage state 是否存在。"""
-    from app.crawler.xianyu import get_crawler, STORAGE_STATE_FILE
+    """登录态检查：真实验证 Cookie 是否有效（打开闲鱼首页检测登录重定向）。"""
+    from app.crawler.xianyu import get_crawler
+    import asyncio
     crawler = get_crawler()
-    has_state = crawler.has_storage_state()
+    verify = await asyncio.to_thread(crawler.verify_login)
     return {
-        "has_storage_state": has_state,
-        "needs_login": not has_state,
+        "has_storage_state": crawler.has_storage_state(),
+        "needs_login": not verify["valid"],
+        "login_valid": verify["valid"],
+        "detail": verify["detail"],
+        "hint": verify["hint"],
     }
 
 

@@ -220,6 +220,46 @@ class XianyuCrawler:
     def has_storage_state(self) -> bool:
         return STORAGE_STATE_FILE.exists() and STORAGE_STATE_FILE.stat().st_size > 0
 
+    def verify_login(self) -> dict:
+        """Quick genuine login check — opens goofish.com headless and detects login redirect.
+
+        Returns dict with valid: bool, detail: str, hint: str
+        Does NOT trigger a full search crawl.
+        """
+        if not self.has_storage_state():
+            return {"valid": False, "detail": "Cookie文件不存在", "hint": "missing_file"}
+
+        from playwright.sync_api import sync_playwright as sp
+        try:
+            with sp() as p:
+                browser = p.chromium.launch(
+                    headless=True,
+                    executable_path=CHROMIUM_PATH if CHROMIUM_PATH else None,
+                    args=["--no-sandbox", "--disable-dev-shm-usage"],
+                )
+                try:
+                    context = self._build_context(browser)
+                    page = context.new_page()
+                    page.goto("https://www.goofish.com", wait_until="domcontentloaded", timeout=12000)
+                    page.wait_for_timeout(3000)
+
+                    url = page.url.lower()
+                    text = page.content().lower()
+
+                    if "passport" in url or "login" in url:
+                        return {"valid": False, "detail": "Cookie已过期，页面重定向到登录页", "hint": "login_redirect"}
+                    if any(k in text for k in ["请先登录", "扫码登录", "账号登录"]):
+                        return {"valid": False, "detail": "Cookie已过期，页面要求登录", "hint": "login_required"}
+                    if any(k in text for k in ["验证码", "安全验证", "风控"]):
+                        return {"valid": False, "detail": "触发风控验证，需人工完成验证", "hint": "risk_control"}
+
+                    return {"valid": True, "detail": "登录态有效", "hint": "ok"}
+                finally:
+                    context.close()
+                    browser.close()
+        except Exception as e:
+            return {"valid": False, "detail": f"验证请求失败: {str(e)[:100]}", "hint": "verify_error"}
+
     def _parse_cookie_list(self) -> List[dict]:
         cookies = []
         for part in self._cookie_str.split(";"):
