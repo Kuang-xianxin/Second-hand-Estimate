@@ -64,6 +64,8 @@ def _debug_not_enough_items(crawler, keyword: str):
     summary = getattr(crawler, '_last_debug_summary', {}) or {}
 
     response_count = int(summary.get('response_count', 0) or 0)
+    parse_error_count = int(summary.get('response_parse_error_count', 0) or 0)
+    raw_item_count = int(summary.get('raw_item_count', 0) or 0)
     statuses = [s.get('status') for s in summary.get('response_statuses', []) if isinstance(s, dict)]
     ret_samples = [str(x) for x in summary.get('response_ret_samples', [])]
 
@@ -72,51 +74,46 @@ def _debug_not_enough_items(crawler, keyword: str):
 
     ret_text = ' | '.join(ret_samples)
 
-    if response_count == 0:
-        if login_hint:
-            detail = "未获取到搜索接口响应，疑似登录态失效。请重新登录闲鱼并同步 Cookie。"
-            status_code = 401
-        elif risk_hint:
-            detail = "未获取到搜索接口响应，疑似触发风控验证。请稍后重试或先在闲鱼网页完成验证。"
-            status_code = 429
-        else:
-            detail = "未命中闲鱼搜索接口，可能是网络波动或页面结构变化，请稍后重试。"
-            status_code = 502
-    elif any(code in (401, 403) for code in statuses):
-        detail = "闲鱼接口返回未授权（401/403），请重新登录闲鱼并同步 Cookie。"
+    if login_hint or any(code in (401, 403) for code in statuses) or        any(k in ret_text for k in ["SESSION", "LOGIN", "FAIL_SYS_SESSION_EXPIRED", "FAIL_SYS_TOKEN_EXOIRED"]):
+        detail = "闲鱼登录已过期，请重新登录并同步Cookie。"
         status_code = 401
-    elif any(code == 429 for code in statuses):
-        detail = "闲鱼接口触发限流（429），请稍后再试。"
+        error_code = "XIANYU_LOGIN_REQUIRED"
+    elif risk_hint or any(code == 429 for code in statuses) or          any(k in ret_text for k in ["FAIL_SYS_USER_VALIDATE", "RGV587", "验证码", "风控"]):
+        detail = "闲鱼触发风控验证，请稍后重试或先在闲鱼网页完成验证。"
         status_code = 429
-    elif any(k in ret_text for k in ["SESSION", "LOGIN", "FAIL_SYS_SESSION_EXPIRED", "FAIL_SYS_TOKEN_EXOIRED"]):
-        detail = "闲鱼返回登录态过期，请重新登录闲鱼并同步 Cookie。"
-        status_code = 401
-    elif any(k in ret_text for k in ["FAIL_SYS_USER_VALIDATE", "RGV587", "验证码", "风控"]):
-        detail = "闲鱼返回风控校验，请先在网页完成验证后重试。"
-        status_code = 429
+        error_code = "XIANYU_RISK_CONTROL"
+    elif response_count > 0 and parse_error_count > 0 and raw_item_count == 0:
+        detail = "闲鱼接口响应解析失败，请稍后重试或联系管理员检查响应编码。"
+        status_code = 502
+        error_code = "XIANYU_RESPONSE_DECODE_FAILED"
+    elif response_count == 0:
+        detail = "未命中闲鱼搜索接口，可能是网络波动或页面结构变化，请稍后重试。"
+        status_code = 502
+        error_code = "XIANYU_SEARCH_ENDPOINT_MISSED"
     else:
-        raw_count = int(summary.get('raw_item_count', 0) or 0)
         normalized_count = int(summary.get('normalized_count', 0) or 0)
         final_count = int(summary.get('final_count', 0) or 0)
-
-        if raw_count == 0:
-            detail = f"关键词“{keyword}”未抓到可用商品数据，请换关键词再试。"
+        if raw_item_count == 0:
+            detail = f'关键词"{keyword}"未抓到可用商品数据，请换关键词再试。'
         elif normalized_count == 0:
-            detail = f"关键词“{keyword}”抓到原始数据但解析失败，建议稍后重试。"
+            detail = f'关键词"{keyword}"抓到原始数据但解析失败，建议稍后重试。'
         elif final_count < 3:
-            detail = f"关键词“{keyword}”有效样本不足（仅 {final_count} 条），请换更具体的关键词。"
+            detail = f'关键词"{keyword}"有效样本不足（仅 {final_count} 条），请换更具体的关键词。'
         else:
             detail = "有效数据不足，请换个关键词或稍后再试。"
         status_code = 422
+        error_code = "INSUFFICIENT_DATA"
 
     return {
         "status_code": status_code,
         "detail": detail,
+        "error_code": error_code,
         "debug": {
             "keyword": keyword,
             **summary,
         },
     }
+
 
 
 def _condition_bucket(condition: str) -> str:
