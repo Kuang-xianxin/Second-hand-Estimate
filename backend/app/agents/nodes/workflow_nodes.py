@@ -260,7 +260,10 @@ def retrieve_knowledge(state: AdvisorState) -> dict:
         from app.rag.retriever import HybridRetriever, RetrievalConfig
 
         # Try to connect to Qdrant; use local fallback
-        client = QdrantClient(path="/tmp/guessr_qdrant_dev")
+        import os as _os
+        if not _os.path.isdir('/tmp/guessr_qdrant_dev'):
+            return {'knowledge_evidence': existing, 'current_node': 'retrieve_knowledge'}
+        client = QdrantClient(path="/tmp/guessr_qdrant_dev", timeout=5)
         retriever = HybridRetriever(client)
         retriever.ensure_collection()
 
