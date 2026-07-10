@@ -125,6 +125,73 @@ class XianyuItem:
     crawled_at: datetime = field(default_factory=datetime.now)
 
 
+def decode_xianyu_json_body(
+    body: bytes,
+    *,
+    content_encoding: str | None = None,
+) -> dict | None:
+    """Try to decode and parse a Xianyu API response body as JSON.
+
+    Handles: raw UTF-8 JSON, gzip, zlib, brotli, zstd.
+    Never raises — returns None on any failure.
+    """
+    if not body:
+        return None
+
+    # 1. Try plain UTF-8 JSON
+    try:
+        return json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
+        pass
+
+    # 2. Try decompression based on Content-Encoding header or magic bytes
+    decompressed = _try_decompress(body, content_encoding)
+    if decompressed is not None:
+        try:
+            return json.loads(decompressed)
+        except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
+            pass
+
+    return None
+
+
+def _try_decompress(body: bytes, content_encoding: str | None = None) -> bytes | None:
+    """Try gzip → zlib → brotli → zstd; return decompressed bytes or None."""
+    import gzip
+    import zlib
+
+    encodings = []
+    if content_encoding:
+        encodings.append(content_encoding.lower())
+    # Detect by magic bytes
+    if len(body) >= 2:
+        if body[:2] == b'\x1f\x8b':
+            encodings.append('gzip')
+        elif body[:2] in (b'\x78\x01', b'\x78\x9c', b'\x78\xda'):
+            encodings.append('zlib')
+        elif body[:2] == b'\xce\xb2':
+            encodings.append('br')
+        elif body[:4] == b'\x28\xb5\x2f\xfd':
+            encodings.append('zstd')
+
+    for enc in encodings:
+        try:
+            if enc in ('gzip', 'x-gzip'):
+                return gzip.decompress(body)
+            if enc in ('deflate', 'zlib', 'x-deflate'):
+                return zlib.decompress(body)
+            if enc == 'br':
+                import brotli
+                return brotli.decompress(body)
+            if enc == 'zstd':
+                import zstandard
+                return zstandard.decompress(body)
+        except Exception:
+            continue
+
+    return None
+
+
 class XianyuCrawler:
     def __init__(self):
         self._cookie_str = self._load_cookie()
@@ -528,31 +595,13 @@ class XianyuCrawler:
             context = self._build_context(browser)
             page = context.new_page()
 
-            def _try_decode_body(response_body: bytes) -> Optional[dict]:
-                """尝试解压并解析响应体。"""
-                import gzip
-                try:
-                    return json.loads(response_body)
-                except json.JSONDecodeError:
-                    pass
-                # gzip 魔数：0x1f 0x8b
-                if len(response_body) >= 2 and response_body[:2] == b'\x1f\x8b':
-                    try:
-                        return json.loads(gzip.decompress(response_body))
-                    except Exception:
-                        pass
-                # zlib 压缩（闲鱼部分接口用）
-                if len(response_body) >= 2 and response_body[:2] in (b'\x78\x01', b'\x78\x9c', b'\x78\xda'):
-                    try:
-                        import zlib
-                        return json.loads(zlib.decompress(response_body))
-                    except Exception:
-                        pass
-                # 仍然失败，记录十六进制用于调试
-                logger.debug(f"响应体无法解析为JSON/gzip/zlib，长度={len(response_body)}，前20字节hex={response_body[:20].hex()}")
-                return None
+            # Diagnostic counters for response parsing
+            response_parse_error_count = 0
+            response_content_encodings: list[str] = []
+            response_body_magic_samples: list[str] = []
 
             def handle_response(response):
+                nonlocal response_parse_error_count
                 try:
                     if "mtop.taobao.idlemtopsearch.pc.search" not in response.url:
                         return
@@ -560,8 +609,16 @@ class XianyuCrawler:
                     response_statuses.append({"url": response.url[:140], "status": response.status})
                     if response.status != 200:
                         return
-                    body = _try_decode_body(response.body())
+                    # Record Content-Encoding for diagnostics
+                    ce = response.headers.get("content-encoding", "")
+                    if ce and ce not in response_content_encodings:
+                        response_content_encodings.append(ce)
+                    body_bytes = response.body()
+                    if len(response_body_magic_samples) < 3:
+                        response_body_magic_samples.append(body_bytes[:20].hex())
+                    body = decode_xianyu_json_body(body_bytes, content_encoding=ce or None)
                     if body is None:
+                        response_parse_error_count += 1
                         return
                     ret = body.get("ret") if isinstance(body, dict) else None
                     if isinstance(ret, list) and ret:
@@ -581,7 +638,7 @@ class XianyuCrawler:
 
             page.on("request", lambda r: None)  # 保留 request 监听占位
             page.on("response", handle_response)
-            page.goto(f"https://www.goofish.com/search?q={keyword}", wait_until="networkidle", timeout=30000)
+            page.goto(f"https://www.goofish.com/search?q={keyword}", wait_until="domcontentloaded", timeout=15000)
             # 等待足够长让闲鱼两批数据（共60条）都到达
             page.wait_for_timeout(6000)
             self._emit_search_progress(
@@ -642,6 +699,9 @@ class XianyuCrawler:
             "storage_state_file": str(STORAGE_STATE_FILE),
             "login_page_hint": login_page_hint,
             "risk_page_hint": risk_page_hint,
+            "response_parse_error_count": response_parse_error_count,
+            "response_content_encodings": response_content_encodings[:5],
+            "response_body_magic_samples": response_body_magic_samples[:3],
         }
 
         if items:
