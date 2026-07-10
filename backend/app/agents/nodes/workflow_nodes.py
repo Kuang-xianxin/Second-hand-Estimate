@@ -258,8 +258,8 @@ def retrieve_knowledge(state: AdvisorState) -> dict:
     try:
         from qdrant_client import QdrantClient
         from app.rag.retriever import HybridRetriever, RetrievalConfig
+        from app.rag.embeddings import get_embedding_backend, SimpleHashEmbedding
 
-        # Try to connect to Qdrant; use local fallback
         import os as _os
         if not _os.path.isdir('/tmp/guessr_qdrant_dev'):
             return {'knowledge_evidence': existing, 'current_node': 'retrieve_knowledge'}
@@ -267,9 +267,42 @@ def retrieve_knowledge(state: AdvisorState) -> dict:
         retriever = HybridRetriever(client)
         retriever.ensure_collection()
 
-        results = retriever.retrieve(query, RetrievalConfig(
-            dense_top_k=20, sparse_top_k=20, enable_reranker=False, rrf_top_k=10,
-        ))
+        # When using SimpleHash (no semantic meaning), search by model keywords
+        emb = get_embedding_backend()
+        use_keyword_boost = isinstance(emb, SimpleHashEmbedding)
+
+        if use_keyword_boost and models:
+            results = []
+            for model in models[:3]:
+                hits = retriever.retrieve(model, RetrievalConfig(
+                    dense_top_k=10, sparse_top_k=0, enable_sparse=False,
+                    enable_reranker=False, rrf_top_k=10,
+                ))
+                results.extend(hits)
+            seen = set()
+            results = [r for r in results if not (r.document_id in seen or seen.add(r.document_id))]
+
+            # Filter: boost docs matching brand or model, demote unrelated ones
+            brands = [b.lower() for b in requirement.get("brands", [])]
+            if brands:
+                def _score(r):
+                    content_lower = (r.content or "").lower()
+                    doc_brand = (r.brand or "").lower()
+                    score = 0
+                    for b in brands:
+                        if b in doc_brand:
+                            score += 10
+                        if b in content_lower:
+                            score += 5
+                    for m in models:
+                        if m.lower() in content_lower:
+                            score += 3
+                    return score
+                results.sort(key=_score, reverse=True)
+        else:
+            results = retriever.retrieve(query, RetrievalConfig(
+                dense_top_k=20, sparse_top_k=20, enable_reranker=False, rrf_top_k=10,
+            ))
 
         base_id = len(existing)
         for r in results:
