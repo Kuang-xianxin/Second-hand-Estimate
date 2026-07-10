@@ -9,6 +9,9 @@ import type {
   CacheStatus,
   GlobalBargain,
   GlobalBargainCount,
+  AdvisorRunRequest,
+  AdvisorRunResponse,
+  AdvisorRunState,
 } from '@/types'
 import axios from 'axios'
 
@@ -106,5 +109,32 @@ export async function getGlobalBargainCount(params: {
   xd_card?: boolean
 } = {}): Promise<GlobalBargainCount> {
   const res = await http.get<GlobalBargainCount>('/bargains/global/count', { params })
+  return res.data
+}
+
+// ============================================================================
+// AI Advisor API
+// ============================================================================
+
+/** 启动 AI 决策分析 */
+export async function startAdvisorRun(req: AdvisorRunRequest): Promise<AdvisorRunResponse> {
+  const res = await http.post<AdvisorRunResponse>('/advisor/runs', req)
+  return res.data
+}
+
+/** 获取 AI 决策运行状态 */
+export async function getAdvisorRun(runId: string): Promise<AdvisorRunState> {
+  const res = await http.get<AdvisorRunState>(`/advisor/runs/${runId}`)
+  return res.data
+}
+
+/** SSE 流式监听 AI 决策进度 */
+export function createAdvisorStream(runId: string, query: string): EventSource {
+  return new EventSource(`${API_BASE}/advisor/runs/${runId}/stream?query=${encodeURIComponent(query)}`)
+}
+
+/** 提交人工审批 */
+export async function submitAdvisorDecision(runId: string, decision: 'approved' | 'rejected') {
+  const res = await http.post(`/advisor/runs/${runId}/decisions`, { decision })
   return res.data
 }

@@ -294,6 +294,83 @@ export interface GlobalBargainCount {
   brand_counts: Record<string, number>
 }
 
+// ============================================================================
+// AI Advisor 类型
+// ============================================================================
+
+export interface AdvisorRunRequest {
+  query: string
+  thread_id?: string
+}
+
+export interface AdvisorRunResponse {
+  run_id: string
+  thread_id: string
+  status: string  // completed | paused | failed
+}
+
+export interface AdvisorStateData {
+  thread_id: string
+  user_query: string
+  requirement: Record<string, any>
+  target_models: string[]
+  market_evidence: Array<{
+    evidence_id: string
+    keyword: string
+    sample_count: number
+    base_price: number
+    price_min: number
+    price_max: number
+  }>
+  knowledge_evidence: Array<{
+    evidence_id: string
+    document_type: string
+    content_snippet: string
+    topic: string
+  }>
+  valuation: {
+    base_price: number
+    price_min: number
+    price_max: number
+    sample_count: number
+    confidence: string
+    method: string
+  } | null
+  risks: Array<{
+    risk_id: string
+    category: string
+    description: string
+    severity: string
+  }>
+  report: {
+    summary: string
+    recommendation: string
+    evidence_summary: string
+    confidence: number
+  } | null
+  confidence: number
+  errors: string[]
+  current_node: string
+  pending_approval: boolean
+}
+
+export interface AdvisorRunState {
+  run_id: string
+  status: string
+  state: AdvisorStateData
+}
+
+export interface SSEAdvisorEvent {
+  node: string
+  event_type: string  // node_start | node_end | done | error
+  thread_id: string
+  current_node?: string
+  valuation?: any
+  risks?: any[]
+  report?: any
+  errors?: string[]
+}
+
 // 步骤状态枚举
 export type StepStatus = 'pending' | 'done' | 'error' | 'info'
 

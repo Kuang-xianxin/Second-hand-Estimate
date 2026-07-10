@@ -45,6 +45,7 @@ onMounted(() => {
       <div class="nav-actions">
         <div class="nav-links">
           <router-link to="/" class="nav-link" active-class="active">估价</router-link>
+          <router-link to="/advisor" class="nav-link" active-class="active">AI决策</router-link>
           <router-link to="/bargains" class="nav-link" active-class="active">
             捡漏
             <span v-if="unreadCount > 0" class="badge">{{ unreadCount }}</span>

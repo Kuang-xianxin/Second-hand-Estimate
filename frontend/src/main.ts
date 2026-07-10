@@ -7,6 +7,7 @@ import App from './App.vue'
 import HomeView from '@/views/HomeView.vue'
 import HistoryView from '@/views/HistoryView.vue'
 import BargainView from '@/views/BargainView.vue'
+import AdvisorView from '@/views/AdvisorView.vue'
 // 引入全局样式文件
 import './style.css'
 
@@ -18,6 +19,7 @@ const router = createRouter({
     { path: '/', component: HomeView },           // 估价首页
     { path: '/history', component: HistoryView }, // 估价历史记录页
     { path: '/bargains', component: BargainView }, // 捡漏提醒页
+    { path: '/advisor', component: AdvisorView },  // AI 智能决策
   ],
 })
 
