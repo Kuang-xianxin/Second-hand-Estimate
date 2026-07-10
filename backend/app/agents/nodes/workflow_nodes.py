@@ -441,9 +441,19 @@ def assess_risk(state: AdvisorState) -> dict:
 
     risk_id = len(existing_risks)
 
+    # Check if top-ranked knowledge explicitly says xD is NOT a risk
+    xd_safe = False
+    for ev in knowledge[:3]:
+        snippet = ev.get("content_snippet", "")
+        if ("xD" in snippet or "存储卡" in snippet) and ("非 xD" in snippet or "不存在 xD" in snippet or "SD 卡（非 xD" in snippet or "SD 卡通用" in snippet):
+            xd_safe = True
+            break
+
     # Storage card risk from knowledge evidence
     for ev in knowledge:
         if ev.get("topic") == "storage_card" and "xD" in (ev.get("content_snippet", "")):
+            if xd_safe:
+                break  # Top evidence says this model doesn't use xD
             risk_id += 1
             existing_risks.append({
                 "risk_id": f"R{risk_id}",

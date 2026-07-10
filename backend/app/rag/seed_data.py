@@ -197,6 +197,22 @@ CAMERA_KNOWLEDGE = [
 - 液晶屏老化""",
     },
     {
+        "document_id": "camera_fuji_s_series",
+        "brand": "Fujifilm",
+        "model": "FinePix S/SL",
+        "document_type": "camera_knowledge",
+        "topic": "spec",
+        "content": """【富士 FinePix S/SL 系列 CCD 相机】富士 FinePix S 系列是长焦/桥式相机，全部使用 SD 卡（非 xD 卡）。热门型号：S100FS（1100万像素 Super CCD，14.3倍变焦）、S200EXR/S205EXR（Super CCD EXR）、S2500HD/S2950/S2980/S4000/S4500（入门长焦）、S6300/S6500/S6800（中端长焦）、S7000/S8000/S9000（早期型号）。特点：SD 卡通用、AA 电池（早期）或锂电（后期）、电子取景器。常见故障：电池仓腐蚀（AA 机型）、镜头排线、模式转盘漂移。⚠ S 系列使用 SD 卡，不存在 xD 卡风险。""",
+    },
+    {
+        "document_id": "camera_fuji_z_series",
+        "brand": "Fujifilm",
+        "model": "FinePix Z",
+        "document_type": "camera_knowledge",
+        "topic": "spec",
+        "content": """【富士 FinePix Z 系列 CCD 相机】富士 Z 系列为超薄时尚滑盖卡片机，使用 xD 卡。热门型号：Z100fd/Z200fd/Z300（滑盖设计）、Z10fd/Z20fd/Z30（入门滑盖）、Z5fd/Z3/Z2/Z1（早期型号）。特点：滑盖开关机、xD 卡存储。常见故障：滑盖排线断裂、xD 卡槽接触不良。""",
+    },
+    {
         "document_id": "camera_olympus_mju",
         "brand": "Olympus",
         "model": "μ系列",
