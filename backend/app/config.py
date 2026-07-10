@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # ── Database / Server ──
     database_url: str = "sqlite+aiosqlite:///./guessr.db"
     redis_url: str = "redis://localhost:6379/0"
+    celery_broker_url: str = ""
     backend_port: int = 8000
     frontend_url: str = "http://localhost:5173"
 

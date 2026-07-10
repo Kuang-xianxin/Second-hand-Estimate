@@ -1,6 +1,5 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import text
 from app.config import settings
 
 engine = create_async_engine(settings.database_url, echo=False)
@@ -19,24 +18,44 @@ async def get_db():
             await session.close()
 
 
+async def _run_alembic_upgrade(conn):
+    """Run alembic migrations inside an active connection."""
+    from alembic.config import Config
+    from alembic import command
+    from pathlib import Path
+
+    alembic_cfg = Config(str(Path(__file__).resolve().parent.parent / "alembic.ini"))
+    alembic_cfg.set_main_option("sqlalchemy.url", settings.database_url)
+    # Override to use our existing connection
+    alembic_cfg.attributes["connection"] = conn
+    command.upgrade(alembic_cfg, "head")
+
+
 async def init_db():
+    """Initialize database schema.
+
+    Uses Alembic migrations when available; falls back to create_all
+    for fresh dev environments without migration history.
+    """
+    from sqlalchemy import inspect, text
+
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        # Check if alembic_version table exists (migration already applied)
+        try:
+            result = await conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='alembic_version'")
+            )
+            has_alembic = result.fetchone() is not None
+        except Exception:
+            has_alembic = False
 
-        # 轻量迁移：为旧库补充 bargain_alerts.valuation_record_id
-        # SQLite 不支持 IF NOT EXISTS 的 ADD COLUMN，这里先探测再执行。
-        rows = await conn.execute(text("PRAGMA table_info('bargain_alerts')"))
-        columns = {row[1] for row in rows.fetchall()} if rows is not None else set()
-        if "valuation_record_id" not in columns:
-            await conn.execute(text("ALTER TABLE bargain_alerts ADD COLUMN valuation_record_id INTEGER"))
-        if "xd_card_size" not in columns:
-            await conn.execute(text("ALTER TABLE bargain_alerts ADD COLUMN xd_card_size TEXT DEFAULT ''"))
-        if "xd_card_value" not in columns:
-            await conn.execute(text("ALTER TABLE bargain_alerts ADD COLUMN xd_card_value REAL DEFAULT 0"))
-        if "card_status_uncertain_needs_confirm" not in columns:
-            await conn.execute(text("ALTER TABLE bargain_alerts ADD COLUMN card_status_uncertain_needs_confirm BOOLEAN DEFAULT 0"))
-
-        rows = await conn.execute(text("PRAGMA table_info('global_bargains')"))
-        global_columns = {row[1] for row in rows.fetchall()} if rows is not None else set()
-        if "card_status_uncertain_needs_confirm" not in global_columns:
-            await conn.execute(text("ALTER TABLE global_bargains ADD COLUMN card_status_uncertain_needs_confirm BOOLEAN DEFAULT 0"))
+        if has_alembic:
+            # Already managed by Alembic — run any pending migrations
+            await _run_alembic_upgrade(conn)
+        else:
+            # Fresh DB: use Alembic to create everything from scratch
+            try:
+                await _run_alembic_upgrade(conn)
+            except Exception:
+                # Fallback: create_all for environments where Alembic can't run
+                await conn.run_sync(Base.metadata.create_all)
