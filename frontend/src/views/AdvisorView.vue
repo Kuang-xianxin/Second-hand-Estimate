@@ -61,7 +61,8 @@ async function startAnalysis() {
     runId.value = resp.run_id
     nodeLog.value.push(`任务已创建: ${resp.run_id.slice(0, 8)}...`)
 
-    // Poll for result
+    // Poll for result (max 30s)
+    const seenNodes = new Set<string>()
     let attempts = 0
     while (attempts < 30) {
       await new Promise(r => setTimeout(r, 1000))
@@ -69,9 +70,10 @@ async function startAnalysis() {
       try {
         const data = await getAdvisorRun(runId.value)
         state.value = data.state
-
-        if (data.state.current_node && !nodeLog.value.includes(data.state.current_node)) {
-          const label = nodeLabels[data.state.current_node.split(':')[0]] || data.state.current_node
+        const node = data.state.current_node
+        if (node && !seenNodes.has(node)) {
+          seenNodes.add(node)
+          const label = nodeLabels[node.split(':')[0]] || node
           nodeLog.value.push(`✓ ${label}`)
         }
 
