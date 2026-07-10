@@ -24,6 +24,10 @@ redis>=5.2
 # ===== Migrations =====
 alembic==1.18.5
 
+# ===== RAG =====
+qdrant-client>=1.12
+langchain-text-splitters>=1.0
+
 # ===== Dev & Test =====
 pytest==9.1.1
 pytest-asyncio==1.4.0
