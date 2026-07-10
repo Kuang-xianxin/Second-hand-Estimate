@@ -8,6 +8,7 @@ from app.api.valuate import router
 from app.api.auth import router as auth_router
 from app.api.cache_api import router as cache_router
 from app.api.stats_api import router as stats_router
+from app.api.advisor import router as advisor_router
 from app.config import settings
 
 logging.basicConfig(
@@ -41,6 +42,7 @@ app.include_router(router)
 app.include_router(auth_router)
 app.include_router(cache_router)
 app.include_router(stats_router)
+app.include_router(advisor_router)
 
 
 @app.get("/health")
