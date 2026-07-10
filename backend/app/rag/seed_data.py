@@ -279,6 +279,66 @@ CAMERA_KNOWLEDGE = [
 - 镜头盖不闭合
 - 模式转盘漂移""",
     },
+    {
+        "document_id": "camera_casio_exilim",
+        "brand": "Casio",
+        "model": "Exilim",
+        "document_type": "camera_knowledge",
+        "topic": "spec",
+        "content": """【卡西欧 Exilim 系列 CCD 相机】卡西欧以超薄设计和快速响应著称，全部使用 SD 卡。热门型号：EX-Z1000/Z850/Z750/Z500/Z55（超薄卡片）、EX-S600/S500/S10（极致超薄）、EX-V7/V8（旋转屏）。特点：超薄机身、快速启动、BEST SHOT 场景模式。常见故障：电池 NP-20/NP-40 老化、镜头排线、屏幕偏色。""",
+    },
+    {
+        "document_id": "camera_samsung_nv",
+        "brand": "Samsung",
+        "model": "NV系列",
+        "document_type": "camera_knowledge",
+        "topic": "spec",
+        "content": """【三星 NV 系列 CCD 相机】三星 NV 系列以蓝调设计和施耐德镜头闻名，全部使用 SD 卡。热门型号：NV10/NV11（1000万像素）、NV7 OPS/NV5（光学防抖）、NV3/NV8（多媒体播放）、NV100HD（720p高清）。特点：施耐德镜头、蓝调设计、PMP 多媒体。常见故障：模式拨盘松动、屏幕老化、电池续航短。""",
+    },
+    {
+        "document_id": "camera_pentax_optio",
+        "brand": "Pentax",
+        "model": "Optio",
+        "document_type": "camera_knowledge",
+        "topic": "spec",
+        "content": """【宾得 Optio 系列 CCD 相机】宾得以防水防尘设计见长，使用 SD 卡。热门型号：Optio W90/W80/W60/W30（防水系列）、Optio S12/S10/S7/S6（超薄）、Optio A40/A30/A20（AA 电池入门）。特点：防水型号可水下拍摄、宾得 SMC 镜头镀膜。常见故障：防水密封圈老化、电池仓腐蚀、CCD 坏点。""",
+    },
+    {
+        "document_id": "camera_kodak_easyshare",
+        "brand": "Kodak",
+        "model": "EasyShare",
+        "document_type": "camera_knowledge",
+        "topic": "spec",
+        "content": """【柯达 EasyShare 系列 CCD 相机】柯达以色彩科学著称，使用 SD 卡。热门型号：V1003/V803/V705/V610/V570/V550（时尚卡片）、C913/C813/C713/C643（入门级）、Z712 IS/Z612/Z650（长焦）。特点：柯达色彩科学、一键分享底座。常见故障：电池盖卡扣断裂、闪光灯电容老化、CCD 坏点率偏高。""",
+    },
+    {
+        "document_id": "camera_ricoh_caplio",
+        "brand": "Ricoh",
+        "model": "Caplio",
+        "document_type": "camera_knowledge",
+        "topic": "spec",
+        "content": """【理光 Caplio 系列 CCD 相机】理光以微距和广角见长，使用 SD 卡。热门型号：R10/R8/R7/R6/R5/R4/R3（广角长焦）、GX100/GX8（高端便携）、GR Digital（定焦经典）。特点：1cm 微距、28mm 广角、快速对焦。常见故障：镜头伸缩异响、ADJ 拨杆漂移、LCD 老化。""",
+    },
+    {
+        "document_id": "faq_pricing_guide",
+        "brand": "",
+        "model": "",
+        "document_type": "faq",
+        "topic": "pricing",
+        "content": """【CCD 相机二手市场价位参考】入门级 100-200元：柯达 C、三星 NV、宾得 Optio A。中端 200-400元：佳能 IXUS、尼康 COOLPIX S、卡西欧 Exilim、松下 FS/FX。中高端 400-600元：索尼 T 系列、富士 F 系列、松下 LX、奥林巴斯 μ。高端 600-1000元：松下 LX3、理光 GRD、尼康 P5100。收藏级 1000元+：理光 GR Digital、富士 F31fd 箱说全。闲鱼比小红书/抖音便宜 15-30%。""",
+    },
+    {
+        "document_id": "fault_ccd_sensor_aging",
+        "document_type": "camera_knowledge",
+        "topic": "fault",
+        "content": """【常见故障：CCD 传感器老化/坏点】症状：照片出现固定位置亮点、暗部噪点异常增多。检测：拍摄全黑照片放大查看白点，拍摄纯白照片看黑点。CCD 传感器无法单独更换，需换主板 ¥200-400。坏点超过 5 个或大面积噪点建议放弃购买。""",
+    },
+    {
+        "document_id": "fault_lens_fungus",
+        "document_type": "camera_knowledge",
+        "topic": "fault",
+        "content": """【常见故障：镜头霉斑/雾化】症状：镜头内部白色丝状物、镜片雾蒙蒙、逆光出现光晕。原因：潮湿环境存放致真菌滋生。检测：手电筒照射镜头从背面观察。轻微霉斑不影响成像，严重霉斑明显降低画质。清洁 ¥80-150，严重需换镜头组 ¥200+。霉斑会持续扩散，轻微也建议尽快处理。""",
+    },
 ]
 
 # ── Fault / risk knowledge ──
